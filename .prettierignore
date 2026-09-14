@@ -1,0 +1,16 @@
+
+node_modules
+package-lock.json
+build
+dist
+coverage
+.nyc_output
+tmp
+temp
+public/uploads
+*.log
+.env
+.env.*
+.git
+.gitmodules
+*.md

@@ -1,5 +1,5 @@
-import { createCliRenderer, TextAttributes } from "@opentui/core";
-import { createRoot } from "@opentui/react";
+import { createCliRenderer, TextAttributes } from "@opentui/core"
+import { createRoot } from "@opentui/react"
 
 function App() {
   return (
@@ -9,8 +9,8 @@ function App() {
         <text attributes={TextAttributes.DIM}>What will you build?</text>
       </box>
     </box>
-  );
+  )
 }
 
-const renderer = await createCliRenderer();
-createRoot(renderer).render(<App />);
+const renderer = await createCliRenderer()
+createRoot(renderer).render(<App />)
