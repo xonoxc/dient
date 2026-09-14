@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import App from "../src/app"
-import { renderApp } from "./support/render-ui"
+import App from "@/app"
+import { renderApp } from "@test/support/render-ui"
 
 describe("App", () => {
   test("renders without crashing", async () => {

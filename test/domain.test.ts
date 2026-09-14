@@ -7,7 +7,7 @@ import {
   PostgresConnectionConfig,
   ProjectSchema,
   SqliteConnectionConfig,
-} from "../src/domain"
+} from "@/domain"
 
 const as = <T>(value: unknown): T => value as T
 

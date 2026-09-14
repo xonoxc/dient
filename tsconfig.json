@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    // Environment setup & latest features
+    /* Environment setup & latest features */
     "lib": ["ESNext", "DOM"],
     "target": "ESNext",
     "module": "Preserve",
@@ -9,22 +9,31 @@
     "jsxImportSource": "@opentui/react",
     "allowJs": true,
 
-    // Bundler mode
+    /* Bundler mode */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
 
-    // Best practices
+    /* Best practices */
     "strict": true,
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
 
-    // Some stricter flags (disabled by default)
+    /* Some stricter flags (disabled by default) */
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noPropertyAccessFromIndexSignature": false
+    "noPropertyAccessFromIndexSignature": false,
+
+    /*
+     * Import aliases, so files don't have to spell out relative paths (../)
+     * Resolved by tsc for type checking and by Bun's bundler at runtime.
+     */
+    "paths": {
+      "@/*": ["./src/*"],
+      "@test/*": ["./test/*"]
+    }
   }
 }
