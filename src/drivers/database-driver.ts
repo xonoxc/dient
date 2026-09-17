@@ -11,10 +11,7 @@ import type { ActiveConnection, DriverService } from "@/drivers/types"
  * matching per-engine driver based on `config.engine` (for `connect`) or
  * `conn.engine` (for everything else).
  */
-export class DatabaseDriver extends Context.Tag("DatabaseDriver")<
-  DatabaseDriver,
-  DriverService<ConnectionConfig>
->() {}
+export class DatabaseDriver extends Context.Tag("DatabaseDriver")<DatabaseDriver, DriverService<ConnectionConfig>>() {}
 
 export namespace DatabaseDriver {
   /**
@@ -33,6 +30,7 @@ export namespace DatabaseDriver {
       const pg = yield* PgDriver
       const mysql = yield* MysqlDriver
       const sqlite = yield* SqliteDriver
+
       return {
         connect: (config: ConnectionConfig) =>
           config.engine === "postgres"
@@ -59,6 +57,6 @@ export namespace DatabaseDriver {
               ? mysql.isConnected(conn)
               : sqlite.isConnected(conn),
       }
-    }),
+    })
   ).pipe(Layer.provide(Layer.mergeAll(PgDriver.layer, MysqlDriver.layer, SqliteDriver.layer)))
 }

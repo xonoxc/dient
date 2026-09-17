@@ -1,4 +1,4 @@
-import { Data, Effect, Scope } from "effect"
+import { Data, type Effect, type Scope } from "effect"
 import type { ConnectionConfig, Engine } from "@/domain"
 
 /**

@@ -16,7 +16,7 @@ const ENGINE = "sqlite" as const
  * to `ConnectionError`.
  */
 export const connectSqlite = (
-  config: SqliteConnectionConfig,
+  config: SqliteConnectionConfig
 ): Effect.Effect<ActiveConnection, ConnectionError, Scope.Scope> =>
   Effect.gen(function* () {
     const scope = yield* Scope.make()
@@ -28,9 +28,7 @@ export const connectSqlite = (
        * other constructor throw) arrives as a defect. `catchAllCause` folds
        * every cause — fail or die — into the typed `ConnectionError`.
        */
-      Effect.catchAllCause((cause) =>
-        Effect.fail(new ConnectionError({ engine: ENGINE, message: String(cause), cause })),
-      ),
+      Effect.catchAllCause(cause => Effect.fail(new ConnectionError({ engine: ENGINE, message: String(cause), cause })))
     )
     return { id: crypto.randomUUID(), engine: ENGINE, _client: client, _scope: scope }
   })
@@ -39,11 +37,18 @@ export const connectSqlite = (
 export const querySqlite = (
   conn: ActiveConnection,
   sql: string,
-  params?: ReadonlyArray<unknown>,
+  params?: ReadonlyArray<unknown>
 ): Effect.Effect<QueryResult, QueryError> =>
   Effect.gen(function* () {
     const rows = yield* (conn._client as SqliteClient.SqliteClient).unsafe<Record<string, unknown>>(sql, params).pipe(
-      Effect.mapError((cause) => new QueryError({ engine: ENGINE, message: String(cause), cause })),
+      Effect.mapError(
+        cause =>
+          new QueryError({
+            engine: ENGINE,
+            message: String(cause),
+            cause,
+          })
+      )
     )
     return toQueryResult(rows)
   })
@@ -56,19 +61,20 @@ export const disconnectSqlite = (conn: ActiveConnection): Effect.Effect<void> =>
 export const isConnectedSqlite = (conn: ActiveConnection): Effect.Effect<boolean> =>
   querySqlite(conn, "SELECT 1 AS one", []).pipe(
     Effect.as(true),
-    Effect.catchAll(() => Effect.succeed(false)),
+    Effect.catchAll(() => Effect.succeed(false))
   )
 
 const toQueryResult = (rows: ReadonlyArray<Record<string, unknown>>): QueryResult => {
   const columns: ReadonlyArray<ColumnInfo> =
-    rows.length > 0 ? Object.keys(rows[0]!).map((name) => ({ name })) : []
+    rows.length > 0
+      ? Object.keys(rows[0]!).map(name => ({
+          name,
+        }))
+      : []
   return { columns, rows }
 }
 
-export class SqliteDriver extends Context.Tag("SqliteDriver")<
-  SqliteDriver,
-  DriverService<SqliteConnectionConfig>
->() {}
+export class SqliteDriver extends Context.Tag("SqliteDriver")<SqliteDriver, DriverService<SqliteConnectionConfig>>() {}
 
 export namespace SqliteDriver {
   /** `SqliteDriver` service backed by @effect/sql-sqlite-bun. */

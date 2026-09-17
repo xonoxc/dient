@@ -16,10 +16,11 @@ const ENGINE = "mysql" as const
  * a schema and queries can address tables with fully qualified names.
  */
 export const connectMysql = (
-  config: MysqlConnectionConfig,
+  config: MysqlConnectionConfig
 ): Effect.Effect<ActiveConnection, ConnectionError, Scope.Scope> =>
   Effect.gen(function* () {
     const scope = yield* Scope.make()
+
     const client = yield* MysqlClient.make({
       host: config.host ?? "localhost",
       port: config.port ?? 3306,
@@ -29,7 +30,7 @@ export const connectMysql = (
     }).pipe(
       Scope.extend(scope),
       Effect.provide(Reactivity.layer),
-      Effect.mapError((cause) => new ConnectionError({ engine: ENGINE, message: String(cause), cause })),
+      Effect.mapError(cause => new ConnectionError({ engine: ENGINE, message: String(cause), cause }))
     )
     return { id: crypto.randomUUID(), engine: ENGINE, _client: client, _scope: scope }
   })
@@ -38,12 +39,13 @@ export const connectMysql = (
 export const queryMysql = (
   conn: ActiveConnection,
   sql: string,
-  params?: ReadonlyArray<unknown>,
+  params?: ReadonlyArray<unknown>
 ): Effect.Effect<QueryResult, QueryError> =>
   Effect.gen(function* () {
-    const rows = yield* (conn._client as MysqlClient.MysqlClient).unsafe<Record<string, unknown>>(sql, params).pipe(
-      Effect.mapError((cause) => new QueryError({ engine: ENGINE, message: String(cause), cause })),
-    )
+    const rows = yield* (conn._client as MysqlClient.MysqlClient)
+      .unsafe<Record<string, unknown>>(sql, params)
+      .pipe(Effect.mapError(cause => new QueryError({ engine: ENGINE, message: String(cause), cause })))
+
     return toQueryResult(rows)
   })
 
@@ -55,19 +57,20 @@ export const disconnectMysql = (conn: ActiveConnection): Effect.Effect<void> =>
 export const isConnectedMysql = (conn: ActiveConnection): Effect.Effect<boolean> =>
   queryMysql(conn, "SELECT 1", []).pipe(
     Effect.as(true),
-    Effect.catchAll(() => Effect.succeed(false)),
+    Effect.catchAll(() => Effect.succeed(false))
   )
 
 const toQueryResult = (rows: ReadonlyArray<Record<string, unknown>>): QueryResult => {
   const columns: ReadonlyArray<ColumnInfo> =
-    rows.length > 0 ? Object.keys(rows[0]!).map((name) => ({ name })) : []
+    rows.length > 0
+      ? Object.keys(rows[0]!).map(name => ({
+          name,
+        }))
+      : []
   return { columns, rows }
 }
 
-export class MysqlDriver extends Context.Tag("MysqlDriver")<
-  MysqlDriver,
-  DriverService<MysqlConnectionConfig>
->() {}
+export class MysqlDriver extends Context.Tag("MysqlDriver")<MysqlDriver, DriverService<MysqlConnectionConfig>>() {}
 
 export namespace MysqlDriver {
   /** `MysqlDriver` service backed by @effect/sql-mysql2. */

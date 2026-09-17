@@ -21,10 +21,11 @@ const ENGINE = "postgres" as const
  * to inspect driver-specific exceptions.
  */
 export const connectPg = (
-  config: PostgresConnectionConfig,
+  config: PostgresConnectionConfig
 ): Effect.Effect<ActiveConnection, ConnectionError, Scope.Scope> =>
   Effect.gen(function* () {
     const scope = yield* Scope.make()
+
     const client = yield* PgClient.make({
       host: config.host ?? "localhost",
       port: config.port ?? 5432,
@@ -35,7 +36,7 @@ export const connectPg = (
     }).pipe(
       Scope.extend(scope),
       Effect.provide(Reactivity.layer),
-      Effect.mapError((cause) => new ConnectionError({ engine: ENGINE, message: String(cause), cause })),
+      Effect.mapError(cause => new ConnectionError({ engine: ENGINE, message: String(cause), cause }))
     )
     return { id: crypto.randomUUID(), engine: ENGINE, _client: client, _scope: scope }
   })
@@ -48,11 +49,18 @@ export const connectPg = (
 export const queryPg = (
   conn: ActiveConnection,
   sql: string,
-  params?: ReadonlyArray<unknown>,
+  params?: ReadonlyArray<unknown>
 ): Effect.Effect<QueryResult, QueryError> =>
   Effect.gen(function* () {
     const rows = yield* (conn._client as PgClient.PgClient).unsafe<Record<string, unknown>>(sql, params).pipe(
-      Effect.mapError((cause) => new QueryError({ engine: ENGINE, message: String(cause), cause })),
+      Effect.mapError(
+        cause =>
+          new QueryError({
+            engine: ENGINE,
+            message: String(cause),
+            cause,
+          })
+      )
     )
     return toQueryResult(rows)
   })
@@ -69,19 +77,20 @@ export const disconnectPg = (conn: ActiveConnection): Effect.Effect<void> =>
 export const isConnectedPg = (conn: ActiveConnection): Effect.Effect<boolean> =>
   queryPg(conn, "SELECT 1", []).pipe(
     Effect.as(true),
-    Effect.catchAll(() => Effect.succeed(false)),
+    Effect.catchAll(() => Effect.succeed(false))
   )
 
 const toQueryResult = (rows: ReadonlyArray<Record<string, unknown>>): QueryResult => {
   const columns: ReadonlyArray<ColumnInfo> =
-    rows.length > 0 ? Object.keys(rows[0]!).map((name) => ({ name })) : []
+    rows.length > 0
+      ? Object.keys(rows[0]!).map(name => ({
+          name,
+        }))
+      : []
   return { columns, rows }
 }
 
-export class PgDriver extends Context.Tag("PgDriver")<
-  PgDriver,
-  DriverService<PostgresConnectionConfig>
->() {}
+export class PgDriver extends Context.Tag("PgDriver")<PgDriver, DriverService<PostgresConnectionConfig>>() {}
 
 export namespace PgDriver {
   /** `PgDriver` service backed by @effect/sql-pg. */

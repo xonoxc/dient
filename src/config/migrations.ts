@@ -27,7 +27,7 @@ export const migrations: ReadonlyArray<Migration> = [
   {
     id: 1,
     name: "create-config-tables",
-    up: (sql) =>
+    up: sql =>
       Effect.gen(function* () {
         /* Column names are the snake_case form of the camelCase keys passed
            to sql.insert/sql.update (the client's transformQueryNames maps
@@ -73,11 +73,15 @@ export const runMigrations = (sql: SqliteClient.SqliteClient): Effect.Effect<voi
       name TEXT NOT NULL,
       applied_at TEXT NOT NULL
     )`
+
     const rows = yield* sql`SELECT id, name FROM _migrations`
-    const applied = new Set(rows.map((row) => row.id as number))
+    const applied = new Set(rows.map(row => row.id as number))
+
     for (const migration of migrations) {
       if (applied.has(migration.id)) continue
+
       yield* migration.up(sql)
+
       yield* sql`INSERT INTO _migrations ${sql.insert({
         id: migration.id,
         name: migration.name,

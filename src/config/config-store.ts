@@ -5,7 +5,14 @@ import { Reactivity } from "@effect/experimental"
 import { mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
-import { ConnectionId, ConnectionSchema, DatabaseId, DatabaseSchema, ProjectId, ProjectSchema } from "@/domain"
+import {
+  type ConnectionId,
+  ConnectionSchema,
+  type DatabaseId,
+  DatabaseSchema,
+  type ProjectId,
+  ProjectSchema,
+} from "@/domain"
 import type { Connection, Database, Engine as EngineType, Project } from "@/domain"
 import { runMigrations } from "@/config/migrations"
 
@@ -113,13 +120,16 @@ export namespace ConfigStore {
     Layer.scopedContext(
       Effect.gen(function* () {
         const path = filepath ?? join(homedir(), ".dient", "config.db")
+
         yield* Effect.sync(() => mkdirSync(dirname(path), { recursive: true }))
         const sql = yield* SqliteClient.make({
           filename: path,
           transformQueryNames: camelToSnake,
           transformResultNames: snakeToCamel,
         })
+
         yield* runMigrations(sql).pipe(Effect.orDie)
+
         return Context.make(ConfigStore, makeConfigStore(sql))
       })
     ).pipe(Layer.provide(Reactivity.layer))
@@ -129,7 +139,7 @@ export namespace ConfigStore {
  * Small helpers shared by the store implementation.
  * ------------------------------------------------------------------------- */
 
-const camelToSnake = (s: string) => s.replace(/[A-Z]/g, (match) => "_" + match.toLowerCase())
+const camelToSnake = (s: string) => s.replace(/[A-Z]/g, match => "_" + match.toLowerCase())
 const snakeToCamel = (s: string) => s.replace(/_([a-z])/g, (_match, c: string) => c.toUpperCase())
 
 /*
@@ -149,15 +159,18 @@ const newId = <T extends string>(): Effect.Effect<T> => Effect.sync(() => crypto
 const decodeRow =
   <A, I>(schema: S.Schema<A, I>) =>
   (row: Record<string, unknown>) =>
-    S.decodeSync(schema)(
-      Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v ?? undefined])) as I
-    )
+    S.decodeSync(schema)(Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v ?? undefined])) as I)
 
 /* Map every driver/parse failure into a single ConfigError so callers match
    on one error type. The original cause is carried along for debugging. */
 const onError = <A>(effect: Effect.Effect<A, unknown>): Effect.Effect<A, ConfigError> =>
-  Effect.mapError(effect, (cause) =>
-    cause instanceof ConfigError ? cause : new ConfigError({ message: String(cause), cause })
+  Effect.mapError(effect, cause =>
+    cause instanceof ConfigError
+      ? cause
+      : new ConfigError({
+          message: String(cause),
+          cause,
+        })
   )
 
 /* --------------------------------------------------------------------------
@@ -199,7 +212,7 @@ const makeConfigStore = (sql: SqliteClient.SqliteClient): ConfigStoreService => 
       })
     ),
 
-  deleteProject: (id) =>
+  deleteProject: id =>
     onError(
       Effect.gen(function* () {
         /*
@@ -210,7 +223,7 @@ const makeConfigStore = (sql: SqliteClient.SqliteClient): ConfigStoreService => 
       })
     ),
 
-  createDatabase: (input) =>
+  createDatabase: input =>
     onError(
       Effect.gen(function* () {
         const id = yield* newId<DatabaseId>()
@@ -220,7 +233,7 @@ const makeConfigStore = (sql: SqliteClient.SqliteClient): ConfigStoreService => 
       })
     ),
 
-  listDatabases: (projectId) =>
+  listDatabases: projectId =>
     onError(
       Effect.gen(function* () {
         const rows =
@@ -245,7 +258,7 @@ const makeConfigStore = (sql: SqliteClient.SqliteClient): ConfigStoreService => 
       })
     ),
 
-  deleteDatabase: (id) =>
+  deleteDatabase: id =>
     onError(
       Effect.gen(function* () {
         /* Cascade removes this database's connections as well. */
@@ -253,7 +266,7 @@ const makeConfigStore = (sql: SqliteClient.SqliteClient): ConfigStoreService => 
       })
     ),
 
-  createConnection: (input) =>
+  createConnection: input =>
     onError(
       Effect.gen(function* () {
         const id = yield* newId<ConnectionId>()
@@ -263,7 +276,7 @@ const makeConfigStore = (sql: SqliteClient.SqliteClient): ConfigStoreService => 
       })
     ),
 
-  listConnections: (databaseId) =>
+  listConnections: databaseId =>
     onError(
       Effect.gen(function* () {
         const rows =
@@ -284,7 +297,7 @@ const makeConfigStore = (sql: SqliteClient.SqliteClient): ConfigStoreService => 
       })
     ),
 
-  deleteConnection: (id) =>
+  deleteConnection: id =>
     onError(
       Effect.gen(function* () {
         yield* sql`DELETE FROM connections WHERE id = ${id}`
