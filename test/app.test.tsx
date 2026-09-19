@@ -10,8 +10,8 @@ describe("App", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
 
     const spans = setup.captureSpans()
-    expect(spans.cols).toBe(80)
-    expect(spans.rows).toBe(24)
+    expect(spans.cols).toBe(88)
+    expect(spans.rows).toBe(26)
     expect(setup.captureCharFrame()).toBeDefined()
 
     setup.renderer.destroy()

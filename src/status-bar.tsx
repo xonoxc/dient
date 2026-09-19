@@ -31,9 +31,10 @@ const MODE_LABEL: Record<VimMode, string> = {
   visual: "VISUAL",
 }
 
-/* Fixed credits: mode(9) + brand(7) + hints(30) leaves room for the middle. */
+/* Fixed credits: mode(9) + brand(7) + hints(30) + page padding(2×2) leaves the
+ * middle. Budget the worst case (80-col terminal, app padded on both sides): */
 const HINTS_MAX = 30
-const MID_MAX = 80 - 9 - 7 - HINTS_MAX
+const MID_MAX = 80 - 4 - 9 - 7 - HINTS_MAX
 
 export function StatusBar(props: StatusBarProps) {
   const theme = useTheme()

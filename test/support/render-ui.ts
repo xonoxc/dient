@@ -22,8 +22,8 @@ export async function renderApp(
   options: { width?: number; height?: number; kittyKeyboard?: boolean } = {}
 ): Promise<TestRendererSetup> {
   const setup = await testRender(node, {
-    width: options.width ?? 80,
-    height: options.height ?? 24,
+    width: options.width ?? 88,
+    height: options.height ?? 26,
     kittyKeyboard: options.kittyKeyboard ?? true,
   })
   globalThis.IS_REACT_ACT_ENVIRONMENT = false

@@ -11,14 +11,29 @@ import {
 
 const ESC = "ESCAPE"
 
+interface FrameLine {
+  readonly text: string
+}
+interface FrameSpanRow {
+  readonly spans: ReadonlyArray<FrameLine>
+}
+interface CaptureSpans {
+  readonly lines: ReadonlyArray<FrameSpanRow>
+}
+
+/** Last row that actually renders text (padding rows are whitespace-only spans). */
+const lastTextRow = (frame: CaptureSpans): string =>
+  frame.lines
+    .map(line => line.spans.map(span => span.text).join(""))
+    .findLast(line => line.trim().length > 0) ?? ""
+
 describe("App shell", () => {
   test("renders the status bar pinned to the bottom with NORMAL mode", async () => {
     const services = await resolveTestServices(freshConfigFile())
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       const frame = setup.captureSpans()
-      const lastRow = frame.lines[frame.rows - 1]!
-      const rowText = lastRow.spans.map(span => span.text).join("")
+      const rowText = lastTextRow(frame)
       expect(rowText).toContain("NORMAL")
       expect(rowText).toContain("dient") /* status bar carries the app brand */
     } finally {
@@ -34,8 +49,7 @@ describe("App shell", () => {
       await setup.waitForFrame(f => f.includes("SETTINGS"))
 
       const frame = setup.captureSpans()
-      const lastRow = frame.lines[frame.rows - 1]!
-      expect(lastRow.spans.map(span => span.text).join("")).toContain("a add")
+      expect(lastTextRow(frame)).toContain("a add")
     } finally {
       setup.renderer.destroy()
     }
@@ -123,8 +137,7 @@ describe("explorer flow", () => {
       expect(setup.captureCharFrame()).toContain("alice")
 
       const frame = setup.captureSpans()
-      const lastRow = frame.lines[frame.rows - 1]!
-      expect(lastRow.spans.map(span => span.text).join("")).toContain("3 rows")
+      expect(lastTextRow(frame)).toContain("3 rows")
     } finally {
       setup.renderer.destroy()
     }

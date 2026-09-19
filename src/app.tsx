@@ -110,7 +110,10 @@ function Shell() {
   ]
 
   /* Unknown commands get a helpful toast instead of silent nothing. */
-  const allCommands = [...commands, ...bus.commands]
+  /* Context-sensitive (explorer) commands run/match before the global shell
+     ones, so the palette strip leads with `:e <table>` / `:connect` / `:refresh`
+     — the commands users most need discoverability for. No matcher collides. */
+  const allCommands = [...bus.commands, ...commands]
   const fallback: AppCommand = {
     id: "unknown",
     help: "",
@@ -170,20 +173,23 @@ function Shell() {
 
   return (
     <box flexGrow={1} flexDirection="column" backgroundColor={c.bg}>
-      <box flexGrow={1} flexDirection="row">
-        {screen}
+      <box flexGrow={1} flexDirection="column" paddingX={2} paddingY={2}>
+        <box flexGrow={1} flexDirection="row">
+          {screen}
+        </box>
+        <CommandBar commands={allCommands} />
+        <StatusBar
+          mode={status.mode}
+          engine={status.engine}
+          connection={status.connection}
+          database={status.database}
+          table={status.table}
+          rows={status.rows}
+          total={status.total}
+          hints={status.hints}
+        />
       </box>
-      <CommandBar commands={allCommands} />
-      <StatusBar
-        mode={status.mode}
-        engine={status.engine}
-        connection={status.connection}
-        database={status.database}
-        table={status.table}
-        rows={status.rows}
-        total={status.total}
-        hints={status.hints}
-      />
+      {/* Overlays stay flush to the terminal edge, not inset by the app padding. */}
       <ToastView />
       <ModalView />
       <HelpScreen />
@@ -198,6 +204,11 @@ function CommandBar({ commands }: { commands: ReadonlyArray<ShellCommand> }) {
 
   if (!commandLine.open) return null
 
+  /* The palette is one line; cut the help text deterministically in JS so the
+     strip never flips which commands it shows (OpenTUI truncate is width-
+     dependent). The bus commands lead (see Shell.allCommands). */
+  const paletteText = commands.map(x => x.help).join("  ").slice(0, 64)
+
   return (
     <box height={1} flexDirection="row" alignItems="center" paddingX={1} backgroundColor={c.bgSurface} overflow="hidden">
       <text fg={c.success}>:</text>
@@ -207,7 +218,7 @@ function CommandBar({ commands }: { commands: ReadonlyArray<ShellCommand> }) {
       </box>
       <box flexGrow={1} />
       <text fg={c.textMuted} truncate>
-        {commands.map(x => x.help).join("  ")}
+        {paletteText}
       </text>
     </box>
   )
