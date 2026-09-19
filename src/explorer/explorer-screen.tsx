@@ -4,7 +4,7 @@
  * state for table navigation and feeds the shell's status bar through
  * `SessionProvider`.
  */
-import { useEffect, useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useKeyboard } from "@opentui/react"
 import { useTheme } from "@/theme-context"
 import { useRouter, useCommandLine, useSessionStatus, useToasts } from "@/app-context"
@@ -12,6 +12,8 @@ import { Sidebar } from "@/sidebar/sidebar"
 import { DataTable } from "@/table/data-table"
 import { useVimMode } from "@/vim"
 import { useExplorer } from "@/explorer/use-explorer"
+import { useCellEditor } from "@/editor/use-cell-editor"
+import { formatCell } from "@/table/use-table"
 import { connectionLabel } from "@/connection/config"
 
 const TABLE_MOVE_KEYS = new Set(["j", "k", "g", "G"])
@@ -24,11 +26,32 @@ export function ExplorerScreen() {
   const session = useSessionStatus()
   const toasts = useToasts()
   const explorer = useExplorer()
-  const { sidebar, focus, setFocus, active, loading, error, tableName, tables } = explorer
+  const { sidebar, focus, setFocus, active, loading, error, tableName, tables, tableInfo } = explorer
 
   /* Vim mode drives the cursor inside the currently loaded rows. */
   const vim = useVimMode(explorer.table.sortedRows.length)
   const vimMode = vim.mode
+
+  /* The cell editor targets one cell: the vim cursor's row and a column cursor
+     (right/left arrows), with the draft validated against the schema. */
+  const [editColumn, setEditColumn] = useState(0)
+  const editor = useCellEditor()
+
+  const commitEdit = () => {
+    const target = editor.editTarget()
+    if (!target) return
+    const editingColumns = tableInfo
+      ? tableInfo.columns.map(column => ({ name: column.name, type: column.type }))
+      : explorer.table.columns
+    const result = editor.commit(editingColumns)
+    if (!result) {
+      const failure = editor.errorValue()
+      if (failure) toasts.push("error", failure)
+      return
+    }
+    editor.cancel()
+    void explorer.saveCell(target.rowIndex, target.column, result.value)
+  }
 
   const hints = useMemo(
     () =>
@@ -82,15 +105,48 @@ export function ExplorerScreen() {
         return
       }
     } else {
+      /* While a cell is being edited, everything but commit/cancel is text. */
+      if (editor.isEditing()) {
+        if (key === "return" || key === "enter" || key === "\r") {
+          commitEdit()
+          return
+        }
+        if (key === "\u001b" || key === "Escape" || key === "escape" || (e.ctrl === true && key === "c")) {
+          editor.cancel()
+          return
+        }
+        if (key === "backspace") {
+          editor.backspace()
+          return
+        }
+        if (key === " " || key === "space") {
+          editor.type(" ")
+          return
+        }
+        if (key && key.length === 1) {
+          editor.type(key)
+          return
+        }
+        return
+      }
       if (key === "h" || key === "left") {
         setFocus("sidebar")
+        return
+      }
+      /* arrow keys move the column cursor within the focused row */
+      if (key === "right") {
+        setEditColumn(current => Math.min(Math.max(explorer.table.columns.length - 1, 0), current + 1))
+        return
+      }
+      if (key === "left") {
+        setEditColumn(current => Math.max(0, current - 1))
         return
       }
       if (key === "i" || key === "v") {
         toasts.push("info", `${key.toUpperCase()} editing lands in a later phase`)
         return
       }
-      if (key === "\u001b" || key === "Escape") {
+      if (key === "\u001b" || key === "Escape" || key === "escape") {
         vim.pressKey(key)
         return
       }
@@ -98,19 +154,26 @@ export function ExplorerScreen() {
         vim.pressKey(key)
         return
       }
+      if (key === "return" || key === "enter" || key === "\r") {
+        if (tableName && active) {
+          const row = explorer.table.sortedRows[vim.cursor]
+          const column = explorer.table.columns[editColumn]?.name ?? explorer.table.columns[0]?.name
+          if (row && column) {
+            const current = row[column]
+            editor.open({
+              rowIndex: vim.cursor,
+              column,
+              original: current === null || current === undefined ? "" : formatCell(current),
+            })
+          }
+        }
+        return
+      }
     }
 
     switch (key) {
       case "tab":
         explorer.cycleConnection()
-        return
-      case "enter":
-      case "return":
-      case "\r":
-        if (tableName) {
-          /* full cell editor lands in a later phase */
-          toasts.push("info", `table ${tableName} is open — editing lands in a later phase`)
-        }
         return
     }
   })
@@ -136,7 +199,7 @@ export function ExplorerScreen() {
             <text fg={c.textMuted}>connecting…</text>
           </box>
         ) : active ? (
-          <DataTable table={{ ...explorer.table, cursor: vim.cursor }} viewportRows={16} empty="no rows" />
+          <DataTable table={{ ...explorer.table, cursor: vim.cursor }} viewportRows={16} empty="no rows" editing={editor.preview} />
         ) : (
           <box flexGrow={1} alignItems="center" justifyContent="center">
             <text fg={c.textMuted}>select a connection in the sidebar to start browsing</text>

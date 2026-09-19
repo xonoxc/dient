@@ -8,13 +8,16 @@
  * Effect the service boundary), so hooks never block a render.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import { useServices, useToasts } from "@/app-context"
 import { useSidebar, type SidebarNode } from "@/sidebar/use-sidebar"
 import type { ConnectionStatus } from "@/connection/connection-manager"
 import type { Connection, ConnectionId, Database } from "@/domain"
 import type { ActiveConnection, ColumnInfo } from "@/drivers/types"
+import type { TableInfo } from "@/inspector/types"
+import { cleanIdentifier } from "@/query/identifier"
 import { useTable, type UseTableResult } from "@/table/use-table"
+import { formatCell } from "@/table/use-table"
 
 export type PanelFocus = "sidebar" | "table"
 
@@ -35,10 +38,12 @@ export interface UseExplorerResult {
   readonly error: string | null
   readonly tableName: string | null
   readonly table: UseTableResult
+  readonly tableInfo: TableInfo | null
   readonly total: number | null
   readonly selectActive: (index?: number) => void
   readonly openTable: (name: string) => void
   readonly cycleConnection: () => void
+  readonly saveCell: (rowIndex: number, column: string, value: string) => Promise<boolean>
 }
 
 const PAGE_SIZE = 200
@@ -57,6 +62,7 @@ export const useExplorer = (): UseExplorerResult => {
   const [tableName, setTableName] = useState<string | null>(null)
   const [rows, setRows] = useState<ReadonlyArray<Record<string, unknown>>>([])
   const [columns, setColumns] = useState<ReadonlyArray<ColumnInfo>>([])
+  const [tableInfo, setTableInfo] = useState<TableInfo | null>(null)
   const [total, setTotal] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -119,6 +125,11 @@ export const useExplorer = (): UseExplorerResult => {
       .then(count => {
         if (gen !== generation.current) return
         setTotal(count ?? null)
+        return runService(schemaInspector.describeTable(activeHandle.current!, name))
+      })
+      .then(info => {
+        if (gen !== generation.current) return
+        setTableInfo(info !== undefined ? Option.getOrNull(info) : null)
       })
       .catch(cause => {
         if (gen !== generation.current) return
@@ -173,6 +184,7 @@ export const useExplorer = (): UseExplorerResult => {
           setTableName(null)
           setRows([])
           setColumns([])
+          setTableInfo(null)
           setTotal(null)
           setLoading(false)
         }
@@ -208,6 +220,58 @@ export const useExplorer = (): UseExplorerResult => {
      Vim mode, so we advertise the vim cursor (0 default) as the active row. */
   const table = useTable(rows, columns)
 
+  /* Persist a single-cell edit. The primary key comes from the schema
+     inspector's `describeTable`, so the WHERE clause always reaches the exact
+     row without trusting a value the user typed. */
+  const saveCell = (rowIndex: number, column: string, value: string): Promise<boolean> => {
+    const explorer = activeExplorer.current
+    if (!explorer || !tableName) {
+      toasts.push("error", "nothing open to edit")
+      return Promise.resolve(false)
+    }
+    const row = rows[rowIndex]
+    if (!row) return Promise.resolve(false)
+    if (!tableInfo) {
+      toasts.push("error", `no schema info for ${tableName}`)
+      return Promise.resolve(false)
+    }
+    const pk = tableInfo.primaryKey
+    if (pk.length === 0) {
+      toasts.push("error", `table ${tableName} has no primary key — can't edit rows`)
+      return Promise.resolve(false)
+    }
+    if (pk.includes(column)) {
+      toasts.push("error", `editing the primary key column "${column}" is not supported`)
+      return Promise.resolve(false)
+    }
+    const columnInfo = tableInfo.columns.find(columnInfo => columnInfo.name === column)
+    const type = columnInfo?.type ?? ""
+    /* Keep numeric cells numeric (whatever the draft looks like) and let a
+       blank draft on a nullable column clear the value back to NULL. */
+    const param: unknown = /int|bigint|numeric|decimal|real|float|double|money|double_precision/.test(type.toLowerCase())
+      ? Number(value)
+      : value === "" && columnInfo?.nullable
+        ? null
+        : value
+    const engine = explorer.database.engine
+    return runService(
+      queryExecutor.execute(
+        explorer.id,
+        `UPDATE ${cleanIdentifier(engine, tableName)} SET ${cleanIdentifier(engine, column)} = ? WHERE ${cleanIdentifier(engine, pk[0]!)} = ?`,
+        [param, row[pk[0]!]]
+      )
+    )
+      .then(() => {
+        toasts.push("success", `saved ${tableName}.${column}`)
+        openTable(tableName)
+        return true
+      })
+      .catch(cause => {
+        toasts.push("error", `save failed: ${String(cause)}`)
+        return false
+      })
+  }
+
   const result = useMemo<UseExplorerResult>(
     () => ({
       sidebar,
@@ -220,12 +284,14 @@ export const useExplorer = (): UseExplorerResult => {
       error,
       tableName,
       table,
+      tableInfo,
       total,
       selectActive,
       openTable,
       cycleConnection,
+      saveCell,
     }),
-    [sidebar, focus, statuses, active, tables, loading, error, tableName, table, total]
+    [sidebar, focus, statuses, active, tables, loading, error, tableName, table, tableInfo, total, saveCell]
   )
 
   return result
