@@ -126,10 +126,10 @@ export function ExplorerScreen() {
   const hints = useMemo(
     () =>
       focus === "sidebar"
-        ? ["j/k move", "Enter expand/select", "h/l panels", "Tab next conn", ":/? commands/help"]
+        ? ["s settings", "j/k move", "Enter open", "h/l panels", "Tab next conn", "? help"]
         : explorer.search.trim()
           ? [`${explorer.searchCount} matches`, "n/N jump", "Esc clear"]
-          : ["j/k move", "gg/G jump", "h/l panels", "Tab next conn", ":/? commands/help"],
+          : ["s settings", "j/k move", "gg/G jump", "h/l panels", "Tab next conn", "? help"],
     [focus, explorer.search, explorer.searchCount]
   )
 
@@ -163,6 +163,9 @@ export function ExplorerScreen() {
         case "g":
         case "G":
           sidebar.jump(key === "G" ? "last" : "first")
+          return
+        case "s":
+          router.setScreen("settings")
           return
         case "\u001b":
         case "Escape":
@@ -227,6 +230,10 @@ export function ExplorerScreen() {
       }
       if (key === "h" || key === "left") {
         setFocus("sidebar")
+        return
+      }
+      if (key === "s") {
+        router.setScreen("settings")
         return
       }
       if (key === "/") {

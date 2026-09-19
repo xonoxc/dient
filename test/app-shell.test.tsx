@@ -49,7 +49,7 @@ describe("App shell", () => {
       await setup.waitForFrame(f => f.includes("SETTINGS"))
 
       const frame = setup.captureSpans()
-      expect(lastTextRow(frame)).toContain("a add")
+      expect(lastTextRow(frame)).toContain("j/k move")
     } finally {
       setup.renderer.destroy()
     }

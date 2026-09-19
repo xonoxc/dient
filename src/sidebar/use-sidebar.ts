@@ -14,7 +14,7 @@ import type { ConfigStoreService } from "@/config"
 import type { Connection, Database, DatabaseId, Project, ProjectId } from "@/domain"
 import { connectionLabel } from "@/connection/config"
 
-export type SidebarKind = "project" | "database" | "connection"
+export type SidebarKind = "project" | "database" | "connection" | "table"
 
 export interface SidebarNode {
   readonly id: string
@@ -27,6 +27,8 @@ export interface SidebarNode {
   readonly project?: Project
   readonly database?: Database
   readonly connection?: Connection
+  /** Table name, for `kind: "table"` leaf nodes under an open connection. */
+  readonly table?: string
 }
 
 export interface SidebarData {
@@ -35,12 +37,17 @@ export interface SidebarData {
   readonly connections: ReadonlyMap<DatabaseId, ReadonlyArray<Connection>>
 }
 
+export type TablesByConnection = Readonly<Record<string, ReadonlyArray<string>>>
+
 const EMPTY: SidebarData = { projects: [], databases: new Map(), connections: new Map() }
 
-/* Flatten the three-level tree in display order, honoring what is expanded. */
+/* Flatten the three-level tree in display order, honoring what is expanded.
+   An expanded *connected* connection surfaces its loaded tables as leaves, so
+   the sidebar doubles as the table browser. */
 export const buildTree = (
   data: SidebarData,
-  expanded: ReadonlySet<string>
+  expanded: ReadonlySet<string>,
+  tablesByConnection: TablesByConnection = {}
 ): ReadonlyArray<SidebarNode> => {
   const nodes: SidebarNode[] = []
   for (const project of data.projects) {
@@ -68,17 +75,33 @@ export const buildTree = (
       })
       if (!expanded.has(database.id)) continue
       for (const connection of data.connections.get(database.id) ?? []) {
+        const connectionExpanded = expanded.has(connection.id)
         nodes.push({
           id: `connection:${connection.id}`,
           kind: "connection",
           refId: connection.id,
           label: connectionLabel(connection),
           depth: 2,
-          expandable: false,
-          expanded: false,
+          expandable: true,
+          expanded: connectionExpanded,
           database,
           connection,
         })
+        if (!connectionExpanded) continue
+        for (const table of tablesByConnection[connection.id] ?? []) {
+          nodes.push({
+            id: `table:${connection.id}:${table}`,
+            kind: "table",
+            refId: table,
+            label: table,
+            depth: 3,
+            expandable: false,
+            expanded: false,
+            database,
+            connection,
+            table,
+          })
+        }
       }
     }
   }
@@ -99,11 +122,17 @@ export interface UseSidebarResult {
   readonly jump: (position: "first" | "last") => void
   readonly toggle: (index: number) => void
   readonly open: (index: number) => void
+  /** Force a connection node open so a freshly connected connection's tables
+      are visible without a second Enter. */
+  readonly expandConnection: (connectionId: string) => void
 }
 
 type ReactMutableRef<T> = { readonly current: T }
 
-export const useSidebar = (configStore: ConfigStoreService): UseSidebarResult => {
+export const useSidebar = (
+  configStore: ConfigStoreService,
+  tablesByConnection: TablesByConnection = {}
+): UseSidebarResult => {
   /* Mutable truth lives in refs so key handlers can chain against the latest
      state in a single frame; a new immutable snapshot is pushed to state for
      rendering. */
@@ -118,11 +147,23 @@ export const useSidebar = (configStore: ConfigStoreService): UseSidebarResult =>
   const [loaded, setLoaded] = useState(false)
 
   const recompute = (): void => {
-    const nextItems = buildTree(dataRef.current, expandedRef.current)
+    const nextItems = buildTree(dataRef.current, expandedRef.current, tablesByConnection)
     setItems(nextItems)
     setCursor(Math.max(0, Math.min(cursorRef.current, nextItems.length - 1)))
     setExpanded(new Set(expandedRef.current))
   }
+  const recomputeRef = useRef<(tables: TablesByConnection) => void>(() => undefined)
+  recomputeRef.current = tables => {
+    const nextItems = buildTree(dataRef.current, expandedRef.current, tables)
+    setItems(nextItems)
+    setCursor(Math.max(0, Math.min(cursorRef.current, nextItems.length - 1)))
+  }
+
+  /* New table lists arrive from the explorer after a connect; recompute with
+     them so `items` stays a pure function of (data, expanded, tables). */
+  useEffect(() => {
+    recomputeRef.current(tablesByConnection)
+  }, [tablesByConnection])
 
   const itemsRef = useRef<ReadonlyArray<SidebarNode>>(items)
   itemsRef.current = items
@@ -209,12 +250,15 @@ export const useSidebar = (configStore: ConfigStoreService): UseSidebarResult =>
     open: index => {
       const node = itemsRef.current[index]
       if (!node) return
-      if (node.kind !== "connection") {
-        toggleExpanded(index)
-        return
-      }
       cursorRef.current = index
       setCursor(index)
+      if (node.kind !== "connection" && node.expandable) toggleExpanded(index)
+    },
+    expandConnection: connectionId => {
+      const next = new Set(expandedRef.current)
+      next.add(connectionId)
+      expandedRef.current = next
+      recompute()
     },
   }
 }

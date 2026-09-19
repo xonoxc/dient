@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Effect, Option } from "effect"
 import { useDialog, useServices, useToasts } from "@/app-context"
-import { useSidebar, type SidebarNode } from "@/sidebar/use-sidebar"
+import { useSidebar, type SidebarNode, type TablesByConnection } from "@/sidebar/use-sidebar"
 import type { ConnectionStatus } from "@/connection/connection-manager"
 import type { Connection, ConnectionId, Database } from "@/domain"
 import type { ActiveConnection, ColumnInfo } from "@/drivers/types"
@@ -65,7 +65,6 @@ export const useExplorer = (): UseExplorerResult => {
   const { configStore, connectionManager, schemaInspector, queryExecutor, errorLog } = useServices()
   const toasts = useToasts()
   const dialog = useDialog()
-  const sidebar = useSidebar(configStore)
 
   const [focus, setFocus] = useState<PanelFocus>("sidebar")
   const [statuses, setStatuses] = useState<Record<string, ConnectionStatus>>({})
@@ -82,6 +81,15 @@ export const useExplorer = (): UseExplorerResult => {
   /* Bumping this re-polls the sidebar status dots. A failed connect neither
      changes the tree nor `active`, so without it the dot would stay ○ forever. */
   const [statusPoll, setStatusPoll] = useState(0)
+
+  /* The sidebar mirrors a connected connection's tables as leaf rows so the
+     tree doubles as a table browser. Only the active connection's list is
+     mounted; switching connections swaps the list. */
+  const tablesByConnection = useMemo<TablesByConnection>(
+    () => (active ? { [active.id]: tables } : {}),
+    [active, tables]
+  )
+  const sidebar = useSidebar(configStore, tablesByConnection)
 
   const activeHandle = useRef<ActiveConnection | null>(null)
   const activeExplorer = useRef<ActiveExplorer | null>(null)
@@ -162,6 +170,13 @@ export const useExplorer = (): UseExplorerResult => {
     const target = sidebar.itemsRef.current[cursor]
     if (!target) return
 
+    /* A table leaf opens straight into the data view. */
+    if (target.kind === "table") {
+      if (target.table) openTable(target.table)
+      setFocus("table")
+      return
+    }
+
     if (target.kind !== "connection") {
       sidebar.open(index ?? sidebar.cursorRef.current)
       return
@@ -189,6 +204,9 @@ export const useExplorer = (): UseExplorerResult => {
           database: node.database!,
         }
         setActive(activeExplorer.current)
+
+        /* Surface the tables under this connection right away. */
+        sidebar.expandConnection(node.refId as ConnectionId)
 
         return runService(schemaInspector.listTables(handle))
       })

@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { Effect } from "effect"
 import { useDialog, useServices, useToasts } from "@/app-context"
 import { connectionLabel } from "@/connection/config"
+import { completePath, pathCandidates } from "@/fs/path-complete"
 import type { CreateConnectionInput, ConfigStoreService } from "@/config"
 import type { Connection, ConnectionId, Database, DatabaseId, Project, ProjectId } from "@/domain"
 import type { Engine } from "@/domain"
@@ -87,6 +88,10 @@ export interface UseSettingsResult {
   readonly testConnection: () => void
   readonly submitForm: () => void
   readonly cancelForm: () => void
+  /** Non-null while a connection test is in flight (renders "connecting…"). */
+  readonly testing: string | null
+  /** Filesystem matches for the active filename field (sqlite forms). */
+  readonly completions: ReadonlyArray<string>
 }
 
 export const buildSettingsTree = (
@@ -127,6 +132,8 @@ export const useSettings = (): UseSettingsResult => {
   const [form, setFormState] = useState<SettingsForm | null>(null)
   const [draft, setDraftState] = useState("")
   const [engine, setEngineState] = useState<Engine>("postgres")
+  const [testing, setTesting] = useState<string | null>(null)
+  const testingRef = useRef<string | null>(null)
 
   const formRef = useRef<SettingsForm | null>(null)
   const draftRef = useRef("")
@@ -195,6 +202,15 @@ export const useSettings = (): UseSettingsResult => {
   const field = form?.kind === "connection" ? fieldsOf(form)[form.fieldIndex] ?? null : null
   const fieldCount = form?.kind === "connection" ? fieldsOf(form).length : 0
   const fieldIndex = form?.kind === "connection" ? form.fieldIndex : 0
+
+  /* Live path matches for the sqlite filename field, shown under the form. */
+  const completions = useMemo(() => {
+    if (form?.kind !== "connection") return []
+    if (databaseById(form.databaseId)?.engine !== "sqlite") return []
+    if (field !== "filename") return []
+    return pathCandidates(draft)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form, draft, databases])
 
   const openForm = (next: SettingsForm | null): void => {
     formRef.current = next
@@ -331,7 +347,14 @@ export const useSettings = (): UseSettingsResult => {
         engineRef.current = next
         setEngineState(next)
       } else if (current.kind === "connection") {
+        /* A single-field sqlite form has nothing to tab between — Tab becomes
+           shell-style path completion of the filename instead. */
         const fields = fieldsOf(current)
+        if (fields.length === 1 && databaseById(current.databaseId)?.engine === "sqlite") {
+          draftRef.current = completePath(draftRef.current)
+          setDraftState(draftRef.current)
+          return
+        }
         const fieldIndexNext = (current.fieldIndex + 1) % fields.length
         const next: SettingsForm = { ...current, fieldIndex: fieldIndexNext }
         formRef.current = next
@@ -402,7 +425,11 @@ export const useSettings = (): UseSettingsResult => {
     },
     testConnection: () => {
       const item = items[Math.min(cursor, items.length - 1)]
-      if (!item || item.kind !== "connection") return
+      if (!item || item.kind !== "connection") {
+        toasts.push("info", "move to a connection row (j/k) and press t to test it")
+        return
+      }
+      if (testingRef.current) return
       const databaseId = item.parentId as DatabaseId
       const database = databaseById(databaseId)
       const connection = connectionRow(databaseId, item.refId as ConnectionId)
@@ -410,15 +437,22 @@ export const useSettings = (): UseSettingsResult => {
         toasts.push("error", "connection not found")
         return
       }
+      const label = connectionLabel(connection)
+      testingRef.current = label
+      setTesting(label)
+      toasts.push("info", `testing ${label}…`)
       void Effect.runPromise(connectionManager.pingConnection(database, connection))
-        .then(ok =>
-          ok
-            ? toasts.push("success", `connection ok (${connectionLabel(connection)})`)
-            : toasts.push("error", "connection failed")
-        )
+        .then(ok => {
+          testingRef.current = null
+          setTesting(null)
+          if (ok) toasts.push("success", `${label} ok (${database.engine})`)
+          else toasts.push("error", `${label} failed`)
+        })
         .catch(cause => {
+          testingRef.current = null
+          setTesting(null)
           errorLog.append("settings.testConnection", cause)
-          toasts.push("error", `connection failed: ${String(cause)}`)
+          toasts.push("error", `${label} failed: ${String(cause)}`)
         })
     },
     submitForm: () => {
@@ -463,5 +497,7 @@ export const useSettings = (): UseSettingsResult => {
       }
     },
     cancelForm: () => openForm(null),
+    testing,
+    completions,
   }
 }

@@ -233,6 +233,8 @@ export interface CommandLineState {
   readonly closeLine: () => void
   readonly typeChar: (char: string) => void
   readonly backspace: () => void
+  /** Replace the whole buffer (Tab completion). */
+  readonly replaceText: (text: string) => void
 }
 
 const CommandLineContext = createContext<CommandLineState | null>(null)
@@ -273,6 +275,10 @@ export function CommandLineProvider({ children }: { children?: ReactNode }) {
       backspace: () => {
         textRef.current = textRef.current.slice(0, -1)
         setText(textRef.current)
+      },
+      replaceText: text => {
+        textRef.current = text
+        setText(text)
       },
     }),
     [open, text]

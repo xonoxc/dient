@@ -40,3 +40,4 @@ context/
 *.db-wal
 data.db
 x.db
+sample.db

@@ -58,6 +58,20 @@ describe("command line", () => {
     }
   })
 
+  test("TAB completes the command keyword to its full name", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store)
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      /* ":sett" expands through the shared prefix "settings" → executing lands
+         on the settings screen instead of erroring on an unknown command. */
+      await pressKeys(setup, [":", "s", "e", "t", "t", "TAB", "RETURN"])
+      await setup.waitForFrame(f => f.includes("SETTINGS"))
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
   test(":e <table> opens a table without touching the sidebar", async () => {
     const services = await resolveTestServices(freshConfigFile())
     await seedProject(services.store)
@@ -131,6 +145,40 @@ describe("command line", () => {
       const frame = setup.captureCharFrame()
       expect(frame).toContain("alice")
       expect(frame).not.toContain("zed@example.com")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+})
+
+describe("sidebar table browser", () => {
+  test("connecting auto-expands the connection and reveals its tables as rows", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    const path = join(mkdtempSync(join(tmpdir(), "dient-tables-")), "multi.db")
+    const db = new SqliteDatabase(path)
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT)")
+    db.run("INSERT INTO users (id, name, email) VALUES (1, 'alice', 'alice@example.com')")
+    db.run("CREATE TABLE orders (id INTEGER PRIMARY KEY, item TEXT)")
+    db.close()
+    await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: path })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("▸ main"))
+      await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(f => f.includes("○ multi.db"))
+      /* Enter on the connection both connects and expands its table list */
+      await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(
+        f => f.includes("● multi.db") && f.includes("▸ users") && f.includes("▸ orders") && f.includes("USERS")
+      )
+
+      /* the sidebar is focused and the cursor is on multi.db → one down = the
+         first table (orders sorts before users) → Enter opens that table */
+      await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(f => f.includes("▶ ORDERS"))
+      const frame = setup.captureCharFrame()
+      expect(frame).not.toContain("alice")
     } finally {
       setup.renderer.destroy()
     }

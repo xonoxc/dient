@@ -77,8 +77,9 @@ describe("explorer screen", () => {
       expect(beta).toContain("orders.db@app")
       expect(beta).not.toContain("alice")
 
-      /* cursor sits on orders.db; walk down and expand the demo project too */
-      await pressKeys(setup, ["j", "RETURN"])
+      /* cursor sits on orders.db, which now lists its own table beneath it;
+         two downs skip the table row and land on the demo project to expand */
+      await pressKeys(setup, ["j", "j", "RETURN"])
       await setup.waitForFrame(f => f.includes("▸ main"))
       await pressKeys(setup, ["j", "RETURN"])
       await setup.waitForFrame(f => f.includes("○ data.db"))

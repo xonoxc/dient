@@ -72,7 +72,29 @@ describe("buildTree", () => {
     }
     const nodes = buildTree(data, new Set(["p1", "d1"]))
     expect(nodes).toHaveLength(3)
-    expect(nodes[2]).toMatchObject({ kind: "connection", refId: conn.id, depth: 2, expandable: false })
+    expect(nodes[2]).toMatchObject({ kind: "connection", refId: conn.id, depth: 2, expandable: true })
+  })
+
+  test("an expanded connection surfaces its tables as depth-3 leaves", () => {
+    const p = project("p1", "demo")
+    const db = database("d1", "p1", "main", "sqlite")
+    const conn = connection("c1", "d1", { filename: "/tmp/data.db" })
+    const data: SidebarData = {
+      projects: [p],
+      databases: databasesOf("p1", [db]),
+      connections: connectionsOf("d1", [conn]),
+    }
+    const nodes = buildTree(data, new Set(["p1", "d1", "c1"]), {
+      [conn.id as ConnectionId]: ["users", "orders"],
+    })
+    expect(nodes.map(n => ({ kind: n.kind, label: n.label, depth: n.depth }))).toEqual([
+      { kind: "project", label: "demo", depth: 0 },
+      { kind: "database", label: "main", depth: 1 },
+      { kind: "connection", label: "data.db", depth: 2 },
+      { kind: "table", label: "users", depth: 3 },
+      { kind: "table", label: "orders", depth: 3 },
+    ])
+    expect(nodes[4]).toMatchObject({ kind: "table", table: "orders", expandable: false })
   })
 
   test("collapsing a node hides its children", () => {

@@ -137,7 +137,7 @@ describe("settings screen", () => {
 
       await pressKeys(setup, ["j"])
       await pressKeys(setup, ["t"])
-      await setup.waitForFrame(f => f.includes("connection ok"))
+      await setup.waitForFrame(f => f.includes("ok (sqlite)"))
     } finally {
       setup.renderer.destroy()
     }

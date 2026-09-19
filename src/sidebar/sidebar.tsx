@@ -87,16 +87,28 @@ function SidebarRow({
     const active = activeConnectionId === node.connection!.id
     const dot = status === "connected" ? "●" : status === "error" ? "◉" : "○"
     const dotFg = status === "connected" ? c.success : status === "error" ? c.error : c.textMuted
+    const glyph = node.expanded ? "▾" : "▸"
     return (
       <box height={1} flexDirection="row" backgroundColor={rowBg} paddingX={1}>
         <text fg={rowFg}>
           {indent}
+          {glyph}{" "}
           {active ? "▶" : " "}
         </text>
         <text fg={dotFg}>{dot}</text>
         <text fg={rowFg}> {node.label}</text>
         <box flexGrow={1} />
         <text fg={c.accentMuted}>{ENGINE_BADGE[node.database?.engine ?? ""] ?? ""}</text>
+      </box>
+    )
+  }
+
+  if (node.kind === "table") {
+    return (
+      <box height={1} flexDirection="row" backgroundColor={rowBg} paddingX={1}>
+        <text fg={rowFg}>
+          {indent}▸ {node.label}
+        </text>
       </box>
     )
   }

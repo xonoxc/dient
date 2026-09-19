@@ -134,6 +134,24 @@ function Shell() {
         commandLine.closeLine()
         return
       }
+      /* Tab completes the command name to the longest common prefix across
+         every registered command (e.g. ":sett" → ":settings "). */
+      if (key === "tab") {
+        const typed = commandLine.text.trim().replace(/^:/, "")
+        const keywords = allCommands
+          .map(command => command.help.match(/^:(\S+)/)?.[1] ?? "")
+          .filter(keyword => keyword.startsWith(typed))
+        if (keywords.length > 0 && typed.length > 0) {
+          let completed = keywords[0]!
+          for (const keyword of keywords.slice(1)) {
+            let i = 0
+            while (i < completed.length && i < keyword.length && completed[i] === keyword[i]) i++
+            completed = completed.slice(0, i)
+          }
+          if (completed.length > typed.length) commandLine.replaceText(`${completed} `)
+        }
+        return
+      }
       if (key === "return" || key === "enter" || key === "\r") {
         const text = commandLine.text.trim()
         if (!text) {
@@ -173,7 +191,7 @@ function Shell() {
 
   return (
     <box flexGrow={1} flexDirection="column" backgroundColor={c.bg}>
-      <box flexGrow={1} flexDirection="column" paddingX={2} paddingY={2}>
+      <box flexGrow={1} flexDirection="column" paddingX={1} paddingY={1}>
         <box flexGrow={1} flexDirection="row">
           {screen}
         </box>

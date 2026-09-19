@@ -8,6 +8,8 @@ import { useTheme } from "@/theme-context"
 import { useRouter } from "@/app-context"
 
 const BINDINGS: ReadonlyArray<[string, string, string]> = [
+  ["NORMAL", "s", "open settings"],
+  ["NORMAL", "e", "back to explorer (settings)"],
   ["NORMAL", "j / k", "move up / down"],
   ["NORMAL", "h / l", "focus sidebar / table"],
   ["NORMAL", "gg / G", "first / last row"],

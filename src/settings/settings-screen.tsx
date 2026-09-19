@@ -18,20 +18,22 @@ export function SettingsScreen() {
   const session = useSessionStatus()
   const settings = useSettings()
 
-  const { items, cursor, form, draft, engine, field, fieldIndex, fieldCount, move, jump, toggle, add, remove, testConnection, submitForm, cancelForm, tab, typeChar, backspace } =
+  const { items, cursor, form, draft, engine, field, fieldIndex, fieldCount, move, jump, toggle, add, remove, testConnection, submitForm, cancelForm, tab, typeChar, backspace, testing, completions } =
     settings
 
   useEffect(() => {
     session.setStatus({
       mode: "normal",
       table: "settings",
-      hints: form
-        ? form.kind === "connection"
-          ? [field ? `type ${FIELD_LABEL[field]}` : "type value", "Tab field", "Enter save", "Esc cancel"]
-          : ["type name", "Tab engine", "Enter save", "Esc cancel"]
-        : ["j/k move", "Enter expand", "a add", "d delete", "t test", ":/? commands/help"],
+      hints: testing
+        ? [`testing ${testing}…`, "Esc cancel"]
+        : form
+          ? form.kind === "connection"
+            ? [field === "filename" ? `type filename${completions.length > 0 ? " · Tab completes" : ""}` : `type ${(field && FIELD_LABEL[field]) ?? "value"}`, "Tab field", "Enter save", "Esc cancel"]
+            : ["type name", "Tab engine", "Enter save", "Esc cancel"]
+          : ["e explorer", "j/k move", "Enter expand", "a add", "d delete", "t test", "? help"],
     })
-  }, [session.setStatus, form, field])
+  }, [session.setStatus, form, field, testing, completions.length])
 
   useKeyboard(e => {
     if (router.helpOpen || commandLine.open) return
@@ -66,6 +68,9 @@ export function SettingsScreen() {
     }
 
     switch (key) {
+      case "e":
+        router.setScreen("explorer")
+        return
       case "j":
         move(1)
         return
@@ -111,7 +116,11 @@ export function SettingsScreen() {
       </box>
 
       <box height={1} flexDirection="row" paddingX={1} overflow="hidden">
-        {form ? (
+        {testing ? (
+          <text fg={c.info}>
+            testing connection {testing} …
+          </text>
+        ) : form ? (
           form.kind === "connection" ? (
             <box flexDirection="row">
               <text fg={c.info}>new connection · </text>
@@ -124,7 +133,7 @@ export function SettingsScreen() {
               ) : null}
               <box flexGrow={1} />
               <text fg={c.textMuted}>
-                field {fieldIndex + 1}/{fieldCount} · Tab field · Enter save
+                field {fieldIndex + 1}/{fieldCount} · Tab {field === "filename" ? "complete" : "field"} · Enter save
               </text>
             </box>
           ) : (
@@ -140,10 +149,21 @@ export function SettingsScreen() {
           )
         ) : (
           <text fg={c.textMuted}>
-            j/k move · Enter expand · a add · d delete · t test · :explorer back · :settings here
+            e explorer · j/k move · Enter expand · a add · d delete · t test · ? help
           </text>
         )}
       </box>
+
+      {/* Filesystem matches for the sqlite filename field, on their own row so
+          they never crowd the form's status line. */}
+      {form?.kind === "connection" && field === "filename" && draft.length > 0 && completions.length > 0 ? (
+        <box height={1} paddingX={1} overflow="hidden">
+          <text fg={c.textMuted} truncate>
+            {completions.slice(0, 8).join("  ")}
+            {completions.length > 8 ? "  …" : ""}
+          </text>
+        </box>
+      ) : null}
     </box>
   )
 }
