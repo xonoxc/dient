@@ -79,6 +79,9 @@ export const useExplorer = (): UseExplorerResult => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState("")
+  /* Bumping this re-polls the sidebar status dots. A failed connect neither
+     changes the tree nor `active`, so without it the dot would stay ○ forever. */
+  const [statusPoll, setStatusPoll] = useState(0)
 
   const activeHandle = useRef<ActiveConnection | null>(null)
   const activeExplorer = useRef<ActiveExplorer | null>(null)
@@ -107,7 +110,7 @@ export const useExplorer = (): UseExplorerResult => {
     return () => {
       cancelled = true
     }
-  }, [sidebar.items, active, connectionManager])
+  }, [sidebar.items, active, statusPoll, connectionManager])
 
   const reportError = (source: string, message: string, cause: unknown) => {
     setError(message)
@@ -214,6 +217,7 @@ export const useExplorer = (): UseExplorerResult => {
         setColumns([])
         setTotal(null)
         setLoading(false)
+        setStatusPoll(poll => poll + 1)
         reportError("explorer.connect", `connect failed: ${String(cause)}`, cause)
         /* Offer a retry so a transient failure (container still booting, host
            offline) recovers from the keyboard instead of forcing navigation. */
