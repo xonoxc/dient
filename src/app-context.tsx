@@ -276,3 +276,82 @@ export function useCommandLine(): CommandLineState {
   if (!commandLine) throw new Error("useCommandLine() used outside of a <CommandLineProvider>")
   return commandLine
 }
+
+/* ---------------------------------------------------------- command bus */
+
+/** One `:` command. `match` decides if a typed line applies, `run` executes it
+    with the full text (trimmed) so commands can parse their own arguments. */
+export interface AppCommand {
+  readonly id: string
+  readonly help: string
+  readonly match: (text: string) => boolean
+  readonly run: (text: string) => void
+}
+
+export interface CommandBusState {
+  /** Every command contributed by the shell and the screens, newest last. */
+  readonly commands: ReadonlyArray<AppCommand>
+  /** Register a screen-scoped command (replacing any prior command with the
+      same id). Returns a disposal used by the screen's effect. */
+  readonly register: (command: AppCommand) => () => void
+}
+
+const CommandBusContext = createContext<CommandBusState | null>(null)
+
+export function CommandBusProvider({ children }: { children?: ReactNode }) {
+  const byId = useRef(new Map<string, AppCommand>())
+  const [version, setVersion] = useState(0)
+
+  const value = useMemo<CommandBusState>(
+    () => ({
+      get commands() {
+        return Array.from(byId.current.values())
+      },
+      register: command => {
+        /* identity-guard: re-registering the same instance is a no-op so the
+           version counter only bumps on real changes */
+        if (byId.current.get(command.id) === command) return () => undefined
+        byId.current.set(command.id, command)
+        setVersion(v => v + 1)
+        return () => {
+          if (byId.current.get(command.id) === command) {
+            byId.current.delete(command.id)
+            setVersion(v => v + 1)
+          }
+        }
+      },
+    }),
+    [version]
+  )
+
+  return <CommandBusContext.Provider value={value}>{children}</CommandBusContext.Provider>
+}
+
+export function useCommandBus(): CommandBusState {
+  const bus = useContext(CommandBusContext)
+  if (!bus) throw new Error("useCommandBus() used outside of a <CommandBusProvider>")
+  return bus
+}
+
+/** Register one command for the lifetime of the calling component. The command
+    is registered once; its `match`/`run` read the latest closure on demand so
+    screens can pass fresh state without re-registering every frame. */
+export function useCommand(command: AppCommand): void {
+  const bus = useCommandBus()
+  const latest = useRef(command)
+  latest.current = command
+  const stable = useMemo<AppCommand>(
+    () => ({
+      id: command.id,
+      help: command.help,
+      match: text => latest.current.match(text),
+      run: text => latest.current.run(text),
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [command.id, command.help]
+  )
+  /* Only the stable id/help drive (re)registration; bus.register touches refs
+     and setVersion directly, so re-running on every bus version would ping-pong
+     with the disposal it returns. */
+  useEffect(() => bus.register(stable), [stable]) // eslint-disable-line react-hooks/exhaustive-deps
+}

@@ -11,16 +11,20 @@ import type { ThemeService } from "@/theme"
 import { ThemeProvider } from "@/theme-context"
 import {
   CommandLineProvider,
+  CommandBusProvider,
   DialogProvider,
   RouterProvider,
   ServicesProvider,
   SessionProvider,
   ToastProvider,
+  useCommandBus,
   useCommandLine,
   useDialog,
   useRouter,
   useServices,
   useSessionStatus,
+  useToasts,
+  type AppCommand,
   type AppServices,
 } from "@/app-context"
 import { ExplorerScreen } from "@/explorer/explorer-screen"
@@ -38,9 +42,11 @@ export default function App({ theme, services }: { theme: ThemeService; services
           <ToastProvider>
             <DialogProvider>
               <SessionProvider>
-                <CommandLineProvider>
-                  <Shell />
-                </CommandLineProvider>
+                <CommandBusProvider>
+                  <CommandLineProvider>
+                    <Shell />
+                  </CommandLineProvider>
+                </CommandBusProvider>
               </SessionProvider>
             </DialogProvider>
           </ToastProvider>
@@ -64,8 +70,16 @@ function Shell() {
   const dialog = useDialog()
   const commandLine = useCommandLine()
   const status = useSessionStatus().status
+  const bus = useCommandBus()
+  const toasts = useToasts()
 
   const commands: ReadonlyArray<ShellCommand> = [
+    {
+      id: "setting-refresh",
+      help: ":w — flush pending changes",
+      match: text => /^(w|write|save)$/.test(text.trim()),
+      run: () => toasts.push("info", "no pending changes to save"),
+    },
     {
       id: "settings",
       help: ":settings — open settings",
@@ -95,6 +109,17 @@ function Shell() {
     },
   ]
 
+  /* Unknown commands get a helpful toast instead of silent nothing. */
+  const allCommands = [...commands, ...bus.commands]
+  const fallback: AppCommand = {
+    id: "unknown",
+    help: "",
+    match: () => false,
+    run: text => void text,
+  }
+  const matchedCommand = (text: string): AppCommand =>
+    allCommands.find(command => command.match(text)) ?? fallback
+
   /* The command line is owned by the shell, so its key handling lives here on
      an always-mounted hook. A per-line component could only register after `:`
      mounts it, silently dropping the rest of the typed chord. */
@@ -108,8 +133,13 @@ function Shell() {
       }
       if (key === "return" || key === "enter" || key === "\r") {
         const text = commandLine.text.trim()
-        const matched = commands.find(command => command.match(text))
-        if (matched) matched.run(text)
+        if (!text) {
+          commandLine.closeLine()
+          return
+        }
+        const matched = matchedCommand(text)
+        matched.run(text)
+        if (matched.id === "unknown") toasts.push("error", `unknown command: ${text}`)
         commandLine.closeLine()
         return
       }
@@ -143,7 +173,7 @@ function Shell() {
       <box flexGrow={1} flexDirection="row">
         {screen}
       </box>
-      <CommandBar commands={commands} />
+      <CommandBar commands={allCommands} />
       <StatusBar
         mode={status.mode}
         engine={status.engine}

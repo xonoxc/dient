@@ -4,7 +4,7 @@
  * state for table navigation and feeds the shell's status bar through
  * `SessionProvider`.
  */
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useKeyboard } from "@opentui/react"
 import { useTheme } from "@/theme-context"
 import { useRouter, useCommandLine, useSessionStatus, useToasts } from "@/app-context"
@@ -15,6 +15,7 @@ import { useExplorer } from "@/explorer/use-explorer"
 import { useCellEditor } from "@/editor/use-cell-editor"
 import { formatCell } from "@/table/use-table"
 import { connectionLabel } from "@/connection/config"
+import { useCommand } from "@/app-context"
 
 const TABLE_MOVE_KEYS = new Set(["j", "k", "g", "G"])
 
@@ -37,6 +38,75 @@ export function ExplorerScreen() {
   const [editColumn, setEditColumn] = useState(0)
   const editor = useCellEditor()
 
+  /* `/` search: a ref-backed buffer so a whole chord can be typed and entered
+     inside one frame without dropping keys (mirrors the command line). */
+  const searchOpenRef = useRef(false)
+  const searchBuffer = useRef("")
+  const [, bumpSearch] = useState(0)
+
+  const openSearch = () => {
+    searchOpenRef.current = true
+    searchBuffer.current = ""
+    explorer.setSearch("")
+    bumpSearch(v => v + 1)
+  }
+  const closeSearch = (commit: boolean) => {
+    searchOpenRef.current = false
+    explorer.setSearch(commit ? searchBuffer.current : "")
+    bumpSearch(v => v + 1)
+  }
+  const searchType = (character: string) => {
+    searchBuffer.current += character
+    explorer.setSearch(searchBuffer.current)
+    bumpSearch(v => v + 1)
+  }
+  const searchBackspace = () => {
+    searchBuffer.current = searchBuffer.current.slice(0, -1)
+    explorer.setSearch(searchBuffer.current)
+    bumpSearch(v => v + 1)
+  }
+
+  /* Explorer-scoped `:` commands. Registered once via the command bus; the
+     closures read live explorer state on demand. */
+  useCommand({
+    id: "explorer:open-table",
+    help: ":e <table> — open a table",
+    match: text => /^e\s+\S+/.test(text.trim()),
+    run: text => {
+      const name = text.trim().split(/\s+/)[1] ?? ""
+      explorer.openTable(name)
+    },
+  })
+  useCommand({
+    id: "explorer:refresh",
+    help: ":refresh — reload the current table",
+    match: text => text.trim() === "refresh",
+    run: () => {
+      if (explorer.tableName) explorer.openTable(explorer.tableName)
+      else toasts.push("info", "no table open to refresh")
+    },
+  })
+  useCommand({
+    id: "explorer:connect",
+    help: ":connect <db> — switch to a database",
+    match: text => /^connect\s+\S+/.test(text.trim()),
+    run: text => {
+      const name = text.trim().split(/\s+/)[1] ?? ""
+      const items = explorer.sidebar.items
+      let currentDatabase = ""
+      const index = items.findIndex(node => {
+        if (node.kind === "database") currentDatabase = node.database?.name ?? ""
+        if (node.kind !== "connection") return false
+        return currentDatabase === name || node.label === name || node.connection?.id === name
+      })
+      if (index < 0) {
+        toasts.push("error", `no connection named "${name}"`)
+        return
+      }
+      explorer.selectActive(index)
+    },
+  })
+
   const commitEdit = () => {
     const target = editor.editTarget()
     if (!target) return
@@ -57,8 +127,10 @@ export function ExplorerScreen() {
     () =>
       focus === "sidebar"
         ? ["j/k move", "Enter expand/select", "h/l panels", "Tab next conn", ":/? commands/help"]
-        : ["j/k move", "gg/G jump", "h/l panels", "Tab next conn", ":/? commands/help"],
-    [focus]
+        : explorer.search.trim()
+          ? [`${explorer.searchCount} matches`, "n/N jump", "Esc clear"]
+          : ["j/k move", "gg/G jump", "h/l panels", "Tab next conn", ":/? commands/help"],
+    [focus, explorer.search, explorer.searchCount]
   )
 
   /* Push the story to the shell's status bar. */
@@ -105,6 +177,30 @@ export function ExplorerScreen() {
         return
       }
     } else {
+      /* `/` search consumes all text until Enter commits or Escape clears. */
+      if (searchOpenRef.current) {
+        if (key === "return" || key === "enter" || key === "\r") {
+          closeSearch(true)
+          return
+        }
+        if (key === "\u001b" || key === "Escape" || key === "escape") {
+          closeSearch(false)
+          return
+        }
+        if (key === "backspace") {
+          searchBackspace()
+          return
+        }
+        if (key === " " || key === "space") {
+          searchType(" ")
+          return
+        }
+        if (key && key.length === 1) {
+          searchType(key)
+          return
+        }
+        return
+      }
       /* While a cell is being edited, everything but commit/cancel is text. */
       if (editor.isEditing()) {
         if (key === "return" || key === "enter" || key === "\r") {
@@ -133,6 +229,10 @@ export function ExplorerScreen() {
         setFocus("sidebar")
         return
       }
+      if (key === "/") {
+        openSearch()
+        return
+      }
       /* arrow keys move the column cursor within the focused row */
       if (key === "right") {
         setEditColumn(current => Math.min(Math.max(explorer.table.columns.length - 1, 0), current + 1))
@@ -152,6 +252,12 @@ export function ExplorerScreen() {
       }
       if (TABLE_MOVE_KEYS.has(key)) {
         vim.pressKey(key)
+        return
+      }
+      /* n/N hop between matches inside an active filter (the row window only
+         holds matches, so this is next-match / previous-match). */
+      if (key === "n" || key === "N") {
+        if (explorer.search.trim()) vim.pressKey(key === "n" ? "j" : "k")
         return
       }
       if (key === "return" || key === "enter" || key === "\r") {
@@ -190,6 +296,9 @@ export function ExplorerScreen() {
 
       <box flexGrow={1} flexDirection="column">
         <TableStrip tables={tables} tableName={tableName} loading={loading} focus={focus === "table"} />
+        {searchOpenRef.current ? (
+          <SearchBar query={searchBuffer.current} matches={explorer.searchCount} />
+        ) : null}
         {error ? (
           <box flexGrow={1} alignItems="center" justifyContent="center">
             <text fg={c.error}>{error}</text>
@@ -199,13 +308,33 @@ export function ExplorerScreen() {
             <text fg={c.textMuted}>connecting…</text>
           </box>
         ) : active ? (
-          <DataTable table={{ ...explorer.table, cursor: vim.cursor }} viewportRows={16} empty="no rows" editing={editor.preview} />
+          <DataTable
+            table={{ ...explorer.table, cursor: vim.cursor }}
+            viewportRows={16}
+            empty="no rows"
+            editing={editor.preview}
+            highlight={explorer.search.trim() || undefined}
+          />
         ) : (
           <box flexGrow={1} alignItems="center" justifyContent="center">
             <text fg={c.textMuted}>select a connection in the sidebar to start browsing</text>
           </box>
         )}
       </box>
+    </box>
+  )
+}
+
+function SearchBar({ query, matches }: { query: string; matches: number }) {
+  const theme = useTheme()
+  const c = theme.colors
+  return (
+    <box height={1} paddingX={1} flexDirection="row" alignItems="center" backgroundColor={c.bgSurface} overflow="hidden">
+      <text fg={c.accent}>/</text>
+      <text fg={c.textBright}>{query}</text>
+      <text fg={c.accent}>▍</text>
+      <box flexGrow={1} />
+      <text fg={c.textMuted}>{matches} matches</text>
     </box>
   )
 }

@@ -10,10 +10,11 @@ export interface DataTableProps {
   readonly table: UseTableResult
   readonly viewportRows?: number
   readonly editing?: { readonly column: string; readonly draft: string } | null
+  readonly highlight?: string
   readonly empty?: string
 }
 
-export function DataTable({ table, viewportRows = 20, editing = null, empty }: DataTableProps) {
+export function DataTable({ table, viewportRows = 20, editing = null, highlight, empty }: DataTableProps) {
   const theme = useTheme()
   const c = theme.colors
   const { columns, cursor, sortedRows, sort } = table
@@ -43,6 +44,7 @@ export function DataTable({ table, viewportRows = 20, editing = null, empty }: D
             selected={selected}
             widthOf={table.widthOf}
             editing={editing}
+            highlight={highlight}
           />
         )
       })}
@@ -108,6 +110,7 @@ function RowLine({
   selected,
   widthOf,
   editing,
+  highlight,
 }: {
   row: Record<string, unknown>
   columns: DataTableProps["table"]["columns"]
@@ -115,6 +118,7 @@ function RowLine({
   selected: boolean
   widthOf: (column: string) => number
   editing?: DataTableProps["editing"]
+  highlight?: string
 }) {
   const theme = useTheme()
   const c = theme.colors
@@ -129,16 +133,52 @@ function RowLine({
         const editingThis = editing && editing.column === column.name
         const formatted = editingThis ? editing.draft : formatCell(row[column.name])
         const fg = selected ? c.textBright : editingThis ? c.success : c.text
+        const matches =
+          highlight && !editingThis && formatted.toLowerCase().includes(highlight.toLowerCase())
+            ? splitHighlighted(formatted, highlight)
+            : null
         return (
           <box key={column.name} width={widthOf(column.name)} overflow="hidden">
-            <text fg={fg} bg={selected ? c.selection : undefined} truncate>
-              {formatted}
-            </text>
+            {matches ? (
+              <box flexDirection="row" backgroundColor={selected ? c.selection : undefined}>
+                {matches.map((part, index) => (
+                  <text key={index} fg={part.matched ? c.accent : fg} truncate>
+                    {part.text}
+                  </text>
+                ))}
+              </box>
+            ) : (
+              <text fg={fg} bg={selected ? c.selection : undefined} truncate>
+                {formatted}
+              </text>
+            )}
           </box>
         )
       })}
     </box>
   )
+}
+
+/** Split text around a case-insensitive needle so the match can be tinted. */
+export const splitHighlighted = (
+  text: string,
+  needle: string
+): ReadonlyArray<{ readonly text: string; readonly matched: boolean }> => {
+  const parts: Array<{ text: string; matched: boolean }> = []
+  let rest = text
+  const lowerNeedle = needle.toLowerCase()
+  while (rest.length > 0) {
+    const lower = rest.toLowerCase()
+    const index = lower.indexOf(lowerNeedle)
+    if (index < 0) {
+      parts.push({ text: rest, matched: false })
+      return parts
+    }
+    if (index > 0) parts.push({ text: rest.slice(0, index), matched: false })
+    parts.push({ text: rest.slice(index, index + needle.length), matched: true })
+    rest = rest.slice(index + needle.length)
+  }
+  return parts
 }
 
 export { MAX_COL_WIDTH, MIN_COL_WIDTH }

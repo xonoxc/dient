@@ -40,6 +40,9 @@ export interface UseExplorerResult {
   readonly table: UseTableResult
   readonly tableInfo: TableInfo | null
   readonly total: number | null
+  readonly search: string
+  readonly setSearch: (query: string) => void
+  readonly searchCount: number
   readonly selectActive: (index?: number) => void
   readonly openTable: (name: string) => void
   readonly cycleConnection: () => void
@@ -49,6 +52,14 @@ export interface UseExplorerResult {
 const PAGE_SIZE = 200
 
 const runService = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
+
+/** Case-insensitive substring match across every cell (formatted like the
+    table renders them), so `/alice` finds "alice" even in `alice@example.com`. */
+export const rowMatches = (row: Record<string, unknown>, query: string): boolean => {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return true
+  return Object.values(row).some(value => formatCell(value).toLowerCase().includes(needle))
+}
 
 export const useExplorer = (): UseExplorerResult => {
   const { configStore, connectionManager, schemaInspector, queryExecutor } = useServices()
@@ -66,6 +77,7 @@ export const useExplorer = (): UseExplorerResult => {
   const [total, setTotal] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [search, setSearch] = useState("")
 
   const activeHandle = useRef<ActiveConnection | null>(null)
   const activeExplorer = useRef<ActiveExplorer | null>(null)
@@ -216,9 +228,14 @@ export const useExplorer = (): UseExplorerResult => {
     if (index >= 0) selectActive(index)
   }
 
+  const searchedRows = useMemo(
+    () => (search.trim() ? rows.filter(row => rowMatches(row, search)) : rows),
+    [rows, search]
+  )
+
   /* The table keeps its own cursor, but the explorer drives navigation through
      Vim mode, so we advertise the vim cursor (0 default) as the active row. */
-  const table = useTable(rows, columns)
+  const table = useTable(searchedRows, columns)
 
   /* Persist a single-cell edit. The primary key comes from the schema
      inspector's `describeTable`, so the WHERE clause always reaches the exact
@@ -286,12 +303,15 @@ export const useExplorer = (): UseExplorerResult => {
       table,
       tableInfo,
       total,
+      search,
+      setSearch,
+      searchCount: searchedRows.length,
       selectActive,
       openTable,
       cycleConnection,
       saveCell,
     }),
-    [sidebar, focus, statuses, active, tables, loading, error, tableName, table, tableInfo, total, saveCell]
+    [sidebar, focus, statuses, active, tables, loading, error, tableName, table, tableInfo, total, search, setSearch, searchedRows.length, saveCell]
   )
 
   return result
