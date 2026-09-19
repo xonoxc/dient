@@ -54,9 +54,54 @@ export const connectPg = (
   })
 
 /**
+ * Translate `?` positional placeholders into PostgreSQL's `$n` syntax. The
+ * rest of the app builds engine-agnostic `?` statements (the MySQL and SQLite
+ * drivers consume them natively); `@effect/sql-pg` only understands `$n`, so
+ * the rewrite happens here, at the driver boundary. Quotes and comment spans
+ * are skipped so a literal `?` inside a string is never rewritten.
+ */
+export const dollarizeParams = (sql: string): string => {
+  let out = ""
+  let n = 0
+  let single = false
+  let double = false
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i]!
+    const next = sql[i + 1]
+    if (ch === "-" && next === "-" && !single && !double) {
+      single = true
+      out += ch
+      continue
+    }
+    if (ch === "\n" && single) {
+      single = false
+      out += ch
+      continue
+    }
+    if (ch === "'" && !double) {
+      single = !single
+      out += ch
+      continue
+    }
+    if (ch === '"' && !single) {
+      double = !double
+      out += ch
+      continue
+    }
+    if (ch === "?" && !single && !double) {
+      n += 1
+      out += `$${n}`
+      continue
+    }
+    out += ch
+  }
+  return out
+}
+
+/**
  * Run `sql` against a live connection. Parameters are bound positionally via
- * `unsafe`, and the engine returns raw rows keyed by column name; column
- * metadata is derived from the keys of the first row.
+ * `unsafe` (`?` is rewritten to `$n`), and the engine returns raw rows keyed
+ * by column name; column metadata is derived from the keys of the first row.
  */
 export const queryPg = (
   conn: ActiveConnection,
@@ -64,7 +109,8 @@ export const queryPg = (
   params?: ReadonlyArray<unknown>
 ): Effect.Effect<QueryResult, QueryError> =>
   Effect.gen(function* () {
-    const rows = yield* (conn._client as PgClient.PgClient).unsafe<Record<string, unknown>>(sql, params).pipe(
+    const statement = params && params.length > 0 ? dollarizeParams(sql) : sql
+    const rows = yield* (conn._client as PgClient.PgClient).unsafe<Record<string, unknown>>(statement, params).pipe(
       Effect.mapError(
         cause =>
           new QueryError({

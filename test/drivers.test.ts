@@ -18,6 +18,7 @@ import {
 } from "@/drivers"
 import { ConnectionError } from "@/drivers/types"
 import { DatabaseDriver } from "@/drivers/database-driver"
+import { dollarizeParams } from "@/drivers/pg"
 import type { ActiveConnection, QueryResult } from "@/drivers/types"
 import type { PostgresConnectionConfig, MysqlConnectionConfig, SqliteConnectionConfig } from "@/domain"
 
@@ -71,6 +72,27 @@ const value = <A, E>(exit: Exit.Exit<A, E>): A =>
 
 const cause = <A, E>(exit: Exit.Exit<A, E>): unknown =>
   (exit as unknown as { cause: unknown }).cause
+
+/* ---------------------------------------------------------------------------
+ * Placeholder translation (pure)
+ * ----------------------------------------------------------------------- */
+describe("dollarizeParams", () => {
+  it("rewrites every ? outside quotes to $1, $2, …", () => {
+    expect(dollarizeParams(`UPDATE users SET name = ? WHERE id = ?`)).toBe(
+      `UPDATE users SET name = $1 WHERE id = $2`
+    )
+  })
+
+  it("leaves ? inside single-quoted strings and double-quoted identifiers alone", () => {
+    const sql = `SELECT 'what?' AS q, "weird?name" = ? AS x`
+    expect(dollarizeParams(sql)).toBe(`SELECT 'what?' AS q, "weird?name" = $1 AS x`)
+  })
+
+  it("ignores ? inside -- line comments", () => {
+    const sql = `SELECT 1 -- is this ? ok\n, ? AS x`
+    expect(dollarizeParams(sql)).toBe(`SELECT 1 -- is this ? ok\n, $1 AS x`)
+  })
+})
 
 /* ---------------------------------------------------------------------------
  * PostgreSQL
