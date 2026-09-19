@@ -65,8 +65,9 @@ export const useExplorer = (): UseExplorerResult => {
   const activeExplorer = useRef<ActiveExplorer | null>(null)
   const generation = useRef(0)
 
-  /* Keep the sidebar's per-connection dots fresh as the tree (and therefore the
-     set of visible connection nodes) changes. `statusOf` never blocks. */
+  /* Keep the sidebar's per-connection dots fresh as the tree expands and as
+     connections connect/disconnect. `active` changes when a connect resolves,
+     which is what flips a dot from ○ to ●. `statusOf` never blocks. */
   useEffect(() => {
     let cancelled = false
     const nodes = sidebar.items.filter(node => node.kind === "connection")
@@ -87,7 +88,7 @@ export const useExplorer = (): UseExplorerResult => {
     return () => {
       cancelled = true
     }
-  }, [sidebar.items, connectionManager])
+  }, [sidebar.items, active, connectionManager])
 
   const reportError = (message: string) => {
     setError(message)
@@ -127,11 +128,14 @@ export const useExplorer = (): UseExplorerResult => {
   }
 
   const selectActive = (index?: number): void => {
-    const target = sidebar.items[index ?? sidebar.cursor]
+    /* Read the *live* cursor and tree so a `j` → `Enter` chord pressed in one
+       frame acts on the moved cursor, not the render snapshot. */
+    const cursor = index ?? sidebar.cursorRef.current
+    const target = sidebar.itemsRef.current[cursor]
     if (!target) return
 
     if (target.kind !== "connection") {
-      sidebar.open(index ?? sidebar.cursor)
+      sidebar.open(index ?? sidebar.cursorRef.current)
       return
     }
     const node = target
@@ -189,13 +193,14 @@ export const useExplorer = (): UseExplorerResult => {
   }
 
   const cycleConnection = (): void => {
-    const connNodes = sidebar.items.filter(node => node.kind === "connection")
+    const liveItems = sidebar.itemsRef.current
+    const connNodes = liveItems.filter(node => node.kind === "connection")
     if (connNodes.length === 0) return
     const currentIndex = activeExplorer.current
       ? connNodes.findIndex(node => node.refId === activeExplorer.current!.id)
       : -1
     const next = connNodes[(currentIndex + 1) % connNodes.length]!
-    const index = sidebar.items.indexOf(next)
+    const index = liveItems.indexOf(next)
     if (index >= 0) selectActive(index)
   }
 

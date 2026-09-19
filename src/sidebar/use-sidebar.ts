@@ -1,10 +1,13 @@
 /**
  * Sidebar state. `buildTree` is pure (projects → databases → connections), so
- * it is unit-tested without rendering. `useSidebar` adds lazy loading: a
- * project's databases are fetched when it is expanded, and a database's
- * connections when that is expanded.
+ * it is unit-tested without rendering. `useSidebar` holds the tree in mutable
+ * refs and pushes new snapshots to state, so a chained keypress such as `j`
+ * then `Enter` (both handled in one frame) navigates against the *live* cursor
+ * and item list rather than the snapshot from the previous render. Lazy
+ * loading: a project's databases are fetched when it is expanded, and a
+ * database's connections when that is expanded.
  */
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Effect } from "effect"
 import { Option } from "effect"
 import type { ConfigStoreService } from "@/config"
@@ -87,46 +90,71 @@ export interface UseSidebarResult {
   readonly cursor: number
   readonly expanded: ReadonlySet<string>
   readonly loaded: boolean
+  /* Live mirrors for key handlers that chain actions in one frame: `cursorRef`
+     updates the instant `move`/`jump` run, `itemsRef` the instant the tree
+     changes. Read these when the effect of a previous press must be visible. */
+  readonly cursorRef: ReactMutableRef<number>
+  readonly itemsRef: ReactMutableRef<ReadonlyArray<SidebarNode>>
   readonly move: (delta: -1 | 1) => void
   readonly jump: (position: "first" | "last") => void
   readonly toggle: (index: number) => void
   readonly open: (index: number) => void
 }
 
+type ReactMutableRef<T> = { readonly current: T }
+
 export const useSidebar = (configStore: ConfigStoreService): UseSidebarResult => {
-  const [data, setData] = useState<SidebarData>(EMPTY)
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  /* Mutable truth lives in refs so key handlers can chain against the latest
+     state in a single frame; a new immutable snapshot is pushed to state for
+     rendering. */
+  const dataRef = useRef<SidebarData>(EMPTY)
+  const expandedRef = useRef<ReadonlySet<string>>(new Set())
+  const cursorRef = useRef(0)
+  const loadedRef = useRef(false)
+
+  const [items, setItems] = useState<ReadonlyArray<SidebarNode>>(() => buildTree(EMPTY, new Set()))
   const [cursor, setCursor] = useState(0)
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const [loaded, setLoaded] = useState(false)
+
+  const recompute = (): void => {
+    const nextItems = buildTree(dataRef.current, expandedRef.current)
+    setItems(nextItems)
+    setCursor(Math.max(0, Math.min(cursorRef.current, nextItems.length - 1)))
+    setExpanded(new Set(expandedRef.current))
+  }
+
+  const itemsRef = useRef<ReadonlyArray<SidebarNode>>(items)
+  itemsRef.current = items
 
   useEffect(() => {
     let cancelled = false
     void Effect.runPromise(configStore.listProjects())
       .then(projects => {
-        if (!cancelled) setData(current => ({ ...current, projects }))
+        if (cancelled) return
+        dataRef.current = { ...dataRef.current, projects }
+        recompute()
+        setLoaded(true)
       })
       .catch(() => {
-        if (!cancelled) setData(EMPTY)
-      })
-      .finally(() => {
-        if (!cancelled) setLoaded(true)
+        if (cancelled) return
+        dataRef.current = EMPTY
+        recompute()
+        setLoaded(true)
       })
     return () => {
       cancelled = true
     }
   }, [configStore])
 
-  const items = useMemo(() => buildTree(data, expanded), [data, expanded])
-
   const loadDatabases = (projectId: ProjectId): void => {
     void Effect.runPromise(configStore.listDatabases(projectId))
-      .then(rows =>
-        setData(current => {
-          const next = new Map(current.databases)
-          next.set(projectId, rows)
-          return { ...current, databases: next }
-        })
-      )
+      .then(rows => {
+        const next = new Map(dataRef.current.databases)
+        next.set(projectId, rows)
+        dataRef.current = { ...dataRef.current, databases: next }
+        recompute()
+      })
       .catch(() => {
         /* failed load leaves the node collapsed silently */
       })
@@ -134,49 +162,59 @@ export const useSidebar = (configStore: ConfigStoreService): UseSidebarResult =>
 
   const loadConnections = (databaseId: DatabaseId): void => {
     void Effect.runPromise(configStore.listConnections(databaseId))
-      .then(rows =>
-        setData(current => {
-          const next = new Map(current.connections)
-          next.set(databaseId, rows)
-          return { ...current, connections: next }
-        })
-      )
+      .then(rows => {
+        const next = new Map(dataRef.current.connections)
+        next.set(databaseId, rows)
+        dataRef.current = { ...dataRef.current, connections: next }
+        recompute()
+      })
       .catch(() => {
         /* failed load leaves the node collapsed silently */
       })
   }
 
   const toggleExpanded = (index: number): void => {
-    const node = items[index]
+    const node = itemsRef.current[index]
     if (!node || !node.expandable) return
-    const willExpand = !expanded.has(node.refId)
+    const willExpand = !expandedRef.current.has(node.refId)
     if (willExpand) {
       if (node.kind === "project") loadDatabases(node.refId as ProjectId)
       else if (node.kind === "database") loadConnections(node.refId as DatabaseId)
     }
-    setExpanded(current => {
-      const next = new Set(current)
-      if (willExpand) next.add(node.refId)
-      else next.delete(node.refId)
-      return next
-    })
+    const next = new Set(expandedRef.current)
+    if (willExpand) next.add(node.refId)
+    else next.delete(node.refId)
+    expandedRef.current = next
+    recompute()
   }
 
-  const clamp = (next: number): number => Math.max(0, Math.min(items.length - 1, next))
+  const clamp = (next: number): number => Math.max(0, Math.min(itemsRef.current.length - 1, next))
 
   return {
     items,
     cursor,
     expanded,
     loaded,
-    move: delta => setCursor(c => clamp(c + delta)),
-    jump: position => setCursor(position === "first" ? 0 : Math.max(0, items.length - 1)),
+    cursorRef,
+    itemsRef,
+    move: delta => {
+      cursorRef.current = clamp(cursorRef.current + delta)
+      setCursor(cursorRef.current)
+    },
+    jump: position => {
+      cursorRef.current = position === "first" ? 0 : Math.max(0, itemsRef.current.length - 1)
+      setCursor(cursorRef.current)
+    },
     toggle: toggleExpanded,
     open: index => {
-      const node = items[index]
+      const node = itemsRef.current[index]
       if (!node) return
-      if (node.kind === "connection") setCursor(index)
-      else toggleExpanded(index)
+      if (node.kind !== "connection") {
+        toggleExpanded(index)
+        return
+      }
+      cursorRef.current = index
+      setCursor(index)
     },
   }
 }
