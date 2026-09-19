@@ -118,3 +118,57 @@ describe("Theme dark/light detection", () => {
     expect(theme.mode).toBe("light")
   })
 })
+
+describe("Theme real-ANSI-palette probing", () => {
+  /* 16 valid grayscale entries with a distinctive bright-blue at slot 12 */
+  const customPalette = Array.from({ length: 16 }, (_, i) =>
+    `#${i.toString(16).padStart(2, "0")}${i.toString(16).padStart(2, "0")}${i.toString(16).padStart(2, "0")}`
+  )
+  const draculaBluePalette = [...customPalette.slice(0, 12), "#1e66f5", ...customPalette.slice(13)]
+
+  test("token slots resolve to the terminal's own palette hexes when provided", () => {
+    const colors = makeTheme("dark", { palette: draculaBluePalette }).colors
+    expect(colors.accent.intent).toBe("indexed")
+    expect(colors.accent.slot).toBe(12)
+    expect(colors.accent.toInts()).toEqual([30, 102, 245, 255])
+  })
+
+  test("a real palette probe is wired through layerDetect", async () => {
+    const theme = await resolveTheme({
+      themeMode: "light",
+      getPalette: async () => ({
+        palette: draculaBluePalette,
+        defaultForeground: "#fefefe",
+        defaultBackground: "#010203",
+      }),
+    })
+    expect(theme.mode).toBe("light")
+    expect(theme.colors.accent.toInts()).toEqual([30, 102, 245, 255])
+    expect(theme.colors.text.intent).toBe("default")
+    expect(theme.colors.text.toInts()).toEqual([254, 254, 254, 255])
+    expect(theme.colors.bg.toInts()).toEqual([1, 2, 3, 255])
+  })
+
+  test("falls back to the standard ANSI colors when a slot is missing", () => {
+    const colors = makeTheme("dark", { palette: ["#000000", "#800000"] }).colors
+    /* slot 12 not reported → default ANSI bright blue */
+    expect(colors.accent.toInts()).toEqual([...ansi256IndexToRgb(12), 255])
+  })
+
+  test("a failing palette probe falls back to defaults and never breaks boot", async () => {
+    const theme = await resolveTheme({
+      themeMode: null,
+      waitForThemeMode: async () => null,
+      getPalette: async () => {
+        throw new Error("suspended")
+      },
+    })
+    expect(theme.mode).toBe(DEFAULT_THEME_MODE)
+    expect(theme.colors.accent.toInts()).toEqual([...ansi256IndexToRgb(12), 255])
+  })
+
+  test("a renderer with no palette probe keeps the standard ANSI colors", async () => {
+    const theme = await resolveTheme({ themeMode: "dark" })
+    expect(theme.colors.accent.toInts()).toEqual([...ansi256IndexToRgb(12), 255])
+  })
+})

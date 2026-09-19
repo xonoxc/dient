@@ -60,12 +60,31 @@ export class Theme extends Context.Tag("Theme")<Theme, ThemeService>() {}
 export interface ThemeDetector {
   readonly themeMode: ThemeMode | null
   readonly waitForThemeMode?: (timeoutMs?: number) => Promise<ThemeMode | null>
+  /** Optional OSC palette probe; used to read the terminal's *real* ANSI colors. */
+  readonly getPalette?: (options?: { timeout?: number; size?: number }) => Promise<{
+    palette: ReadonlyArray<string | null>
+    defaultForeground: string | null
+    defaultBackground: string | null
+  }>
+}
+
+/**
+ * The terminal's actual palette, as reported by the OSC 4 / OSC 11 queries.
+ * `null` entries mean the terminal refused to answer for that slot.
+ */
+export interface TerminalPalette {
+  readonly palette?: ReadonlyArray<string | null>
+  readonly defaultForeground?: string | null
+  readonly defaultBackground?: string | null
 }
 
 export const DEFAULT_THEME_MODE: ThemeMode = "dark"
 
 /** How long to wait for the terminal to answer the theme-mode query. */
 export const THEME_DETECT_TIMEOUT_MS = 150
+
+/** How long to wait for the OSC palette probe before falling back to defaults. */
+export const THEME_PALETTE_TIMEOUT_MS = 300
 
 /** How strongly surface panels drift off the base background. */
 const SURFACE_TINT_AMOUNT = 0.08
@@ -85,39 +104,54 @@ const blend = (base: RGBA, overlay: RGBA, amount: number): RGBA => {
   )
 }
 
-export const makeTheme = (mode: ThemeMode): ThemeService => {
+export const makeTheme = (
+  mode: ThemeMode,
+  palette?: TerminalPalette
+): ThemeService => {
   /*
    * The "default" intent keeps base tokens matched to the terminal at render
    * time; the snapshots only supply the RGB resolved before/without palette
-   * detection. The mode picks the polarity so blending below is meaningful even
-   * before OSC detection lands.
+   * detection. When the OSC probe answered, those snapshots are the terminal's
+   * *own* colors, so token slots paint exactly like the terminal would render
+   * them (an indexed emitter re-maps the slot, a truecolor emitter uses the hex
+   * — both land on the user's palette). The mode picks the polarity so blending
+   * is meaningful even before OSC detection lands.
    */
   const isDark = mode === "dark"
-  const text = RGBA.defaultForeground(isDark ? "#ffffff" : "#000000")
-  const bg = RGBA.defaultBackground(isDark ? "#000000" : "#ffffff")
-  const bgHighlight = RGBA.fromIndex(18)
+  const slotHex = (index: number): string | undefined =>
+    palette?.palette?.[index] ?? undefined
+  /* `indexed` intent plus the terminal's real hex for that slot. */
+  const slot = (index: number): RGBA =>
+    RGBA.fromIndex(index, slotHex(index))
+  const text = RGBA.defaultForeground(
+    palette?.defaultForeground ?? (isDark ? "#ffffff" : "#000000")
+  )
+  const bg = RGBA.defaultBackground(
+    palette?.defaultBackground ?? (isDark ? "#000000" : "#ffffff")
+  )
+  const bgHighlight = RGBA.fromIndex(18, slotHex(18))
   /*
    * Surface panels sit one step off the terminal background: a light gray tint
    * in dark terminals (drifts lighter), a black tint in light ones (drifts
    * darker).
    */
-  const surfaceTint = RGBA.fromIndex(isDark ? 7 : 0)
+  const surfaceTint = slot(isDark ? 7 : 0)
   const colors: ThemeColors = {
     text,
-    textMuted: RGBA.fromIndex(8),
-    textBright: RGBA.fromIndex(15),
+    textMuted: slot(8),
+    textBright: slot(15),
     bg,
     bgSurface: blend(bg, surfaceTint, SURFACE_TINT_AMOUNT),
     bgHighlight,
-    border: RGBA.fromIndex(8),
-    borderFocused: RGBA.fromIndex(12),
-    error: RGBA.fromIndex(1),
-    warning: RGBA.fromIndex(3),
-    success: RGBA.fromIndex(2),
-    info: RGBA.fromIndex(6),
-    accent: RGBA.fromIndex(12),
-    accentMuted: RGBA.fromIndex(4),
-    selection: RGBA.fromIndex(8, bgHighlight),
+    border: slot(8),
+    borderFocused: slot(12),
+    error: slot(1),
+    warning: slot(3),
+    success: slot(2),
+    info: slot(6),
+    accent: slot(12),
+    accentMuted: slot(4),
+    selection: RGBA.fromIndex(8, slotHex(8) ?? bgHighlight),
   }
   return {
     mode,
@@ -128,6 +162,25 @@ export const makeTheme = (mode: ThemeMode): ThemeService => {
 
 const normalizeMode = (mode: ThemeMode | null | undefined): ThemeMode =>
   mode === "dark" || mode === "light" ? mode : DEFAULT_THEME_MODE
+
+/**
+ * Probe the terminal's actual ANSI palette via OSC if the renderer supports it.
+ * Any failure (dumb terminal, refused reply, timeout) yields no palette and the
+ * theme falls back to the ANSI defaults — never crashes boot.
+ */
+const detectPalette = (detector: ThemeDetector): Effect.Effect<TerminalPalette | undefined, never> =>
+  detector.getPalette
+    ? Effect.tryPromise(() =>
+        detector.getPalette!({ size: 16, timeout: THEME_PALETTE_TIMEOUT_MS })
+      ).pipe(
+        Effect.map(p => ({
+          palette: p.palette,
+          defaultForeground: p.defaultForeground,
+          defaultBackground: p.defaultBackground,
+        })),
+        Effect.catchAll(() => Effect.succeed(undefined))
+      )
+    : Effect.succeed(undefined)
 
 /**
  * Resolve the active theme mode from the renderer. The immediate `themeMode`
@@ -151,10 +204,21 @@ const detectMode = (detector: ThemeDetector): Effect.Effect<ThemeMode, never> =>
 
 export namespace Theme {
   /** A fixed-mode layer; used when the mode is known ahead of time (tests). */
-  export const layer = (mode: ThemeMode = DEFAULT_THEME_MODE): Layer.Layer<Theme> =>
-    Layer.succeed(Theme, makeTheme(mode))
+  export const layer = (
+    mode: ThemeMode = DEFAULT_THEME_MODE,
+    palette?: TerminalPalette
+  ): Layer.Layer<Theme> => Layer.succeed(Theme, makeTheme(mode, palette))
 
-  /** Auto-detects the terminal's dark/light mode and provides the theme. */
+  /**
+   * Auto-detects the terminal's dark/light mode and its real ANSI palette, then
+   * provides the theme. Palette probing runs in parallel with mode detection so
+   * the OSC round-trips don't stack on the critical path.
+   */
   export const layerDetect = (detector: ThemeDetector): Layer.Layer<Theme> =>
-    Layer.effect(Theme, Effect.map(detectMode(detector), makeTheme))
+    Layer.effect(
+      Theme,
+      Effect.all([detectMode(detector), detectPalette(detector)]).pipe(
+        Effect.map(([mode, palette]) => makeTheme(mode, palette))
+      )
+    )
 }
