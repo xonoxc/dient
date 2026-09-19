@@ -89,7 +89,7 @@ function HeaderRow({
       {columns.map(column => {
         const marker = sort?.column === column.name ? (sort.dir === "asc" ? " ▲" : " ▼") : ""
         return (
-          <box key={column.name} width={widthOf(column.name)}>
+          <box key={column.name} width={widthOf(column.name)} overflow="hidden">
             <text fg={c.textBright} truncate>
               {column.name.toUpperCase()}
               {marker}
@@ -130,7 +130,7 @@ function RowLine({
         const formatted = editingThis ? editing.draft : formatCell(row[column.name])
         const fg = selected ? c.textBright : editingThis ? c.success : c.text
         return (
-          <box key={column.name} width={widthOf(column.name)}>
+          <box key={column.name} width={widthOf(column.name)} overflow="hidden">
             <text fg={fg} bg={selected ? c.selection : undefined} truncate>
               {formatted}
             </text>

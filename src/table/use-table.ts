@@ -12,7 +12,7 @@ export interface SortState {
   readonly dir: "asc" | "desc"
 }
 
-export const MIN_COL_WIDTH = 8
+export const MIN_COL_WIDTH = 4
 export const MAX_COL_WIDTH = 28
 
 export const formatCell = (value: unknown): string => {
@@ -66,7 +66,9 @@ export const useTable = (
     })
   }, [rows, sort])
 
-  /* Bounded sampling keeps width computation O(1) for huge tables. */
+  /* Bounded sampling keeps width computation O(1) for huge tables. Widths are
+     floored at MIN_COL_WIDTH (4): OpenTUI's flex layout collapses boxes
+     narrower than that, which would break column alignment. */
   const widths = useMemo(() => {
     const sample = sortedRows.slice(0, 100)
     const next: Record<string, number> = {}
@@ -76,7 +78,7 @@ export const useTable = (
         const len = formatCell(row[column.name]).length
         if (len > longest) longest = len
       }
-      next[column.name] = Math.max(1, Math.min(MAX_COL_WIDTH, longest))
+      next[column.name] = Math.max(MIN_COL_WIDTH, Math.min(MAX_COL_WIDTH, longest))
     }
     return next
   }, [sortedRows, columns])
