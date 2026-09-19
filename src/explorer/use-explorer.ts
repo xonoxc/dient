@@ -9,7 +9,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Effect, Option } from "effect"
-import { useServices, useToasts } from "@/app-context"
+import { useDialog, useServices, useToasts } from "@/app-context"
 import { useSidebar, type SidebarNode } from "@/sidebar/use-sidebar"
 import type { ConnectionStatus } from "@/connection/connection-manager"
 import type { Connection, ConnectionId, Database } from "@/domain"
@@ -62,8 +62,9 @@ export const rowMatches = (row: Record<string, unknown>, query: string): boolean
 }
 
 export const useExplorer = (): UseExplorerResult => {
-  const { configStore, connectionManager, schemaInspector, queryExecutor } = useServices()
+  const { configStore, connectionManager, schemaInspector, queryExecutor, errorLog } = useServices()
   const toasts = useToasts()
+  const dialog = useDialog()
   const sidebar = useSidebar(configStore)
 
   const [focus, setFocus] = useState<PanelFocus>("sidebar")
@@ -108,8 +109,9 @@ export const useExplorer = (): UseExplorerResult => {
     }
   }, [sidebar.items, active, connectionManager])
 
-  const reportError = (message: string) => {
+  const reportError = (source: string, message: string, cause: unknown) => {
     setError(message)
+    errorLog.append(source, cause)
     toasts.push("error", message)
   }
 
@@ -146,7 +148,7 @@ export const useExplorer = (): UseExplorerResult => {
       .catch(cause => {
         if (gen !== generation.current) return
         setLoading(false)
-        reportError(String(cause))
+        reportError("explorer.openTable", String(cause), cause)
       })
   }
 
@@ -212,7 +214,20 @@ export const useExplorer = (): UseExplorerResult => {
         setColumns([])
         setTotal(null)
         setLoading(false)
-        reportError(`connect failed: ${String(cause)}`)
+        reportError("explorer.connect", `connect failed: ${String(cause)}`, cause)
+        /* Offer a retry so a transient failure (container still booting, host
+           offline) recovers from the keyboard instead of forcing navigation. */
+        const retryIndex = cursor
+        void dialog
+          .confirm({
+            title: `Connection "${target.connection ? `${target.label} · ${target.database?.name ?? ""}` : target.label}" failed`,
+            body: String(cause),
+            okLabel: "retry",
+            danger: true,
+          })
+          .then(ok => {
+            if (ok) selectActive(retryIndex)
+          })
       })
   }
 
@@ -284,6 +299,7 @@ export const useExplorer = (): UseExplorerResult => {
         return true
       })
       .catch(cause => {
+        errorLog.append("explorer.saveCell", cause)
         toasts.push("error", `save failed: ${String(cause)}`)
         return false
       })

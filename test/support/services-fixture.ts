@@ -9,6 +9,7 @@ import { DatabaseDriver } from "@/drivers/database-driver"
 import { SchemaInspector } from "@/inspector"
 import { ConnectionManager } from "@/connection/connection-manager"
 import { QueryExecutor } from "@/query/query-executor"
+import { makeErrorLog } from "@/log/error-log"
 import type { AppServices } from "@/app-context"
 import type { Connection, Database, Engine, Project } from "@/domain"
 
@@ -34,6 +35,7 @@ export const buildTestServices = (configPath: string): Effect.Effect<TestAppServ
         connectionManager: Context.get(context, ConnectionManager),
         schemaInspector: Context.get(context, SchemaInspector),
         queryExecutor: Context.get(context, QueryExecutor),
+        errorLog: makeErrorLog(`${configPath}.error.log`),
       },
       store: Context.get(context, ConfigStore),
     }

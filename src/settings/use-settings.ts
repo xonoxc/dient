@@ -115,7 +115,7 @@ export const buildSettingsTree = (
 const ENGINES: ReadonlyArray<Engine> = ["postgres", "mysql", "sqlite"]
 
 export const useSettings = (): UseSettingsResult => {
-  const { configStore, connectionManager } = useServices()
+  const { configStore, connectionManager, errorLog } = useServices()
   const toasts = useToasts()
   const dialog = useDialog()
 
@@ -269,6 +269,7 @@ export const useSettings = (): UseSettingsResult => {
           finish()
         })
         .catch(cause => {
+          errorLog.append("settings.createConnection", cause)
           toasts.push("error", `failed to add connection: ${String(cause)}`)
           finish()
         })
@@ -295,6 +296,7 @@ export const useSettings = (): UseSettingsResult => {
           finish()
         })
         .catch(cause => {
+          errorLog.append("settings.createConnection", cause)
           toasts.push("error", `failed to add connection: ${String(cause)}`)
           finish()
         })
@@ -380,7 +382,10 @@ export const useSettings = (): UseSettingsResult => {
                 toasts.push("success", "connection deleted")
                 refresh()
               })
-              .catch(cause => toasts.push("error", `failed to delete connection: ${String(cause)}`))
+              .catch(cause => {
+                errorLog.append("settings.deleteConnection", cause)
+                toasts.push("error", `failed to delete connection: ${String(cause)}`)
+              })
           })
         return
       }
@@ -390,7 +395,10 @@ export const useSettings = (): UseSettingsResult => {
           toasts.push("success", `${item.kind} deleted`)
           refresh()
         })
-        .catch(cause => toasts.push("error", `failed to delete ${item.kind}: ${String(cause)}`))
+        .catch(cause => {
+          errorLog.append(`settings.delete${item.kind}`, cause)
+          toasts.push("error", `failed to delete ${item.kind}: ${String(cause)}`)
+        })
     },
     testConnection: () => {
       const item = items[Math.min(cursor, items.length - 1)]
@@ -408,7 +416,10 @@ export const useSettings = (): UseSettingsResult => {
             ? toasts.push("success", `connection ok (${connectionLabel(connection)})`)
             : toasts.push("error", "connection failed")
         )
-        .catch(cause => toasts.push("error", `connection failed: ${String(cause)}`))
+        .catch(cause => {
+          errorLog.append("settings.testConnection", cause)
+          toasts.push("error", `connection failed: ${String(cause)}`)
+        })
     },
     submitForm: () => {
       const current = formRef.current
@@ -432,6 +443,7 @@ export const useSettings = (): UseSettingsResult => {
             refresh()
           })
           .catch(cause => {
+            errorLog.append("settings.createDatabase", cause)
             toasts.push("error", `failed to add database: ${String(cause)}`)
             openForm(null)
             refresh()

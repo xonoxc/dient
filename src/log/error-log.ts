@@ -38,3 +38,14 @@ export const appendError = async (path: string, source: string, error: unknown):
 export const appendErrorDefault = (source: string, error: unknown): void => {
   void appendError(defaultLogPath(), source, error)
 }
+
+/** A ready-to-call appender bound to one log file (tests use a temp path). */
+export interface ErrorLog {
+  readonly append: (source: string, error: unknown) => void
+}
+
+export const makeErrorLog = (path: string): ErrorLog => ({
+  append: (source, error) => {
+    void appendError(path, source, error)
+  },
+})

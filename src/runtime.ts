@@ -12,6 +12,7 @@ import { DatabaseDriver } from "@/drivers/database-driver"
 import { SchemaInspector } from "@/inspector"
 import { ConnectionManager } from "@/connection/connection-manager"
 import { QueryExecutor } from "@/query/query-executor"
+import { defaultLogPath, makeErrorLog } from "@/log/error-log"
 import type { AppServices } from "@/app-context"
 import { Context, Effect, Layer, type Scope } from "effect"
 
@@ -33,6 +34,7 @@ export const resolveAppServices = (configPath?: string): Effect.Effect<AppServic
       schemaInspector: Context.get(context, SchemaInspector),
       connectionManager: Context.get(context, ConnectionManager),
       queryExecutor: Context.get(context, QueryExecutor),
+      errorLog: makeErrorLog(defaultLogPath()),
     }
   })
 

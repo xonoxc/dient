@@ -14,12 +14,14 @@ import type { QueryExecutorService } from "@/query/query-executor"
 import type { SchemaInspectorService } from "@/inspector"
 import type { Engine } from "@/domain"
 import type { VimMode } from "@/vim"
+import type { ErrorLog } from "@/log/error-log"
 
 export interface AppServices {
   readonly configStore: ConfigStoreService
   readonly connectionManager: ConnectionManagerService
   readonly schemaInspector: SchemaInspectorService
   readonly queryExecutor: QueryExecutorService
+  readonly errorLog: ErrorLog
 }
 
 const ServicesContext = createContext<AppServices | null>(null)
@@ -148,7 +150,15 @@ export function DialogProvider({ children }: { children?: ReactNode }) {
   const confirm = useCallback(
     (options: ConfirmOptions) =>
       new Promise<boolean>(resolve => {
-        setDialog({ options, resolve })
+        setDialog({
+          options,
+          /* resolving also dismisses the modal: the component that opened the
+             dialog learns the answer, and the provider drops the overlay */
+          resolve: ok => {
+            resolve(ok)
+            setDialog(null)
+          },
+        })
       }),
     []
   )
