@@ -8,6 +8,7 @@ import { useKeyboard } from "@opentui/react"
 import { useTheme } from "@/theme-context"
 import { useRouter, useCommandLine, useSessionStatus } from "@/app-context"
 import { useSettings, type SettingsListItem } from "@/settings/use-settings"
+import { FIELD_LABEL } from "@/settings/use-settings"
 
 export function SettingsScreen() {
   const theme = useTheme()
@@ -17,16 +18,20 @@ export function SettingsScreen() {
   const session = useSessionStatus()
   const settings = useSettings()
 
-  const { items, cursor, form, draft, engine, move, jump, toggle, add, remove, submitForm, cancelForm, cycleEngine, setDraft } =
+  const { items, cursor, form, draft, engine, field, fieldIndex, fieldCount, move, jump, toggle, add, remove, testConnection, submitForm, cancelForm, tab, typeChar, backspace } =
     settings
 
   useEffect(() => {
     session.setStatus({
       mode: "normal",
       table: "settings",
-      hints: form ? ["type name", "Tab engine", "Enter save", "Esc cancel"] : ["j/k move", "Enter expand", "a add", "d delete", ":/? commands/help"],
+      hints: form
+        ? form.kind === "connection"
+          ? [field ? `type ${FIELD_LABEL[field]}` : "type value", "Tab field", "Enter save", "Esc cancel"]
+          : ["type name", "Tab engine", "Enter save", "Esc cancel"]
+        : ["j/k move", "Enter expand", "a add", "d delete", "t test", ":/? commands/help"],
     })
-  }, [session.setStatus, form])
+  }, [session.setStatus, form, field])
 
   useKeyboard(e => {
     if (router.helpOpen || commandLine.open) return
@@ -42,19 +47,19 @@ export function SettingsScreen() {
         return
       }
       if (key === "tab") {
-        cycleEngine()
+        tab()
         return
       }
       if (key === "backspace") {
-        setDraft(draft.slice(0, -1))
+        backspace()
         return
       }
       if (key === " " || key === "space") {
-        setDraft(draft + " ")
+        typeChar(" ")
         return
       }
       if (key && key.length === 1) {
-        setDraft(draft + key)
+        typeChar(key)
         return
       }
       return
@@ -82,6 +87,9 @@ export function SettingsScreen() {
       case "d":
         remove()
         return
+      case "t":
+        testConnection()
+        return
     }
   })
 
@@ -104,16 +112,35 @@ export function SettingsScreen() {
 
       <box height={1} flexDirection="row" paddingX={1} overflow="hidden">
         {form ? (
-          <box flexDirection="row">
-            <text fg={c.info}>{form.kind === "project" ? "new project:" : `new database (${engine}):`}</text>
-            <text fg={c.info}> </text>
-            <text fg={c.textBright}>{draft}</text>
-            <text fg={c.accent}>▍</text>
-            {form.kind === "database" ? <text fg={c.info}>  tab cycles engine</text> : null}
-          </box>
+          form.kind === "connection" ? (
+            <box flexDirection="row">
+              <text fg={c.info}>new connection · </text>
+              {field ? (
+                <>
+                  <text fg={c.textMuted}>{FIELD_LABEL[field]}:</text>
+                  <text fg={c.textBright}>{draft}</text>
+                  <text fg={c.accent}>▍</text>
+                </>
+              ) : null}
+              <box flexGrow={1} />
+              <text fg={c.textMuted}>
+                field {fieldIndex + 1}/{fieldCount} · Tab field · Enter save
+              </text>
+            </box>
+          ) : (
+            <box flexDirection="row">
+              <text fg={c.info}>
+                {form.kind === "database" ? `new database (${engine}):` : "new project:"}
+              </text>
+              <text fg={c.info}> </text>
+              <text fg={c.textBright}>{draft}</text>
+              <text fg={c.accent}>▍</text>
+              {form.kind === "database" ? <text fg={c.info}>  tab cycles engine</text> : null}
+            </box>
+          )
         ) : (
           <text fg={c.textMuted}>
-            j/k move · Enter expand · a add · d delete · :explorer back · :settings here
+            j/k move · Enter expand · a add · d delete · t test · :explorer back · :settings here
           </text>
         )}
       </box>
