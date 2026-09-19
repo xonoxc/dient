@@ -24,15 +24,25 @@ const toggleVisual: VimAction = { _tag: "ToggleVisual" }
 const escape: VimAction = { _tag: "Escape" }
 
 export const initialState = (rowCount = 0): VimState =>
-  ({ mode: "normal", cursor: 0, selection: Option.none(), rowCount: Math.max(0, rowCount), pendingG: 0 }) as const
+  ({
+    mode: "normal",
+    cursor: 0,
+    selection: Option.none(),
+    rowCount: Math.max(0, rowCount),
+    pendingG: 0,
+  }) as const
 
 export const clampCursor = (rowCount: number, cursor: number): number => {
   if (rowCount <= 0) return 0
   return Math.max(0, Math.min(rowCount - 1, cursor))
 }
 
-const enterVisual = (state: VimState): VimState =>
-  ({ ...state, mode: "visual", selection: Option.some({ anchor: state.cursor, head: state.cursor }), pendingG: 0 })
+const enterVisual = (state: VimState): VimState => ({
+  ...state,
+  mode: "visual",
+  selection: Option.some({ anchor: state.cursor, head: state.cursor }),
+  pendingG: 0,
+})
 
 const withCursor = (state: VimState, cursor: number): VimState => {
   if (state.mode === "visual") {
@@ -40,7 +50,10 @@ const withCursor = (state: VimState, cursor: number): VimState => {
       ...state,
       cursor,
       selection: state.selection.pipe(
-        Option.map(selection => ({ ...selection, head: cursor }))
+        Option.map(selection => ({
+          ...selection,
+          head: cursor,
+        }))
       ),
     }
   }
@@ -52,8 +65,13 @@ export const applyAction = (state: VimState, action: VimAction): VimState => {
     case "SetRows": {
       const rowCount = Math.max(0, action.count)
       if (rowCount === state.rowCount) return state
-      return { ...state, rowCount, cursor: clampCursor(rowCount, state.cursor) }
+      return {
+        ...state,
+        rowCount,
+        cursor: clampCursor(rowCount, state.cursor),
+      }
     }
+
     case "Move": {
       if (state.mode === "insert") return state
       const delta = action.direction === "up" ? -1 : 1
@@ -61,16 +79,30 @@ export const applyAction = (state: VimState, action: VimAction): VimState => {
       if (cursor === state.cursor) return state
       return withCursor(state, cursor)
     }
+
     case "Jump": {
       if (state.mode === "insert") return state
       const cursor = action.position === "first" ? 0 : Math.max(0, state.rowCount - 1)
       if (cursor === state.cursor) return state
       return withCursor(state, cursor)
     }
+
     case "EnterMode":
       if (action.mode === "insert") {
-        if (state.mode === "normal") return { ...state, mode: "insert", selection: Option.none() }
-        if (state.mode === "visual") return { ...state, mode: "normal", selection: Option.none(), pendingG: 0 }
+        if (state.mode === "normal")
+          return {
+            ...state,
+            mode: "insert",
+            selection: Option.none(),
+          }
+
+        if (state.mode === "visual")
+          return {
+            ...state,
+            mode: "normal",
+            selection: Option.none(),
+            pendingG: 0,
+          }
         return state
       }
       if (action.mode === "normal") {
@@ -79,23 +111,46 @@ export const applyAction = (state: VimState, action: VimAction): VimState => {
       }
       if (state.mode === "normal") return enterVisual(state)
       return state
+
     case "ToggleVisual":
-      if (state.mode === "visual") return { ...state, mode: "normal", selection: Option.none(), pendingG: 0 }
+      if (state.mode === "visual")
+        return {
+          ...state,
+          mode: "normal",
+          selection: Option.none(),
+          pendingG: 0,
+        }
       if (state.mode === "normal") return enterVisual(state)
       return state
+
     case "Escape":
       if (state.mode === "normal") return { ...state, pendingG: 0 }
-      return { ...state, mode: "normal", selection: Option.none(), pendingG: 0 }
+      return {
+        ...state,
+        mode: "normal",
+        selection: Option.none(),
+        pendingG: 0,
+      }
   }
 }
 
 export const pressKey = (state: VimState, key: string): VimState => {
   if (state.pendingG === 1) {
-    if (key === JUMP_FIRST) return applyAction({ ...state, pendingG: 0 }, jumpFirst)
+    if (key === JUMP_FIRST)
+      return applyAction(
+        {
+          ...state,
+          pendingG: 0,
+        },
+        jumpFirst
+      )
     return pressKey({ ...state, pendingG: 0 }, key)
   }
+
   if (key === JUMP_FIRST) return { ...state, pendingG: 1 }
+
   if (ESCAPE_KEYS.includes(key)) return applyAction(state, escape)
+
   switch (key) {
     case MODE_INSERT:
       return applyAction(state, enterInsert)
@@ -116,3 +171,4 @@ export const selectionRange = (selection: Selection): SelectionRange => ({
   start: Math.min(selection.anchor, selection.head),
   end: Math.max(selection.anchor, selection.head),
 })
+

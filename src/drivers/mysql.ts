@@ -30,9 +30,21 @@ export const connectMysql = (
     }).pipe(
       Scope.extend(scope),
       Effect.provide(Reactivity.layer),
-      Effect.mapError(cause => new ConnectionError({ engine: ENGINE, message: String(cause), cause }))
+      Effect.mapError(
+        cause =>
+          new ConnectionError({
+            engine: ENGINE,
+            message: String(cause),
+            cause,
+          })
+      )
     )
-    return { id: crypto.randomUUID(), engine: ENGINE, _client: client, _scope: scope }
+    return {
+      id: crypto.randomUUID(),
+      engine: ENGINE,
+      _client: client,
+      _scope: scope,
+    }
   })
 
 /** Run `sql` with positional `params`, mapping driver errors to `QueryError`. */

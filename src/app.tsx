@@ -1,28 +1,186 @@
 /**
- * Root component of the TUI. Everything rendered lives under this box.
- * The ThemeProvider bridges the Effect `Theme` service into React so
- * child components can read tokens via `useTheme()`.
+ * App shell. Composes every provider, routes between the explorer and settings
+ * screens, and renders the shared chrome: status bar (bottom), command line
+ * (bottom, above the status bar), toasts, confirmation modal, and the help
+ * overlay. Global keys that belong to the shell (`:` opens a command, `?`
+ * opens help) live here; screen-specific keys live in the screens.
  */
-import { ThemeProvider, useTheme } from "@/theme-context"
-import { makeTheme, DEFAULT_THEME_MODE } from "@/theme"
+import { useKeyboard } from "@opentui/react"
+import { useTheme } from "@/theme-context"
 import type { ThemeService } from "@/theme"
+import { ThemeProvider } from "@/theme-context"
+import {
+  CommandLineProvider,
+  DialogProvider,
+  RouterProvider,
+  ServicesProvider,
+  SessionProvider,
+  ToastProvider,
+  useCommandLine,
+  useDialog,
+  useRouter,
+  useServices,
+  useSessionStatus,
+  type AppServices,
+} from "@/app-context"
+import { ExplorerScreen } from "@/explorer/explorer-screen"
+import { SettingsScreen } from "@/settings/settings-screen"
+import { StatusBar } from "@/status-bar"
+import { ToastView } from "@/ui/toast"
+import { ModalView } from "@/ui/modal"
+import { HelpScreen } from "@/ui/help-screen"
 
-export default function App({ theme }: { theme?: ThemeService } = {}) {
+export default function App({ theme, services }: { theme: ThemeService; services: AppServices }) {
   return (
-    <ThemeProvider theme={theme ?? makeTheme(DEFAULT_THEME_MODE)}>
-      <Root />
+    <ThemeProvider theme={theme}>
+      <ServicesProvider services={services}>
+        <RouterProvider>
+          <ToastProvider>
+            <DialogProvider>
+              <SessionProvider>
+                <CommandLineProvider>
+                  <Shell />
+                </CommandLineProvider>
+              </SessionProvider>
+            </DialogProvider>
+          </ToastProvider>
+        </RouterProvider>
+      </ServicesProvider>
     </ThemeProvider>
   )
 }
 
-function Root() {
+interface ShellCommand {
+  readonly id: string
+  readonly help: string
+  readonly match: (text: string) => boolean
+  readonly run: (text: string) => void
+}
+
+function Shell() {
   const theme = useTheme()
+  const c = theme.colors
+  const router = useRouter()
+  const dialog = useDialog()
+  const commandLine = useCommandLine()
+  const status = useSessionStatus().status
+
+  const commands: ReadonlyArray<ShellCommand> = [
+    {
+      id: "settings",
+      help: ":settings — open settings",
+      match: text => text.trim() === "settings",
+      run: () => router.setScreen("settings"),
+    },
+    {
+      id: "explorer",
+      help: ":explorer — back to browsing",
+      match: text => text.trim() === "explorer",
+      run: () => router.setScreen("explorer"),
+    },
+    {
+      id: "help",
+      help: ":help — keybindings",
+      match: text => text.trim() === "help",
+      run: () => router.openHelp(),
+    },
+    {
+      id: "quit",
+      help: ":q — quit (from settings, back to explorer)",
+      match: text => /^(q|quit)$/.test(text.trim()),
+      run: () => {
+        if (router.screen === "settings") router.setScreen("explorer")
+        else process.exit(0)
+      },
+    },
+  ]
+
+  /* The command line is owned by the shell, so its key handling lives here on
+     an always-mounted hook. A per-line component could only register after `:`
+     mounts it, silently dropping the rest of the typed chord. */
+  useKeyboard(e => {
+    const key = e.name
+
+    if (commandLine.open) {
+      if (key === "escape" || key === "Escape" || key === "\u001b") {
+        commandLine.closeLine()
+        return
+      }
+      if (key === "return" || key === "enter" || key === "\r") {
+        const text = commandLine.text.trim()
+        const matched = commands.find(command => command.match(text))
+        if (matched) matched.run(text)
+        commandLine.closeLine()
+        return
+      }
+      if (key === "backspace") {
+        commandLine.backspace()
+        return
+      }
+      if (key === " " || key === "space") {
+        commandLine.typeChar(" ")
+        return
+      }
+      if (key && key.length === 1) {
+        commandLine.typeChar(key)
+        return
+      }
+      return
+    }
+
+    if (dialog.dialog || router.helpOpen) return
+    if (key === "?") {
+      router.openHelp()
+    } else if (key === ":") {
+      commandLine.openLine()
+    }
+  })
+
+  const screen = router.screen === "settings" ? <SettingsScreen /> : <ExplorerScreen />
 
   return (
-    <box flexGrow={1} flexDirection="column" borderStyle="rounded" borderColor={theme.colors.border}>
-      <text fg={theme.colors.text}>dient · {theme.mode}</text>
-      <text fg={theme.colors.accent}>·</text>
-      <text fg={theme.colors.textMuted}>colors adapt to your terminal palette</text>
+    <box flexGrow={1} flexDirection="column" backgroundColor={c.bg}>
+      <box flexGrow={1} flexDirection="row">
+        {screen}
+      </box>
+      <CommandBar commands={commands} />
+      <StatusBar
+        mode={status.mode}
+        engine={status.engine}
+        connection={status.connection}
+        database={status.database}
+        table={status.table}
+        rows={status.rows}
+        total={status.total}
+        hints={status.hints}
+      />
+      <ToastView />
+      <ModalView />
+      <HelpScreen />
     </box>
   )
 }
+
+function CommandBar({ commands }: { commands: ReadonlyArray<ShellCommand> }) {
+  const theme = useTheme()
+  const c = theme.colors
+  const commandLine = useCommandLine()
+
+  if (!commandLine.open) return null
+
+  return (
+    <box height={1} flexDirection="row" alignItems="center" paddingX={1} backgroundColor={c.bgSurface} overflow="hidden">
+      <text fg={c.success}>:</text>
+      <box flexDirection="row">
+        <text fg={c.textBright}>{commandLine.text}</text>
+        <text fg={c.accent}>▍</text>
+      </box>
+      <box flexGrow={1} />
+      <text fg={c.textMuted} truncate>
+        {commands.map(x => x.help).join("  ")}
+      </text>
+    </box>
+  )
+}
+
+export type { AppServices }
