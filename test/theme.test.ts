@@ -39,7 +39,7 @@ describe("Theme tokens", () => {
     expect(colors.info).toMatchObject({ intent: "indexed", slot: 6 })
     expect(colors.accent).toMatchObject({ intent: "indexed", slot: 12 })
     expect(colors.accentMuted).toMatchObject({ intent: "indexed", slot: 4 })
-    expect(colors.bgHighlight).toMatchObject({ intent: "indexed", slot: 18 })
+    expect(colors.bgHighlight).toMatchObject({ intent: "indexed", slot: 236 })
   })
 
   test("indexed tokens resolve to the standard ANSI rgb values", () => {
@@ -47,6 +47,16 @@ describe("Theme tokens", () => {
     expect(colors.textMuted.toInts()).toEqual([...ansi256IndexToRgb(8), 255])
     expect(colors.accent.toInts()).toEqual([...ansi256IndexToRgb(12), 255])
     expect(colors.error.toInts()).toEqual([...ansi256IndexToRgb(1), 255])
+  })
+
+  test("selection highlights are gray, never the blue color-cube slot", () => {
+    const colors = makeTheme("dark").colors
+    expect(colors.bgHighlight.slot).toBe(236)
+    expect(colors.bgHighlight.toInts()[0]).toBe(colors.bgHighlight.toInts()[1])
+    expect(colors.bgHighlight.toInts()[1]).toBe(colors.bgHighlight.toInts()[2])
+    expect(colors.bgHighlight.toInts()[0]! > 32).toBe(true)
+    expect(colors.selection.slot).toBe(8)
+    expect(colors.selection.toInts()).toEqual(colors.bgHighlight.toInts())
   })
 
   test("bgSurface is the terminal bg blended with a palette tint", () => {

@@ -89,6 +89,15 @@ export const THEME_PALETTE_TIMEOUT_MS = 300
 /** How strongly surface panels drift off the base background. */
 const SURFACE_TINT_AMOUNT = 0.08
 
+/*
+ * Highlight/selection backgrounds use the ANSI256 *gray* ramp (232..255), NOT
+ * the color cube: cube slot 18 (a common "gray" pick) is actually rgb(0,0,135)
+ * — bright blue on every terminal. gray24 (236) is subtle on dark backgrounds,
+ * gray66 (245) reads clearly on light ones.
+ */
+const GRAY_HIGHLIGHT_DARK = 236
+const GRAY_HIGHLIGHT_LIGHT = 245
+
 /**
  * Overlay `overlay` on top of `base` by `amount` (0..1) in linear space. The
  * result is a solid color — the blend is baked, so consumers just pass it to
@@ -129,7 +138,10 @@ export const makeTheme = (
   const bg = RGBA.defaultBackground(
     palette?.defaultBackground ?? (isDark ? "#000000" : "#ffffff")
   )
-  const bgHighlight = RGBA.fromIndex(18, slotHex(18))
+  const bgHighlight = RGBA.fromIndex(
+    isDark ? GRAY_HIGHLIGHT_DARK : GRAY_HIGHLIGHT_LIGHT,
+    slotHex(isDark ? GRAY_HIGHLIGHT_DARK : GRAY_HIGHLIGHT_LIGHT)
+  )
   /*
    * Surface panels sit one step off the terminal background: a light gray tint
    * in dark terminals (drifts lighter), a black tint in light ones (drifts
