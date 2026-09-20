@@ -104,9 +104,5 @@ export const SqliteConnectionConfig = S.Struct({
 })
 export type SqliteConnectionConfig = S.Schema.Type<typeof SqliteConnectionConfig>
 
-export const ConnectionConfig = S.Union(
-  PostgresConnectionConfig,
-  MysqlConnectionConfig,
-  SqliteConnectionConfig,
-)
+export const ConnectionConfig = S.Union(PostgresConnectionConfig, MysqlConnectionConfig, SqliteConnectionConfig)
 export type ConnectionConfig = S.Schema.Type<typeof ConnectionConfig>

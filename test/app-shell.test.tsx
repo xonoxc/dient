@@ -2,12 +2,7 @@ import { describe, expect, test } from "bun:test"
 import App from "@/app"
 import { makeTheme } from "@/theme"
 import { pressKeys, renderApp } from "@test/support/render-ui"
-import {
-  freshConfigFile,
-  freshSqliteDataFile,
-  resolveTestServices,
-  seedProject,
-} from "@test/support/services-fixture"
+import { freshConfigFile, freshSqliteDataFile, resolveTestServices, seedProject } from "@test/support/services-fixture"
 
 const ESC = "ESCAPE"
 
@@ -23,9 +18,7 @@ interface CaptureSpans {
 
 /** Last row that actually renders text (padding rows are whitespace-only spans). */
 const lastTextRow = (frame: CaptureSpans): string =>
-  frame.lines
-    .map(line => line.spans.map(span => span.text).join(""))
-    .findLast(line => line.trim().length > 0) ?? ""
+  frame.lines.map(line => line.spans.map(span => span.text).join("")).findLast(line => line.trim().length > 0) ?? ""
 
 describe("App shell", () => {
   test("renders the status bar pinned to the bottom with NORMAL mode", async () => {
@@ -66,7 +59,7 @@ describe("screen router", () => {
       await pressKeys(setup, [":", ..."settings", "RETURN"])
       await setup.waitForFrame(f => f.includes("SETTINGS"))
       expect(setup.captureCharFrame()).toContain("SETTINGS")
-      expect(setup.captureCharFrame()).toContain("projects / databases / connections")
+      expect(setup.captureCharFrame()).toContain("projects / databases")
 
       await pressKeys(setup, [":", ..."explorer", "RETURN"])
       await setup.waitForFrame(f => f.includes("select a connection"))
@@ -123,12 +116,9 @@ describe("explorer flow", () => {
     })
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
-      /* demo is pre-selected; expand it, drop to the database, expand that too */
+      /* demo is pre-selected; expand it and connect the database */
       await pressKeys(setup, ["RETURN"])
       await setup.waitForFrame(f => f.includes("main"))
-      await pressKeys(setup, ["j"])
-      await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("data.db"))
       await pressKeys(setup, ["j"])
 
       /* Enter on the connection: connect → list tables → load the first table */

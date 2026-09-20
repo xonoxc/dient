@@ -15,6 +15,13 @@
  * Dark/light only changes which way surface panels drift off the base background
  * (lighter in dark terminals, darker in light ones) — the ANSI slots stay stable
  * because they are relative to whatever palette is active.
+ *
+ * Highlights follow the same rule as surface panels: `bgHighlight`/`selection`
+ * drift off the terminal background toward the foreground color. That makes the
+ * selected row read as a *lighter* band in dark terminals and a *darker* band in
+ * light ones — always relative to the active colorscheme, never a hardcoded gray
+ * that ignores the palette. Text on top keeps using the terminal's own contrast
+ * slots (`textBright` on dark bands, `text` on light ones).
  */
 import { Context, Effect, Layer } from "effect"
 import { RGBA } from "@opentui/core"
@@ -89,14 +96,13 @@ export const THEME_PALETTE_TIMEOUT_MS = 300
 /** How strongly surface panels drift off the base background. */
 const SURFACE_TINT_AMOUNT = 0.08
 
-/*
- * Highlight/selection backgrounds use the ANSI256 *gray* ramp (232..255), NOT
- * the color cube: cube slot 18 (a common "gray" pick) is actually rgb(0,0,135)
- * — bright blue on every terminal. gray24 (236) is subtle on dark backgrounds,
- * gray66 (245) reads clearly on light ones.
+/**
+ * How strongly a selected row/cursor highlight drifts off the base background.
+ * Deliberately ~2.5× the surface tint so the focused row stands out from idle
+ * panels while still blending with the terminal's colorscheme (blend toward the
+ * foreground color: lighter in dark terminals, darker in light ones).
  */
-const GRAY_HIGHLIGHT_DARK = 236
-const GRAY_HIGHLIGHT_LIGHT = 245
+const HIGHLIGHT_TINT_AMOUNT = 0.18
 
 /**
  * Overlay `overlay` on top of `base` by `amount` (0..1) in linear space. The
@@ -104,19 +110,12 @@ const GRAY_HIGHLIGHT_LIGHT = 245
  * a border/background and never think about alpha.
  */
 const blend = (base: RGBA, overlay: RGBA, amount: number): RGBA => {
-  const [r, g, b] = base.map((value) => value)
-  const [or, og, ob] = overlay.map((value) => value)
-  return RGBA.fromValues(
-    r + (or - r) * amount,
-    g + (og - g) * amount,
-    b + (ob - b) * amount,
-  )
+  const [r, g, b] = base.map(value => value)
+  const [or, og, ob] = overlay.map(value => value)
+  return RGBA.fromValues(r + (or - r) * amount, g + (og - g) * amount, b + (ob - b) * amount)
 }
 
-export const makeTheme = (
-  mode: ThemeMode,
-  palette?: TerminalPalette
-): ThemeService => {
+export const makeTheme = (mode: ThemeMode, palette?: TerminalPalette): ThemeService => {
   /*
    * The "default" intent keeps base tokens matched to the terminal at render
    * time; the snapshots only supply the RGB resolved before/without palette
@@ -127,21 +126,18 @@ export const makeTheme = (
    * is meaningful even before OSC detection lands.
    */
   const isDark = mode === "dark"
-  const slotHex = (index: number): string | undefined =>
-    palette?.palette?.[index] ?? undefined
+  const slotHex = (index: number): string | undefined => palette?.palette?.[index] ?? undefined
   /* `indexed` intent plus the terminal's real hex for that slot. */
-  const slot = (index: number): RGBA =>
-    RGBA.fromIndex(index, slotHex(index))
-  const text = RGBA.defaultForeground(
-    palette?.defaultForeground ?? (isDark ? "#ffffff" : "#000000")
-  )
-  const bg = RGBA.defaultBackground(
-    palette?.defaultBackground ?? (isDark ? "#000000" : "#ffffff")
-  )
-  const bgHighlight = RGBA.fromIndex(
-    isDark ? GRAY_HIGHLIGHT_DARK : GRAY_HIGHLIGHT_LIGHT,
-    slotHex(isDark ? GRAY_HIGHLIGHT_DARK : GRAY_HIGHLIGHT_LIGHT)
-  )
+  const slot = (index: number): RGBA => RGBA.fromIndex(index, slotHex(index))
+  const text = RGBA.defaultForeground(palette?.defaultForeground ?? (isDark ? "#ffffff" : "#000000"))
+  const bg = RGBA.defaultBackground(palette?.defaultBackground ?? (isDark ? "#000000" : "#ffffff"))
+  /*
+   * The selected-row highlight is the background drifted toward the foreground
+   * color — a light band in dark terminals, a dark band in light ones. Because
+   * it blends with the terminal's *own* background+foreground, it follows the
+   * active colorscheme instead of painting a fixed gray.
+   */
+  const highlight = blend(bg, text, HIGHLIGHT_TINT_AMOUNT)
   /*
    * Surface panels sit one step off the terminal background: a light gray tint
    * in dark terminals (drifts lighter), a black tint in light ones (drifts
@@ -154,7 +150,7 @@ export const makeTheme = (
     textBright: slot(15),
     bg,
     bgSurface: blend(bg, surfaceTint, SURFACE_TINT_AMOUNT),
-    bgHighlight,
+    bgHighlight: highlight,
     border: slot(8),
     borderFocused: slot(12),
     error: slot(1),
@@ -163,12 +159,12 @@ export const makeTheme = (
     info: slot(6),
     accent: slot(12),
     accentMuted: slot(4),
-    selection: RGBA.fromIndex(8, slotHex(8) ?? bgHighlight),
+    selection: highlight,
   }
   return {
     mode,
     colors,
-    color: (token) => colors[token],
+    color: token => colors[token],
   }
 }
 
@@ -182,9 +178,7 @@ const normalizeMode = (mode: ThemeMode | null | undefined): ThemeMode =>
  */
 const detectPalette = (detector: ThemeDetector): Effect.Effect<TerminalPalette | undefined, never> =>
   detector.getPalette
-    ? Effect.tryPromise(() =>
-        detector.getPalette!({ size: 16, timeout: THEME_PALETTE_TIMEOUT_MS })
-      ).pipe(
+    ? Effect.tryPromise(() => detector.getPalette!({ size: 16, timeout: THEME_PALETTE_TIMEOUT_MS })).pipe(
         Effect.map(p => ({
           palette: p.palette,
           defaultForeground: p.defaultForeground,
@@ -206,9 +200,9 @@ const detectMode = (detector: ThemeDetector): Effect.Effect<ThemeMode, never> =>
       return immediate
     }
     if (detector.waitForThemeMode) {
-      const awaited = yield* Effect.tryPromise(() =>
-        detector.waitForThemeMode!(THEME_DETECT_TIMEOUT_MS)
-      ).pipe(Effect.catchAll(() => Effect.succeed(null)))
+      const awaited = yield* Effect.tryPromise(() => detector.waitForThemeMode!(THEME_DETECT_TIMEOUT_MS)).pipe(
+        Effect.catchAll(() => Effect.succeed(null))
+      )
       return normalizeMode(awaited)
     }
     return DEFAULT_THEME_MODE
@@ -216,10 +210,8 @@ const detectMode = (detector: ThemeDetector): Effect.Effect<ThemeMode, never> =>
 
 export namespace Theme {
   /** A fixed-mode layer; used when the mode is known ahead of time (tests). */
-  export const layer = (
-    mode: ThemeMode = DEFAULT_THEME_MODE,
-    palette?: TerminalPalette
-  ): Layer.Layer<Theme> => Layer.succeed(Theme, makeTheme(mode, palette))
+  export const layer = (mode: ThemeMode = DEFAULT_THEME_MODE, palette?: TerminalPalette): Layer.Layer<Theme> =>
+    Layer.succeed(Theme, makeTheme(mode, palette))
 
   /**
    * Auto-detects the terminal's dark/light mode and its real ANSI palette, then

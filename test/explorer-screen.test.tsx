@@ -12,18 +12,11 @@ import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { pressKeys, renderApp } from "@test/support/render-ui"
-import {
-  freshConfigFile,
-  freshSqliteDataFile,
-  resolveTestServices,
-  seedProject,
-} from "@test/support/services-fixture"
+import { freshConfigFile, freshSqliteDataFile, resolveTestServices, seedProject } from "@test/support/services-fixture"
 
-async function expandToConnection(setup: Awaited<ReturnType<typeof renderApp>>, dataFile: string) {
+async function expandToConnection(setup: Awaited<ReturnType<typeof renderApp>>) {
   await pressKeys(setup, ["RETURN"])
-  await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("▸ main"))
-  await pressKeys(setup, ["j", "RETURN"])
-  await setup.waitForFrame(f => f.includes(`○ ${dataFile}`))
+  await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
   await pressKeys(setup, ["j", "RETURN"])
   await setup.waitForFrame(f => f.includes("USERS") && f.includes("alice"))
 }
@@ -41,22 +34,32 @@ function ordersFile(): string {
 describe("explorer screen", () => {
   test("connecting to a connection loads its tables into the strip and opens the first table", async () => {
     const services = await resolveTestServices(freshConfigFile())
-    await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: freshSqliteDataFile() })
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile(),
+    })
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
-      await expandToConnection(setup, "data.db")
+      await expandToConnection(setup)
       const frame = setup.captureCharFrame()
       expect(frame).toContain("▶ USERS")
       expect(frame).toContain("alice")
-      expect(frame).toContain("data.db@main")
+      expect(frame).toContain("main · sqlite")
     } finally {
       setup.renderer.destroy()
     }
   })
 
-  test("Tab cycles connections and refreshes table list, data, and status", async () => {
+  test("Tab cycles databases and refreshes table list, data, and status", async () => {
     const services = await resolveTestServices(freshConfigFile())
-    await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: freshSqliteDataFile() })
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile(),
+    })
     await seedProject(services.store, {
       name: "beta",
       database: "app",
@@ -65,30 +68,28 @@ describe("explorer screen", () => {
     })
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
-      /* projects render name-sorted, so beta is the first row: expand beta, its
-         database, then connect to the orders connection */
+      /* projects render name-sorted, so beta is the first row: expand it, then
+         connect the app database */
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("▾ beta") && f.includes("▸ app"))
-      await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("○ orders.db"))
+      await setup.waitForFrame(f => f.includes("▾ beta") && f.includes("○ app"))
       await pressKeys(setup, ["j", "RETURN"])
       await setup.waitForFrame(f => f.includes("▶ ORDERS") && f.includes("iphone"))
       const beta = setup.captureCharFrame()
-      expect(beta).toContain("orders.db@app")
+      expect(beta).toContain("app · sqlite")
       expect(beta).not.toContain("alice")
 
-      /* cursor sits on orders.db, which now lists its own table beneath it;
-         two downs skip the table row and land on the demo project to expand */
+      /* cursor sits on the app row, which now lists its table beneath it; two
+         downs skip the table row and land on the demo project to expand */
       await pressKeys(setup, ["j", "j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("▸ main"))
-      await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("○ data.db"))
+      await setup.waitForFrame(f => f.includes("○ main"))
+      await pressKeys(setup, ["j"])
 
-      /* Tab wraps around to the first connection: data.db is back in the strip */
+      /* Tab wraps around to the first connection: main connects and its data
+         lands in the strip (it is not the active connection, yet) */
       await pressKeys(setup, ["TAB"])
       await setup.waitForFrame(f => f.includes("▶ USERS") && f.includes("alice"))
       const back = setup.captureCharFrame()
-      expect(back).toContain("data.db@main")
+      expect(back).toContain("main · sqlite")
       expect(back).not.toContain("iphone")
     } finally {
       setup.renderer.destroy()
@@ -103,9 +104,7 @@ describe("explorer screen", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("▸ main"))
-      await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("○ data.db"))
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
       await pressKeys(setup, ["j", "RETURN"])
       await setup.waitForFrame(f => f.includes("no tables") && f.includes("no rows"))
       const frame = setup.captureCharFrame()

@@ -12,10 +12,7 @@ import { rowsWindow } from "@/table/data-table"
 import { formatCell, MIN_COL_WIDTH, MAX_COL_WIDTH, useTable, type UseTableResult } from "@/table/use-table"
 import type { ColumnInfo } from "@/drivers/types"
 
-const columns: ReadonlyArray<ColumnInfo> = [
-  { name: "id" },
-  { name: "name" },
-]
+const columns: ReadonlyArray<ColumnInfo> = [{ name: "id" }, { name: "name" }]
 
 describe("formatCell", () => {
   test("null and undefined render as the empty-cell marker", () => {
@@ -177,15 +174,13 @@ describe("useTable", () => {
       { name: "an_extra_long_column_name" },
     ]
     const rows = [
-      { id: 1, name: "a", short: "b", "an_extra_long_column_name": "c".repeat(60) },
-      { id: 2, name: "b", short: "c", "an_extra_long_column_name": "d" },
+      { id: 1, name: "a", short: "b", an_extra_long_column_name: "c".repeat(60) },
+      { id: 2, name: "b", short: "c", an_extra_long_column_name: "d" },
     ]
     const setup = await renderTableFixture(cols, rows)
     try {
       const frame = setup.captureCharFrame()
-      expect(frame).toContain(
-        `widths=id:${MIN_COL_WIDTH},name:4,short:5,an_extra_long_column_name:${MAX_COL_WIDTH}`
-      )
+      expect(frame).toContain(`widths=id:${MIN_COL_WIDTH},name:4,short:5,an_extra_long_column_name:${MAX_COL_WIDTH}`)
     } finally {
       setup.renderer.destroy()
     }
@@ -259,11 +254,12 @@ async function renderTableFixture(
   columns: ReadonlyArray<ColumnInfo>,
   rows: ReadonlyArray<Record<string, unknown>>
 ): Promise<TestRendererSetup> {
-  const setup = await testRender(
-    <HookFixtureRoot columns={columns} rows={rows} />,
-    { width: 160, height: 6, kittyKeyboard: true }
-  );
-  (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = false
+  const setup = await testRender(<HookFixtureRoot columns={columns} rows={rows} />, {
+    width: 160,
+    height: 6,
+    kittyKeyboard: true,
+  })
+  ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = false
   await setup.waitForVisualIdle()
   return setup
 }

@@ -163,10 +163,7 @@ export function DialogProvider({ children }: { children?: ReactNode }) {
     []
   )
 
-  const value = useMemo<DialogState>(
-    () => ({ confirm, dialog }),
-    [confirm, dialog]
-  )
+  const value = useMemo<DialogState>(() => ({ confirm, dialog }), [confirm, dialog])
 
   return <DialogContext.Provider value={value}>{children}</DialogContext.Provider>
 }
@@ -209,10 +206,7 @@ export function SessionProvider({ children }: { children?: ReactNode }) {
   const setStatus = useCallback((patch: Partial<SessionStatus>) => {
     setStatusState(current => ({ ...current, ...patch }))
   }, [])
-  const value = useMemo<SessionState>(
-    () => ({ status, setStatus }),
-    [status, setStatus]
-  )
+  const value = useMemo<SessionState>(() => ({ status, setStatus }), [status, setStatus])
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>
 }
 

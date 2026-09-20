@@ -21,7 +21,7 @@ import { ConnectionError, QueryError } from "@/drivers/types"
 import { cleanIdentifier } from "@/query/identifier"
 import { resolveConnectionConfig } from "@/connection/config"
 import type { Connection, ConnectionId, Database } from "@/domain"
-import { Context, Effect, Layer, Ref } from "effect"
+import { Context, Effect, Layer, Ref, Schedule } from "effect"
 
 export type ConnectionStatus = "connected" | "disconnected" | "error"
 
@@ -42,7 +42,10 @@ export interface ConnectionManagerService {
     sql: string,
     params?: ReadonlyArray<unknown>
   ) => Effect.Effect<QueryResult, QueryError | ConnectionError | ConfigError>
-  readonly pingConnection: (database: Database, connection: Connection) => Effect.Effect<boolean, ConnectionError | ConfigError>
+  /** Connects, pings, and tears down. Retries transient failures (host still
+      booting, flaky network) up to 3 attempts with backoff and never fails —
+      the result is just `false`. */
+  readonly pingConnection: (database: Database, connection: Connection) => Effect.Effect<boolean>
   readonly activeConnections: () => Effect.Effect<ReadonlyArray<ManagedConnection>>
 }
 
@@ -103,7 +106,10 @@ export namespace ConnectionManager {
 
       const connect = (id: ConnectionId) =>
         Effect.gen(function* () {
-          const existing = yield* slots.pipe(Ref.get, Effect.map(s => s.active.get(id)))
+          const existing = yield* slots.pipe(
+            Ref.get,
+            Effect.map(s => s.active.get(id))
+          )
           if (existing) return existing.active
           return yield* open(id).pipe(
             Effect.tapError(e =>
@@ -118,7 +124,10 @@ export namespace ConnectionManager {
 
       const disconnect = (id: ConnectionId) =>
         Effect.gen(function* () {
-          const current = yield* slots.pipe(Ref.get, Effect.map(s => s.active.get(id)))
+          const current = yield* slots.pipe(
+            Ref.get,
+            Effect.map(s => s.active.get(id))
+          )
           if (current) {
             yield* driver.disconnect(current.active).pipe(Effect.catchAll(() => Effect.void))
           }
@@ -157,18 +166,30 @@ export namespace ConnectionManager {
         query: (id, sql, params) =>
           Effect.gen(function* () {
             const active = yield* connect(id)
-            return yield* driver
-              .query(active, sql, params)
-              .pipe(Effect.mapError(e => e as QueryError))
+            return yield* driver.query(active, sql, params).pipe(Effect.mapError(e => e as QueryError))
           }),
         pingConnection: (database, connection) =>
           Effect.gen(function* () {
             const config = yield* resolveConnectionConfig(database, connection)
-            const active = yield* Effect.scoped(driver.connect(config))
-            yield* driver.disconnect(active).pipe(Effect.catchAll(() => Effect.void))
-            return true
-          }),
-        activeConnections: () => slots.pipe(Ref.get, Effect.map(s => [...s.active.values()])),
+            const attempt = Effect.scoped(
+              Effect.gen(function* () {
+                const active = yield* driver.connect(config)
+                /* close the probe session; the app's real connections live in
+                   the open-slot cache, not in pings */
+                yield* driver.disconnect(active).pipe(Effect.catchAll(() => Effect.void))
+                return true
+              })
+            )
+            const outcome = yield* attempt
+              .pipe(Effect.retry(Schedule.intersect(Schedule.recurs(2), Schedule.exponential("500 millis"))))
+              .pipe(Effect.timeout("6 seconds"))
+            return outcome
+          }).pipe(Effect.catchAll(() => Effect.succeed(false))),
+        activeConnections: () =>
+          slots.pipe(
+            Ref.get,
+            Effect.map(s => [...s.active.values()])
+          ),
       }
     })
   )

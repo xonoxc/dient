@@ -1,31 +1,29 @@
 /**
- * Settings screen state. Renders the config tree (projects → databases →
- * connections) and drives keyboard forms for adding databases and connections,
- * deleting any node, and testing a connection from the tree row.
+ * Settings screen state. Renders the config tree (projects → databases) and
+ * drives keyboard forms.
  *
- * The tree is a flattened list of `SettingsListItem` nodes; each carries its
- * parent id so CRUD always lands on the right foreign key (a connection form
- * needs the database that will own it, a database form the owning project).
+ * The model is deliberately flat: a database *is* its connection. Pressing `a`
+ * opens a single-line prompt where you paste a connection string — a
+ * `postgres://` / `mysql://` URL or a filesystem path (SQLite). The tail of
+ * the string becomes the database's display name, so adding a database is one
+ * paste. A credentials form (host/port/user/…) is one key away for people who
+ * prefer filling fields, and when a server URL carries no database name the
+ * form asks for it in a follow-up prompt.
  *
- * Form state (which form is open, its draft buffer, the picked engine) is
- * mirrored into refs: keyboard handlers fire between React commits when a user
- * (or a test pressing whole chords) types faster than a frame, so every action
- * reads the live value instead of a stale render closure — the same trick the
- * shell's command line and the cell editor use.
- *
- * Everything is fire-and-forget from the hook: React is the frame loop, so a
- * saved/removed row refreshes the tree through a follow-up `refresh()`.
+ * Form state is mirrored into refs: keyboard handlers fire between React
+ * commits when a user (or a test pressing whole chords) types faster than a
+ * frame, so every action reads the live value instead of a stale render
+ * closure — the same trick the shell's command line and the cell editor use.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Effect } from "effect"
 import { useDialog, useServices, useToasts } from "@/app-context"
-import { connectionLabel } from "@/connection/config"
 import { completePath, pathCandidates } from "@/fs/path-complete"
-import type { CreateConnectionInput, ConfigStoreService } from "@/config"
-import type { Connection, ConnectionId, Database, DatabaseId, Project, ProjectId } from "@/domain"
-import type { Engine } from "@/domain"
+import { parseConnectionString, type ConnectionString } from "@/connection/parse"
+import type { CreateConnectionInput } from "@/config"
+import type { Connection, ConnectionId, Database, DatabaseId, Engine, Project, ProjectId } from "@/domain"
 
-export type SettingsKind = "project" | "database" | "connection"
+export type SettingsKind = "project" | "database"
 
 export interface SettingsListItem {
   readonly id: string
@@ -36,21 +34,31 @@ export interface SettingsListItem {
   readonly meta: string | null
   readonly depth: number
   readonly expanded: boolean
+  /** The database's connection params ride along on the row (may be absent). */
+  readonly connection?: Connection | null
 }
 
-export type ConnectionFormField = "host" | "port" | "user" | "password" | "filename" | "defaultDatabase"
+export type ConnectionFormField = "name" | "host" | "port" | "user" | "password" | "filename" | "defaultDatabase"
 
 export type SettingsForm =
   | { readonly kind: "project" }
-  | { readonly kind: "database"; readonly projectId: ProjectId }
   | {
-      readonly kind: "connection"
-      readonly databaseId: DatabaseId
+      readonly kind: "connect"
+      readonly projectId: ProjectId
+      readonly mode: "uri" | "fields"
       readonly fieldIndex: number
-      readonly values: Partial<Record<ConnectionFormField, string>>
+      readonly values: Partial<Record<ConnectionFormField | "uri", string>>
+      /** Engine for the credentials ("fields") mode. */
+      readonly engine: Engine
     }
+  | {
+      readonly kind: "connectName"
+      readonly projectId: ProjectId
+      /** The parsed server URL that was missing a database name. */
+      readonly pending: Extract<ConnectionString, { engine: "postgres" | "mysql" }>
+    }
+  | { readonly kind: "rename"; readonly databaseId: DatabaseId }
 
-/** Which fields each engine's connection form exposes, in Tab order. */
 export const CONNECTION_FIELDS: Record<Engine, readonly ConnectionFormField[]> = {
   sqlite: ["filename"],
   postgres: ["host", "port", "user", "password", "defaultDatabase"],
@@ -58,6 +66,7 @@ export const CONNECTION_FIELDS: Record<Engine, readonly ConnectionFormField[]> =
 }
 
 export const FIELD_LABEL: Record<ConnectionFormField, string> = {
+  name: "name",
   host: "host",
   port: "port",
   user: "user",
@@ -72,27 +81,32 @@ export interface UseSettingsResult {
   readonly form: SettingsForm | null
   readonly draft: string
   readonly engine: Engine
-  readonly field: ConnectionFormField | null
+  readonly field: string | null
   readonly fieldIndex: number
   readonly fieldCount: number
   readonly typeChar: (char: string) => void
   readonly backspace: () => void
   readonly setDraft: (draft: string) => void
-  readonly cycleEngine: () => void
   readonly tab: () => void
+  /** In the connect form: `uri` ⇄ `fields`, then cycle the engine. */
+  readonly cycleEngine: () => void
   readonly move: (delta: -1 | 1) => void
   readonly jump: (position: "first" | "last") => void
   readonly toggle: () => void
   readonly add: () => void
   readonly remove: () => void
+  readonly rename: () => void
   readonly testConnection: () => void
   readonly submitForm: () => void
   readonly cancelForm: () => void
-  /** Non-null while a connection test is in flight (renders "connecting…"). */
+  /** Non-null while a connection test is in flight (renders "testing …"). */
   readonly testing: string | null
-  /** Filesystem matches for the active filename field (sqlite forms). */
+  /** Filesystem matches for a SQLite filename / uri draft being typed. */
   readonly completions: ReadonlyArray<string>
 }
+
+/** A connection-string draft that currently reads as a filesystem path. */
+const isPathLike = (draft: string): boolean => !/^[a-z][a-z0-9+.-]*:\/\//i.test(draft.trim())
 
 export const buildSettingsTree = (
   projects: ReadonlyArray<Project>,
@@ -103,15 +117,30 @@ export const buildSettingsTree = (
   const items: SettingsListItem[] = []
   for (const project of projects) {
     const projectExpanded = expanded.has(project.id)
-    items.push({ id: `project:${project.id}`, kind: "project", refId: project.id, parentId: null, label: project.name, meta: null, depth: 0, expanded: projectExpanded })
+    items.push({
+      id: `project:${project.id}`,
+      kind: "project",
+      refId: project.id,
+      parentId: null,
+      label: project.name,
+      meta: null,
+      depth: 0,
+      expanded: projectExpanded,
+    })
     if (!projectExpanded) continue
     for (const database of databases.get(project.id) ?? []) {
-      const databaseExpanded = expanded.has(database.id)
-      items.push({ id: `database:${database.id}`, kind: "database", refId: database.id, parentId: project.id, label: database.name, meta: database.engine, depth: 1, expanded: databaseExpanded })
-      if (!databaseExpanded) continue
-      for (const connection of connections.get(database.id) ?? []) {
-        items.push({ id: `connection:${connection.id}`, kind: "connection", refId: connection.id, parentId: database.id, label: connectionLabel(connection), meta: null, depth: 2, expanded: false })
-      }
+      const connection = (connections.get(database.id) ?? [])[0] ?? null
+      items.push({
+        id: `database:${database.id}`,
+        kind: "database",
+        refId: database.id,
+        parentId: project.id,
+        label: database.name,
+        meta: database.engine,
+        depth: 1,
+        expanded: false,
+        connection,
+      })
     }
   }
   return items
@@ -148,9 +177,6 @@ export const useSettings = (): UseSettingsResult => {
     return undefined
   }
 
-  const connectionRow = (databaseId: DatabaseId, connectionId: ConnectionId): Connection | undefined =>
-    connections.get(databaseId)?.find(connection => connection.id === connectionId)
-
   const refresh = (): void => {
     const restore = (): void => {
       formRef.current = null
@@ -169,8 +195,7 @@ export const useSettings = (): UseSettingsResult => {
             return next
           })
           for (const database of dbRows) {
-            const connRows =
-              (await Effect.runPromise(configStore.listConnections(database.id)).catch(() => null)) ?? []
+            const connRows = (await Effect.runPromise(configStore.listConnections(database.id)).catch(() => null)) ?? []
             setConnections(current => {
               const next = new Map(current)
               next.set(database.id, connRows)
@@ -192,30 +217,38 @@ export const useSettings = (): UseSettingsResult => {
 
   const clamp = (next: number): number => Math.max(0, Math.min(Math.max(items.length - 1, 0), next))
 
-  const fieldsOf = (form: SettingsForm): readonly ConnectionFormField[] => {
-    if (form.kind === "connection") {
-      return CONNECTION_FIELDS[databaseById(form.databaseId)?.engine ?? "sqlite"]
-    }
-    return []
-  }
+  /** Field order for the credentials form: an explicit name first, then the
+      engine's own settings. */
+  const fieldsOf = (form: Extract<SettingsForm, { kind: "connect" }>): readonly ConnectionFormField[] => [
+    "name",
+    ...CONNECTION_FIELDS[form.engine],
+  ]
 
-  const field = form?.kind === "connection" ? fieldsOf(form)[form.fieldIndex] ?? null : null
-  const fieldCount = form?.kind === "connection" ? fieldsOf(form).length : 0
-  const fieldIndex = form?.kind === "connection" ? form.fieldIndex : 0
+  const field = (() => {
+    if (form?.kind !== "connect") return null
+    if (form.mode === "uri") return "uri"
+    return fieldsOf(form)[form.fieldIndex] ?? null
+  })()
+  const fieldCount = form?.kind === "connect" && form.mode === "fields" ? fieldsOf(form).length : 0
+  const fieldIndex = form?.kind === "connect" ? form.fieldIndex : 0
 
-  /* Live path matches for the sqlite filename field, shown under the form. */
+  /* Live path matches for a SQLite path being typed (uri mode treats a bare
+     draft as a file system path, so completion applies to both). */
   const completions = useMemo(() => {
-    if (form?.kind !== "connection") return []
-    if (databaseById(form.databaseId)?.engine !== "sqlite") return []
-    if (field !== "filename") return []
+    if (form?.kind !== "connect") return []
+    const active = form.mode === "uri" ? "uri" : fieldsOf(form)[form.fieldIndex]
+    if (active !== "uri" && active !== "filename") return []
+    if (active === "uri" && !isPathLike(draft)) return []
     return pathCandidates(draft)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form, draft, databases])
+  }, [form, draft, engine])
 
   const openForm = (next: SettingsForm | null): void => {
     formRef.current = next
-    const key = next?.kind === "connection" ? (fieldsOf(next)[next.fieldIndex] ?? null) : null
-    const buffer = next?.kind === "connection" && key ? (next.values[key] ?? "") : ""
+    let buffer = ""
+    if (next?.kind === "connect")
+      buffer = next.values[next.mode === "uri" ? "uri" : (fieldsOf(next)[next.fieldIndex] ?? "name")] ?? ""
+    else if (next?.kind === "rename") buffer = databaseById(next.databaseId)?.name ?? ""
     draftRef.current = buffer
     setFormState(next)
     setDraftState(buffer)
@@ -223,12 +256,12 @@ export const useSettings = (): UseSettingsResult => {
 
   const typeChar = (char: string): void => {
     const current = formRef.current
-    if (!current || current.kind !== "connection") {
+    if (!current || current.kind !== "connect") {
       draftRef.current += char
       setDraftState(draftRef.current)
       return
     }
-    const key = fieldsOf(current)[current.fieldIndex]
+    const key = current.mode === "uri" ? "uri" : fieldsOf(current)[current.fieldIndex]
     if (!key) return
     const text = (current.values[key] ?? "") + char
     const next: SettingsForm = { ...current, values: { ...current.values, [key]: text } }
@@ -240,12 +273,12 @@ export const useSettings = (): UseSettingsResult => {
 
   const backspace = (): void => {
     const current = formRef.current
-    if (!current || current.kind !== "connection") {
+    if (!current || current.kind !== "connect") {
       draftRef.current = draftRef.current.slice(0, -1)
       setDraftState(draftRef.current)
       return
     }
-    const key = fieldsOf(current)[current.fieldIndex]
+    const key = current.mode === "uri" ? "uri" : fieldsOf(current)[current.fieldIndex]
     if (!key) return
     const text = (current.values[key] ?? "").slice(0, -1)
     const next: SettingsForm = { ...current, values: { ...current.values, [key]: text } }
@@ -255,68 +288,190 @@ export const useSettings = (): UseSettingsResult => {
     setDraftState(text)
   }
 
-  const connectionForm = (databaseId: DatabaseId): SettingsForm => ({
-    kind: "connection",
-    databaseId,
-    fieldIndex: 0,
-    values: {},
-  })
+  const createDatabaseAndConnection = (
+    projectId: ProjectId,
+    name: string,
+    engine: Engine,
+    params: Partial<Omit<CreateConnectionInput, "databaseId">>
+  ): Promise<void> =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const database = yield* configStore.createDatabase({ projectId, name, engine })
+        yield* configStore.createConnection({ databaseId: database.id, ...params })
+      })
+    )
 
-  const submitConnectionForm = (form: Extract<SettingsForm, { kind: "connection" }>): void => {
-    const parentEngine = databaseById(form.databaseId)?.engine ?? "sqlite"
-    const values = form.values
-    const filename = values.filename?.trim() ?? ""
-    const host = values.host?.trim() ?? ""
-    const port = values.port?.trim() ?? ""
+  const nameTaken = (projectId: ProjectId, name: string): Promise<boolean> =>
+    Effect.runPromise(configStore.listDatabases(projectId)).then(rows => rows.some(row => row.name === name))
 
+  const submitConnectionForm = (form: Extract<SettingsForm, { kind: "connect" }>): void => {
     const finish = (): void => {
       openForm(null)
       refresh()
     }
 
-    if (parentEngine === "sqlite") {
+    if (form.mode === "uri") {
+      const parsed = parseConnectionString(draftRef.current)
+      if (!parsed) {
+        toasts.push("error", "could not parse that connection string")
+        return
+      }
+      if (parsed.engine === "sqlite") {
+        void (async () => {
+          if (await nameTaken(form.projectId, parsed.name)) {
+            toasts.push("error", `a database named "${parsed.name}" already exists`)
+            return
+          }
+          await createDatabaseAndConnection(form.projectId, parsed.name, "sqlite", { filename: parsed.filename })
+          toasts.push("success", `added ${parsed.name} (${parsed.filename})`)
+          finish()
+        })().catch(cause => {
+          errorLog.append("settings.addConnection", cause)
+          toasts.push("error", `failed to add: ${String(cause)}`)
+        })
+        return
+      }
+      if (!parsed.name) {
+        /* server URL with no database name — ask for it next */
+        const next: SettingsForm = { kind: "connectName", projectId: form.projectId, pending: parsed }
+        openForm(next)
+        return
+      }
+      const urlName = parsed.name
+      void (async () => {
+        if (await nameTaken(form.projectId, urlName)) {
+          toasts.push("error", `a database named "${urlName}" already exists`)
+          return
+        }
+        await createDatabaseAndConnection(form.projectId, urlName, parsed.engine, {
+          host: parsed.host,
+          port: parsed.port,
+          user: parsed.user,
+          password: parsed.password,
+          defaultDatabase: parsed.defaultDatabase ?? urlName,
+        })
+        toasts.push("success", `added ${urlName} (${parsed.engine})`)
+        finish()
+      })().catch(cause => {
+        errorLog.append("settings.addConnection", cause)
+        toasts.push("error", `failed to add: ${String(cause)}`)
+      })
+      return
+    }
+
+    /* Credentials ("fields") mode: explicit name first, then host/port/… */
+    const values = form.values
+    const name = values.name?.trim() ?? ""
+    if (!name) {
+      toasts.push("error", "a database name is required")
+      return
+    }
+    if (form.engine === "sqlite") {
+      const filename = values.filename?.trim() ?? ""
       if (!filename) {
         toasts.push("error", "a sqlite connection requires a filename")
         return
       }
-      void Effect.runPromise(configStore.createConnection({ databaseId: form.databaseId, filename }))
-        .then(() => {
-          toasts.push("success", `connection added (${filename})`)
-          finish()
-        })
-        .catch(cause => {
-          errorLog.append("settings.createConnection", cause)
-          toasts.push("error", `failed to add connection: ${String(cause)}`)
-          finish()
-        })
-    } else {
-      if (!host) {
-        toasts.push("error", "a connection requires a host")
-        return
-      }
-      if (port && !/^\d+$/.test(port)) {
-        toasts.push("error", "port must be a number")
-        return
-      }
-      const input: CreateConnectionInput = {
-        databaseId: form.databaseId,
+      void (async () => {
+        if (await nameTaken(form.projectId, name)) return toastTaken(name)
+        await createDatabaseAndConnection(form.projectId, name, "sqlite", { filename })
+        toasts.push("success", `added ${name} (${filename})`)
+        finish()
+      })().catch(cause => {
+        errorLog.append("settings.addConnection", cause)
+        toasts.push("error", `failed to add: ${String(cause)}`)
+      })
+      return
+    }
+    const host = values.host?.trim() ?? ""
+    if (!host) {
+      toasts.push("error", "a connection requires a host")
+      return
+    }
+    const port = values.port?.trim() ?? ""
+    if (port && !/^\d+$/.test(port)) {
+      toasts.push("error", "port must be a number")
+      return
+    }
+    void (async () => {
+      if (await nameTaken(form.projectId, name)) return toastTaken(name)
+      const input = {
         host,
         ...(port ? { port: Number(port) } : {}),
         ...(values.user?.trim() ? { user: values.user.trim() } : {}),
         ...(values.password?.trim() ? { password: values.password.trim() } : {}),
         ...(values.defaultDatabase?.trim() ? { defaultDatabase: values.defaultDatabase.trim() } : {}),
       }
-      void Effect.runPromise(configStore.createConnection(input))
-        .then(() => {
-          toasts.push("success", `connection added (${host})`)
-          finish()
-        })
-        .catch(cause => {
-          errorLog.append("settings.createConnection", cause)
-          toasts.push("error", `failed to add connection: ${String(cause)}`)
-          finish()
-        })
+      await createDatabaseAndConnection(form.projectId, name, form.engine, input)
+      toasts.push("success", `added ${name} (${form.engine})`)
+      finish()
+    })().catch(cause => {
+      errorLog.append("settings.addConnection", cause)
+      toasts.push("error", `failed to add: ${String(cause)}`)
+    })
+  }
+
+  const toastTaken = (name: string) => toasts.push("error", `a database named "${name}" already exists`)
+
+  const submitFollowUpName = (form: Extract<SettingsForm, { kind: "connectName" }>): void => {
+    const name = draftRef.current.trim()
+    if (!name) {
+      toasts.push("error", "a database name is required")
+      return
     }
+    const parsed = form.pending
+    void (async () => {
+      if (await nameTaken(form.projectId, name)) return toastTaken(name)
+      await createDatabaseAndConnection(form.projectId, name, parsed.engine, {
+        host: parsed.host,
+        port: parsed.port,
+        user: parsed.user,
+        password: parsed.password,
+        defaultDatabase: parsed.defaultDatabase ?? name,
+      })
+      toasts.push("success", `added ${name} (${parsed.engine})`)
+      openForm(null)
+      refresh()
+    })().catch(cause => {
+      errorLog.append("settings.addConnection", cause)
+      toasts.push("error", `failed to add: ${String(cause)}`)
+    })
+  }
+
+  const testConnection = (): void => {
+    const item = items[Math.min(cursor, items.length - 1)]
+    if (!item || item.kind !== "database") {
+      toasts.push("info", "move to a database row (j/k) and press t to test it")
+      return
+    }
+    if (testingRef.current) return
+    const database = databaseById(item.refId as DatabaseId)
+    const connection = item.connection ?? null
+    if (!database) {
+      toasts.push("error", "database not found")
+      return
+    }
+    if (!connection) {
+      toasts.push("error", `"${database.name}" has no connection — add one from settings`)
+      return
+    }
+    const label = database.name
+    testingRef.current = label
+    setTesting(label)
+    toasts.push("info", `testing ${label}…`)
+    void Effect.runPromise(connectionManager.pingConnection(database, connection))
+      .then(ok => {
+        testingRef.current = null
+        setTesting(null)
+        if (ok) toasts.push("success", `${label} ok (${database.engine})`)
+        else toasts.push("error", `${label} unreachable`)
+      })
+      .catch(cause => {
+        testingRef.current = null
+        setTesting(null)
+        errorLog.append("settings.testConnection", cause)
+        toasts.push("error", `${label} unreachable: ${String(cause)}`)
+      })
   }
 
   return {
@@ -335,41 +490,50 @@ export const useSettings = (): UseSettingsResult => {
       setDraftState(text)
     },
     cycleEngine: () => {
-      const next = ENGINES[(ENGINES.indexOf(engineRef.current) + 1) % ENGINES.length]!
-      engineRef.current = next
-      setEngineState(next)
+      const current = formRef.current
+      if (!current || current.kind !== "connect") return
+      if (current.mode === "uri") {
+        const next: SettingsForm = { ...current, mode: "fields", fieldIndex: 0 }
+        formRef.current = next
+        setFormState(next)
+        return
+      }
+      const nextEngine = ENGINES[(ENGINES.indexOf(current.engine) + 1) % ENGINES.length]!
+      engineRef.current = nextEngine
+      setEngineState(nextEngine)
+      const next: SettingsForm = { ...current, engine: nextEngine, fieldIndex: 0 }
+      formRef.current = next
+      setFormState(next)
+      const key = fieldsOf(next)[0]!
+      draftRef.current = next.values[key] ?? ""
+      setDraftState(draftRef.current)
     },
     tab: () => {
       const current = formRef.current
       if (!current) return
-      if (current.kind === "database") {
-        const next = ENGINES[(ENGINES.indexOf(engineRef.current) + 1) % ENGINES.length]!
-        engineRef.current = next
-        setEngineState(next)
-      } else if (current.kind === "connection") {
-        /* A single-field sqlite form has nothing to tab between — Tab becomes
-           shell-style path completion of the filename instead. */
-        const fields = fieldsOf(current)
-        if (fields.length === 1 && databaseById(current.databaseId)?.engine === "sqlite") {
-          draftRef.current = completePath(draftRef.current)
-          setDraftState(draftRef.current)
+      if (current.kind === "connect") {
+        if (current.mode === "uri") {
+          /* a bare draft is a file path — shell-style path completion */
+          if (isPathLike(draftRef.current)) {
+            draftRef.current = completePath(draftRef.current)
+            setDraftState(draftRef.current)
+          }
           return
         }
+        const fields = fieldsOf(current)
         const fieldIndexNext = (current.fieldIndex + 1) % fields.length
         const next: SettingsForm = { ...current, fieldIndex: fieldIndexNext }
         formRef.current = next
-        const key = fields[fieldIndexNext] ?? null
-        const buffer = key ? (next.values[key] ?? "") : ""
-        draftRef.current = buffer
+        draftRef.current = next.values[fields[fieldIndexNext] ?? "name"] ?? ""
         setFormState(next)
-        setDraftState(buffer)
+        setDraftState(draftRef.current)
       }
     },
     move: delta => setCursor(current => clamp(current + delta)),
     jump: position => setCursor(position === "last" ? clamp(items.length) : 0),
     toggle: () => {
       const item = items[Math.min(cursor, items.length - 1)]
-      if (!item || item.kind === "connection") return
+      if (!item || item.kind !== "project") return
       setExpanded(current => {
         const next = new Set(current)
         if (next.has(item.refId)) next.delete(item.refId)
@@ -383,83 +547,87 @@ export const useSettings = (): UseSettingsResult => {
         openForm({ kind: "project" })
         return
       }
-      if (item.kind === "project") openForm({ kind: "database", projectId: item.refId as ProjectId })
-      else if (item.kind === "database") openForm(connectionForm(item.refId as DatabaseId))
-      else openForm(connectionForm(item.parentId as DatabaseId))
+      const projectId =
+        item.kind === "project"
+          ? (item.refId as ProjectId)
+          : ((item.parentId ?? projects[0]?.id ?? null) as ProjectId | null)
+      if (!projectId) {
+        openForm({ kind: "project" })
+        return
+      }
+      openForm({ kind: "connect", projectId, mode: "uri", fieldIndex: 0, values: {}, engine: "postgres" })
     },
     remove: () => {
       const item = items[Math.min(cursor, items.length - 1)]
       if (!item) return
-      if (item.kind === "connection") {
+      if (item.kind === "database") {
         void dialog
           .confirm({
-            title: `Delete connection "${item.label}"?`,
-            body: "This removes the saved connection settings.",
+            title: `Delete database "${item.label}"?`,
+            body: "This removes the database and its connection settings.",
             okLabel: "delete",
             danger: true,
           })
           .then(ok => {
             if (!ok) return
-            void Effect.runPromise(configStore.deleteConnection(item.refId as ConnectionId))
+            void Effect.runPromise(configStore.deleteDatabase(item.refId as DatabaseId))
               .then(() => {
-                toasts.push("success", "connection deleted")
+                toasts.push("success", "database deleted")
                 refresh()
               })
               .catch(cause => {
-                errorLog.append("settings.deleteConnection", cause)
-                toasts.push("error", `failed to delete connection: ${String(cause)}`)
+                errorLog.append("settings.deleteDatabase", cause)
+                toasts.push("error", `failed to delete: ${String(cause)}`)
               })
           })
         return
       }
-      const del = item.kind === "project" ? configStore.deleteProject(item.refId as ProjectId) : configStore.deleteDatabase(item.refId as DatabaseId)
-      void Effect.runPromise(del)
+      void Effect.runPromise(configStore.deleteProject(item.refId as ProjectId))
         .then(() => {
-          toasts.push("success", `${item.kind} deleted`)
+          toasts.push("success", "project deleted")
           refresh()
         })
         .catch(cause => {
-          errorLog.append(`settings.delete${item.kind}`, cause)
-          toasts.push("error", `failed to delete ${item.kind}: ${String(cause)}`)
+          errorLog.append("settings.deleteProject", cause)
+          toasts.push("error", `failed to delete: ${String(cause)}`)
         })
     },
-    testConnection: () => {
+    rename: () => {
       const item = items[Math.min(cursor, items.length - 1)]
-      if (!item || item.kind !== "connection") {
-        toasts.push("info", "move to a connection row (j/k) and press t to test it")
+      if (!item || item.kind !== "database") {
+        toasts.push("info", "move to a database row (j/k) and press r to rename it")
         return
       }
-      if (testingRef.current) return
-      const databaseId = item.parentId as DatabaseId
-      const database = databaseById(databaseId)
-      const connection = connectionRow(databaseId, item.refId as ConnectionId)
-      if (!database || !connection) {
-        toasts.push("error", "connection not found")
-        return
-      }
-      const label = connectionLabel(connection)
-      testingRef.current = label
-      setTesting(label)
-      toasts.push("info", `testing ${label}…`)
-      void Effect.runPromise(connectionManager.pingConnection(database, connection))
-        .then(ok => {
-          testingRef.current = null
-          setTesting(null)
-          if (ok) toasts.push("success", `${label} ok (${database.engine})`)
-          else toasts.push("error", `${label} failed`)
-        })
-        .catch(cause => {
-          testingRef.current = null
-          setTesting(null)
-          errorLog.append("settings.testConnection", cause)
-          toasts.push("error", `${label} failed: ${String(cause)}`)
-        })
+      openForm({ kind: "rename", databaseId: item.refId as DatabaseId })
     },
+    testConnection,
     submitForm: () => {
       const current = formRef.current
       if (!current) return
-      if (current.kind === "connection") {
+      if (current.kind === "connect") {
         submitConnectionForm(current)
+        return
+      }
+      if (current.kind === "connectName") {
+        submitFollowUpName(current)
+        return
+      }
+      if (current.kind === "rename") {
+        const name = draftRef.current.trim()
+        if (!name) {
+          toasts.push("error", "a name is required")
+          return
+        }
+        void Effect.runPromise(configStore.updateDatabase(current.databaseId, { name }))
+          .then(() => {
+            toasts.push("success", `renamed to ${name}`)
+            openForm(null)
+            refresh()
+          })
+          .catch(cause => {
+            errorLog.append("settings.rename", cause)
+            toasts.push("error", `rename failed: ${String(cause)}`)
+          })
         return
       }
       const name = draftRef.current.trim()
@@ -467,34 +635,17 @@ export const useSettings = (): UseSettingsResult => {
         toasts.push("error", "a name is required")
         return
       }
-      if (current.kind === "database") {
-        const projectId = current.projectId
-        void Effect.runPromise(configStore.createDatabase({ projectId, name, engine: engineRef.current }))
-          .then(() => {
-            toasts.push("success", `database added (${engineRef.current})`)
-            setExpanded(current => new Set(current).add(projectId))
-            openForm(null)
-            refresh()
-          })
-          .catch(cause => {
-            errorLog.append("settings.createDatabase", cause)
-            toasts.push("error", `failed to add database: ${String(cause)}`)
-            openForm(null)
-            refresh()
-          })
-      } else {
-        void Effect.runPromise(configStore.createProject({ name }))
-          .then(() => {
-            toasts.push("success", "project added")
-            openForm(null)
-            refresh()
-          })
-          .catch(cause => {
-            toasts.push("error", `failed to add project: ${String(cause)}`)
-            openForm(null)
-            refresh()
-          })
-      }
+      void Effect.runPromise(configStore.createProject({ name }))
+        .then(() => {
+          toasts.push("success", "project added")
+          openForm(null)
+          refresh()
+        })
+        .catch(cause => {
+          toasts.push("error", `failed to add project: ${String(cause)}`)
+          openForm(null)
+          refresh()
+        })
     },
     cancelForm: () => openForm(null),
     testing,

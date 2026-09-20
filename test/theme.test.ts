@@ -39,7 +39,8 @@ describe("Theme tokens", () => {
     expect(colors.info).toMatchObject({ intent: "indexed", slot: 6 })
     expect(colors.accent).toMatchObject({ intent: "indexed", slot: 12 })
     expect(colors.accentMuted).toMatchObject({ intent: "indexed", slot: 4 })
-    expect(colors.bgHighlight).toMatchObject({ intent: "indexed", slot: 236 })
+    /* the highlight is a blend of the terminal bg + fg, not a palette slot */
+    expect(colors.bgHighlight.intent).toBe("rgb")
   })
 
   test("indexed tokens resolve to the standard ANSI rgb values", () => {
@@ -49,14 +50,15 @@ describe("Theme tokens", () => {
     expect(colors.error.toInts()).toEqual([...ansi256IndexToRgb(1), 255])
   })
 
-  test("selection highlights are gray, never the blue color-cube slot", () => {
+  test("highlights drift a small, grayscale amount off the terminal bg toward the fg", () => {
     const colors = makeTheme("dark").colors
-    expect(colors.bgHighlight.slot).toBe(236)
-    expect(colors.bgHighlight.toInts()[0]).toBe(colors.bgHighlight.toInts()[1])
-    expect(colors.bgHighlight.toInts()[1]).toBe(colors.bgHighlight.toInts()[2])
-    expect(colors.bgHighlight.toInts()[0]! > 32).toBe(true)
-    expect(colors.selection.slot).toBe(8)
-    expect(colors.selection.toInts()).toEqual(colors.bgHighlight.toInts())
+    expect(colors.bgHighlight.intent).toBe("rgb")
+    const [r, g, b] = colors.bgHighlight.toInts()
+    expect(r).toBe(g)
+    expect(g).toBe(b)
+    expect(r! > colors.bg.toInts()[0]!).toBe(true)
+    expect(r! > colors.bgSurface.toInts()[0]!).toBe(true)
+    expect(colors.selection.equals(colors.bgHighlight)).toBe(true)
   })
 
   test("bgSurface is the terminal bg blended with a palette tint", () => {
@@ -65,11 +67,10 @@ describe("Theme tokens", () => {
     expect(bgSurface.equals(bg)).toBe(false)
   })
 
-  test("selection snaps to the highlight color while keeping its slot", () => {
+  test("selection snaps to the blend highlight color", () => {
     const { selection, bgHighlight } = makeTheme("dark").colors
-    expect(selection.intent).toBe("indexed")
-    expect(selection.slot).toBe(8)
-    expect(selection.toInts()).toEqual(bgHighlight.toInts())
+    expect(selection.intent).toBe("rgb")
+    expect(selection.equals(bgHighlight)).toBe(true)
   })
 
   test("light mode drifts surface panels darker, dark mode lighter", () => {
@@ -131,8 +132,9 @@ describe("Theme dark/light detection", () => {
 
 describe("Theme real-ANSI-palette probing", () => {
   /* 16 valid grayscale entries with a distinctive bright-blue at slot 12 */
-  const customPalette = Array.from({ length: 16 }, (_, i) =>
-    `#${i.toString(16).padStart(2, "0")}${i.toString(16).padStart(2, "0")}${i.toString(16).padStart(2, "0")}`
+  const customPalette = Array.from(
+    { length: 16 },
+    (_, i) => `#${i.toString(16).padStart(2, "0")}${i.toString(16).padStart(2, "0")}${i.toString(16).padStart(2, "0")}`
   )
   const draculaBluePalette = [...customPalette.slice(0, 12), "#1e66f5", ...customPalette.slice(13)]
 

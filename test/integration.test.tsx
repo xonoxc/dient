@@ -22,11 +22,7 @@ import { PostgreSqlContainer } from "@testcontainers/postgresql"
 import { MySqlContainer } from "@testcontainers/mysql"
 import { makeTheme } from "@/theme"
 import { pressKeys, renderApp } from "@test/support/render-ui"
-import {
-  freshConfigFile,
-  resolveTestServices,
-  seedProject,
-} from "@test/support/services-fixture"
+import { freshConfigFile, resolveTestServices, seedProject } from "@test/support/services-fixture"
 import { DatabaseDriver } from "@/drivers/database-driver"
 import type { AppServices } from "@/app-context"
 import type { PostgresConnectionConfig, MysqlConnectionConfig } from "@/domain"
@@ -120,9 +116,7 @@ const seedServerProject = async (services: AppServices) => {
     })
   )
   const my = mysqlConfig()
-  const stage = await Effect.runPromise(
-    store.createDatabase({ projectId: project.id, name: "stage", engine: "mysql" })
-  )
+  const stage = await Effect.runPromise(store.createDatabase({ projectId: project.id, name: "stage", engine: "mysql" }))
   const stageConnection = await Effect.runPromise(
     store.createConnection({
       databaseId: stage.id,
@@ -143,9 +137,7 @@ const WAIT = { maxPasses: 80 }
 /** Boot to a connected prod (Postgres) with the users table on screen. */
 async function openProd(setup: Awaited<ReturnType<typeof renderApp>>): Promise<void> {
   await pressKeys(setup, ["RETURN"])
-  await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("▸ prod"), WAIT)
-  await pressKeys(setup, ["j", "RETURN"])
-  await setup.waitForFrame(f => f.includes("PG") && f.includes("○"), WAIT)
+  await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ prod"), WAIT)
   await pressKeys(setup, ["j", "RETURN"])
   await setup.waitForFrame(f => f.includes("USERS") && f.includes("alice"), WAIT)
 }
@@ -206,10 +198,7 @@ describe("integration (real containers)", () => {
         Effect.gen(function* () {
           const driver = yield* DatabaseDriver
           const conn = yield* driver.connect(pgConfig())
-          const result = yield* driver.query(
-            conn,
-            `SELECT name FROM users WHERE id = 1`
-          )
+          const result = yield* driver.query(conn, `SELECT name FROM users WHERE id = 1`)
           yield* driver.disconnect(conn)
           return (result.rows[0] as { name: string }).name
         })
@@ -228,22 +217,28 @@ describe("integration (real containers)", () => {
     await seedServerProject(services.services)
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
-      /* expose both databases in the sidebar before connecting either */
+      /* expand the tree so both database rows are visible before connecting */
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("▸ prod"), WAIT)
-      await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("PG") && f.includes("○"), WAIT)
-      await pressKeys(setup, ["j", "j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("MY") && f.includes("○"), WAIT)
+      await setup.waitForFrame(
+        f => f.includes("▾ demo") && f.includes("○ prod") && f.includes("○ stage"),
+        WAIT
+      )
 
-      /* connect stage (MySQL) — cursor is on the stage connection row */
+      /* connect prod (Postgres) first */
       await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(
+        f => f.includes("USERS") && f.includes("alice@example.com") && !f.includes("dave@mysql.example"),
+        WAIT
+      )
+
+      /* walk down past prod's table row onto stage, then connect it (MySQL) */
+      await pressKeys(setup, ["j", "j", "RETURN"])
       await setup.waitForFrame(
         f => f.includes("USERS") && f.includes("dave@mysql.example") && !f.includes("alice@example.com"),
         WAIT
       )
 
-      /* Tab cycles to the Postgres connection: table + data switch engines */
+      /* Tab cycles back to the Postgres connection: table + data switch engines */
       await pressKeys(setup, ["TAB"])
       await setup.waitForFrame(
         f => f.includes("USERS") && f.includes("alice@example.com") && !f.includes("dave@mysql.example"),
@@ -254,7 +249,7 @@ describe("integration (real containers)", () => {
     }
   })
 
-  test("creating a connection in settings surfaces it in the explorer sidebar", async () => {
+  test("creating a database in settings surfaces it in the explorer sidebar", async () => {
     const services = await resolveTestServices(freshConfigFile())
     await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: "data.db" })
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
@@ -262,62 +257,60 @@ describe("integration (real containers)", () => {
       await pressKeys(setup, [":", "s", "e", "t", "t", "i", "n", "g", "s", "RETURN"])
       await setup.waitForFrame(f => f.includes("SETTINGS"), WAIT)
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("▾ demo"), WAIT)
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("main"), WAIT)
       await pressKeys(setup, ["j"])
-      await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("• "), WAIT)
 
+      /* paste a connection string: reports.db → database "reports" */
       await pressKeys(setup, ["a"])
-      await setup.waitForFrame(f => f.includes("new connection"), WAIT)
+      await setup.waitForFrame(f => f.includes("connection string"), WAIT)
       await pressKeys(setup, ["r", "e", "p", "o", "r", "t", "s", ".", "d", "b"])
       await setup.waitForFrame(f => f.includes("reports.db"), WAIT)
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("• reports.db"), WAIT)
+      await setup.waitForFrame(f => f.includes("added reports"), WAIT)
+      await setup.waitForFrame(f => f.includes("reports.db"), WAIT)
 
-      /* back to the explorer: expand the tree and the new connection shows up */
+      /* back to the explorer: expand the tree and the new database shows up */
       await pressKeys(setup, [":", "e", "x", "p", "l", "o", "r", "e", "r", "RETURN"])
       await setup.waitForFrame(f => !f.includes("SETTINGS"), WAIT)
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("▾ demo"), WAIT)
-      await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("○ reports.db"), WAIT)
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("main") && f.includes("reports"), WAIT)
     } finally {
       setup.renderer.destroy()
     }
   })
 
-  test("deleting a connection in settings removes it from the sidebar", async () => {
+  test("deleting a database in settings removes it from the sidebar", async () => {
     const services = await resolveTestServices(freshConfigFile())
-    const seeded = await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: "data.db" })
+    const seeded = await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: "data.db",
+    })
     await Effect.runPromise(
-      services.store.createConnection({ databaseId: seeded.database.id, filename: "reports.db" })
+      services.store.createDatabase({ projectId: seeded.project.id, name: "reports", engine: "sqlite" })
     )
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await pressKeys(setup, [":", "s", "e", "t", "t", "i", "n", "g", "s", "RETURN"])
       await setup.waitForFrame(f => f.includes("SETTINGS"), WAIT)
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("▾ demo"), WAIT)
-      await pressKeys(setup, ["j"])
-      await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("• data.db") && f.includes("• reports.db"), WAIT)
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("main") && f.includes("reports"), WAIT)
 
-      /* cursor is on the database; move to the first connection, then delete it.
-         settings handlers are state-based, so cursor motion needs its own frame */
-      await pressKeys(setup, ["j"])
+      /* cursor: project → main → reports; settings handlers are state-based,
+         so cursor motion needs its own frame */
+      await pressKeys(setup, ["j", "j"])
       await pressKeys(setup, ["d"])
-      await setup.waitForFrame(f => f.includes("Delete connection") && f.includes("data.db"), WAIT)
+      await setup.waitForFrame(f => f.includes("Delete database") && f.includes("reports"), WAIT)
       await pressKeys(setup, ["y"])
-      await setup.waitForFrame(f => f.includes("connection deleted"), WAIT)
-      await setup.waitForFrame(f => !f.includes("• data.db") && f.includes("• reports.db"), WAIT)
+      await setup.waitForFrame(f => f.includes("database deleted"), WAIT)
+      await setup.waitForFrame(f => !f.includes("reports") && f.includes("main"), WAIT)
 
-      /* the explorer sidebar no longer offers the deleted connection */
+      /* the explorer sidebar no longer offers the deleted database */
       await pressKeys(setup, [":", "e", "x", "p", "l", "o", "r", "e", "r", "RETURN"])
       await setup.waitForFrame(f => !f.includes("SETTINGS"), WAIT)
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("▾ demo"), WAIT)
-      await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("○ reports.db") && !f.includes("data.db"), WAIT)
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("main") && !f.includes("reports"), WAIT)
     } finally {
       setup.renderer.destroy()
     }
@@ -332,15 +325,13 @@ describe("integration (real containers)", () => {
       await pressKeys(setup1, [":", "s", "e", "t", "t", "i", "n", "g", "s", "RETURN"])
       await setup1.waitForFrame(f => f.includes("SETTINGS"), WAIT)
       await pressKeys(setup1, ["RETURN"])
-      await setup1.waitForFrame(f => f.includes("▾ demo"), WAIT)
+      await setup1.waitForFrame(f => f.includes("▾ demo") && f.includes("main"), WAIT)
       await pressKeys(setup1, ["j"])
-      await pressKeys(setup1, ["RETURN"])
-      await setup1.waitForFrame(f => f.includes("• "), WAIT)
       await pressKeys(setup1, ["a"])
-      await setup1.waitForFrame(f => f.includes("new connection"), WAIT)
+      await setup1.waitForFrame(f => f.includes("connection string"), WAIT)
       await pressKeys(setup1, ["p", "e", "r", "s", "i", "s", "t", ".", "d", "b"])
       await pressKeys(setup1, ["RETURN"])
-      await setup1.waitForFrame(f => f.includes("• persist.db"), WAIT)
+      await setup1.waitForFrame(f => f.includes("added persist") && f.includes("persist.db"), WAIT)
     } finally {
       setup1.renderer.destroy()
     }
@@ -351,8 +342,7 @@ describe("integration (real containers)", () => {
     try {
       await pressKeys(setup2, ["RETURN"])
       await setup2.waitForFrame(f => f.includes("▾ demo"), WAIT)
-      await pressKeys(setup2, ["j", "RETURN"])
-      await setup2.waitForFrame(f => f.includes("○ data.db") && f.includes("○ persist.db"), WAIT)
+      await setup2.waitForFrame(f => f.includes("main") && f.includes("persist"), WAIT)
     } finally {
       setup2.renderer.destroy()
     }
@@ -363,15 +353,14 @@ describe("integration (real containers)", () => {
     await seedContainers()
     const store = services.store
     const pg = pgConfig()
-    /* listConnections has no ORDER BY, so row order is insertion order —
-       create the failing connection FIRST to keep it at the top of the tree */
     const project = await Effect.runPromise(store.createProject({ name: "demo" }))
-    const prod = await Effect.runPromise(
-      store.createDatabase({ projectId: project.id, name: "prod", engine: "postgres" })
+    /* databases render name-sorted, so "bad" sits above "good" */
+    const badDb = await Effect.runPromise(
+      store.createDatabase({ projectId: project.id, name: "bad", engine: "postgres" })
     )
     const bad = await Effect.runPromise(
       store.createConnection({
-        databaseId: prod.id,
+        databaseId: badDb.id,
         host: pg.host,
         port: 1,
         user: pg.user,
@@ -379,9 +368,12 @@ describe("integration (real containers)", () => {
         defaultDatabase: pg.defaultDatabase,
       })
     )
-    const good = await Effect.runPromise(
+    const goodDb = await Effect.runPromise(
+      store.createDatabase({ projectId: project.id, name: "good", engine: "postgres" })
+    )
+    const goodConn = await Effect.runPromise(
       store.createConnection({
-        databaseId: prod.id,
+        databaseId: goodDb.id,
         host: pg.host,
         port: pg.port,
         user: pg.user,
@@ -389,12 +381,12 @@ describe("integration (real containers)", () => {
         defaultDatabase: pg.defaultDatabase,
       })
     )
+    void bad
+    void goodConn
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("▸ prod"), WAIT)
-      await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("PG") && f.includes("○"), WAIT)
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ bad") && f.includes("○ good"), WAIT)
 
       /* connect the bad one: toast + retry prompt, then dismiss */
       await pressKeys(setup, ["j", "RETURN"])
@@ -402,12 +394,9 @@ describe("integration (real containers)", () => {
       await pressKeys(setup, ["n"])
       await setup.waitForFrame(f => !f.includes("retry") && f.includes("◉"), WAIT)
 
-      /* move to the healthy connection below and connect — recovery works */
+      /* move to the healthy database below and connect — recovery works */
       await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(
-        f => f.includes("USERS") && f.includes("alice") && f.includes("●"),
-        WAIT
-      )
+      await setup.waitForFrame(f => f.includes("USERS") && f.includes("alice") && f.includes("●"), WAIT)
     } finally {
       setup.renderer.destroy()
     }

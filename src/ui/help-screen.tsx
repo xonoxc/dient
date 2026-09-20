@@ -17,7 +17,7 @@ const BINDINGS: ReadonlyArray<[string, string, string]> = [
   ["NORMAL", "v", "visual mode · select rows"],
   ["NORMAL", "Enter", "expand node · open table"],
   ["NORMAL", "dd", "delete row"],
-  ["NORMAL", "Tab", "next connection"],
+  ["NORMAL", "Tab / Space", "next connection · jump to table / db / project"],
   ["NORMAL", ":", "command mode"],
   ["NORMAL", "/", "search"],
   ["NORMAL", "?", "help"],
@@ -74,8 +74,22 @@ export function HelpScreen() {
   const [commandsLeft, commandsRight] = half(COMMANDS)
 
   return (
-    <box position="absolute" width="100%" height="100%" alignItems="center" justifyContent="center" backgroundColor={c.bg}>
-      <box borderStyle="rounded" borderColor={c.borderFocused} width={70} flexDirection="column" paddingX={1} paddingY={1}>
+    <box
+      position="absolute"
+      width="100%"
+      height="100%"
+      alignItems="center"
+      justifyContent="center"
+      backgroundColor={c.bg}
+    >
+      <box
+        borderStyle="rounded"
+        borderColor={c.borderFocused}
+        width={70}
+        flexDirection="column"
+        paddingX={1}
+        paddingY={1}
+      >
         <text fg={c.accent}> dient · keybindings </text>
         <text fg={c.textMuted}>vim-inspired browsing — press ? or Esc to close</text>
 

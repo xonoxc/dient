@@ -41,4 +41,3 @@ export interface SelectionRange {
   readonly start: number
   readonly end: number
 }
-

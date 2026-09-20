@@ -12,12 +12,7 @@ import { ThemeProvider } from "@/theme-context"
 import { ToastProvider, useToasts } from "@/app-context"
 import { ToastView } from "@/ui/toast"
 import { pressKeys, renderApp } from "@test/support/render-ui"
-import {
-  freshConfigFile,
-  freshSqliteDataFile,
-  resolveTestServices,
-  seedProject,
-} from "@test/support/services-fixture"
+import { freshConfigFile, freshSqliteDataFile, resolveTestServices, seedProject } from "@test/support/services-fixture"
 
 /* A SQLite connection whose file lives in a missing directory always fails to
    open, giving us a deterministic connect error without needing containers. */
@@ -30,9 +25,7 @@ describe("error handling", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("▾ demo"))
-      await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("○ data.db"))
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
       await pressKeys(setup, ["j", "RETURN"])
 
       /* the error surfaces as a toast and as a modal offering a retry (the
@@ -82,40 +75,42 @@ describe("error handling", () => {
 
   test("the confirmation modal blocks interaction until dismissed", async () => {
     const services = await resolveTestServices(freshConfigFile())
-    const seeded = await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: "data.db" })
+    const seeded = await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: "data.db",
+    })
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
-      /* open settings and walk the tree down to the connection */
+      /* open settings and walk the tree down to the database */
       await pressKeys(setup, [":", "s", "e", "t", "t", "i", "n", "g", "s", "RETURN"])
       await setup.waitForFrame(f => f.includes("SETTINGS"))
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("▾ demo"))
-      await pressKeys(setup, ["j"])
-      await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("• data.db"))
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
       await pressKeys(setup, ["j"])
 
       await pressKeys(setup, ["d"])
-      await setup.waitForFrame(f => f.includes("Delete connection") && f.includes("data.db"))
-      const before = await Effect.runPromise(services.store.listConnections(seeded.database.id))
+      await setup.waitForFrame(f => f.includes("Delete database") && f.includes("main"))
+      const before = await Effect.runPromise(services.store.listDatabases(seeded.project.id))
       expect(before.length).toBe(1)
 
       /* a stray key neither confirms nor cancels the destructive action */
       await pressKeys(setup, ["j"])
-      expect(setup.captureCharFrame()).toContain("Delete connection")
+      expect(setup.captureCharFrame()).toContain("Delete database")
 
       /* Esc cancels; nothing was deleted */
       await pressKeys(setup, ["ESCAPE"])
-      await setup.waitForFrame(f => !f.includes("Delete connection"))
-      const afterEscape = await Effect.runPromise(services.store.listConnections(seeded.database.id))
+      await setup.waitForFrame(f => !f.includes("Delete database"))
+      const afterEscape = await Effect.runPromise(services.store.listDatabases(seeded.project.id))
       expect(afterEscape.length).toBe(1)
 
       /* and the flow still works for a real confirm afterwards */
       await pressKeys(setup, ["d"])
-      await setup.waitForFrame(f => f.includes("Delete connection"))
+      await setup.waitForFrame(f => f.includes("Delete database"))
       await pressKeys(setup, ["y"])
-      await setup.waitForFrame(f => f.includes("connection deleted"))
-      const afterDelete = await Effect.runPromise(services.store.listConnections(seeded.database.id))
+      await setup.waitForFrame(f => f.includes("database deleted"))
+      const afterDelete = await Effect.runPromise(services.store.listDatabases(seeded.project.id))
       expect(afterDelete.length).toBe(0)
     } finally {
       setup.renderer.destroy()
@@ -124,13 +119,16 @@ describe("error handling", () => {
 
   test("seeded connection data is untouched when nothing errors", async () => {
     const services = await resolveTestServices(freshConfigFile())
-    const seeded = await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: freshSqliteDataFile("users") })
+    const seeded = await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile("users"),
+    })
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("▾ demo"))
-      await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("○ data.db"))
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
       await pressKeys(setup, ["j", "RETURN"])
       await setup.waitForFrame(f => f.includes("USERS") && f.includes("alice"))
       const remaining = await Effect.runPromise(services.store.listConnections(seeded.database.id))

@@ -14,10 +14,10 @@ import { MySqlContainer } from "@testcontainers/mysql"
 
 export const postgresFixture = Effect.acquireRelease(
   Effect.promise(() => new PostgreSqlContainer("postgres:17-alpine").start()),
-  (c) => Effect.promise(() => c.stop()),
+  c => Effect.promise(() => c.stop())
 ).pipe(Effect.orDie)
 
 export const mysqlFixture = Effect.acquireRelease(
   Effect.promise(() => new MySqlContainer("mysql:8.4").start()),
-  (c) => Effect.promise(() => c.stop()),
+  c => Effect.promise(() => c.stop())
 ).pipe(Effect.orDie)

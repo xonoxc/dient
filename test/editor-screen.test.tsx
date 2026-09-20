@@ -9,29 +9,19 @@ import { act } from "react"
 import App from "@/app"
 import { makeTheme } from "@/theme"
 import { pressKeys, renderApp } from "@test/support/render-ui"
-import {
-  freshConfigFile,
-  freshSqliteDataFile,
-  resolveTestServices,
-  seedProject,
-} from "@test/support/services-fixture"
+import { freshConfigFile, freshSqliteDataFile, resolveTestServices, seedProject } from "@test/support/services-fixture"
 
 /** Connect to the seeded users table and move focus to the table panel. */
 async function openTable(setup: Awaited<ReturnType<typeof renderApp>>) {
   await pressKeys(setup, ["RETURN"])
-  await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("▸ main"))
-  await pressKeys(setup, ["j", "RETURN"])
-  await setup.waitForFrame(f => f.includes("○ data.db"))
+  await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
   await pressKeys(setup, ["j", "RETURN"])
   await setup.waitForFrame(f => f.includes("USERS") && f.includes("alice"))
   await pressKeys(setup, ["l"])
 }
 
 /** Run a raw mock-terminal press (arrows, ctrl combos) inside an act() batch. */
-async function rawPress(
-  setup: Awaited<ReturnType<typeof renderApp>>,
-  press: () => void
-): Promise<void> {
+async function rawPress(setup: Awaited<ReturnType<typeof renderApp>>, press: () => void): Promise<void> {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   try {
     await act(async () => {
@@ -50,7 +40,12 @@ const CLEAR = ["BACKSPACE", "BACKSPACE", "BACKSPACE", "BACKSPACE", "BACKSPACE"] 
 describe("cell editor", () => {
   test("Enter opens the editor on the cursor cell showing the current value", async () => {
     const services = await resolveTestServices(freshConfigFile())
-    await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: freshSqliteDataFile() })
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile(),
+    })
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openTable(setup)
@@ -116,7 +111,12 @@ describe("cell editor", () => {
 
   test("a numeric cell rejects non-numeric drafts before saving", async () => {
     const services = await resolveTestServices(freshConfigFile())
-    await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: freshSqliteDataFile() })
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile(),
+    })
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openTable(setup)

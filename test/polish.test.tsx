@@ -9,12 +9,7 @@ import { Effect } from "effect"
 import App from "@/app"
 import { makeTheme } from "@/theme"
 import { pressKeys, renderApp } from "@test/support/render-ui"
-import {
-  freshConfigFile,
-  freshSqliteDataFile,
-  resolveTestServices,
-  seedProject,
-} from "@test/support/services-fixture"
+import { freshConfigFile, freshSqliteDataFile, resolveTestServices, seedProject } from "@test/support/services-fixture"
 
 describe("polish + help", () => {
   test("? opens the help overlay with the keybinding reference, Esc closes it", async () => {
@@ -47,12 +42,10 @@ describe("polish + help", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("▾ demo"))
-      await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("○ data.db"))
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
       await pressKeys(setup, ["j", "RETURN"])
       await setup.waitForFrame(f => f.includes("USERS") && f.includes("3 rows"))
-      expect(setup.captureCharFrame()).toContain("data.db@main")
+      expect(setup.captureCharFrame()).toContain("main · sqlite")
     } finally {
       setup.renderer.destroy()
     }
@@ -68,9 +61,7 @@ describe("polish + help", () => {
     })
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
-      const connected = await Effect.runPromise(
-        services.services.connectionManager.isConnected(seeded.connection.id)
-      )
+      const connected = await Effect.runPromise(services.services.connectionManager.isConnected(seeded.connection.id))
       expect(connected).toBe(false)
     } finally {
       setup.renderer.destroy()
@@ -88,14 +79,12 @@ describe("polish + help", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("▾ demo"))
-      await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("○ data.db"))
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
       await pressKeys(setup, ["j", "RETURN"])
       await setup.waitForFrame(f => f.includes("failed") && f.includes("retry"))
 
       await pressKeys(setup, ["n"])
-      await setup.waitForFrame(f => f.includes("◉") && f.includes("data.db"))
+      await setup.waitForFrame(f => f.includes("◉") && f.includes("main"))
     } finally {
       setup.renderer.destroy()
     }

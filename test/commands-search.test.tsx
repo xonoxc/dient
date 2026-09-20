@@ -14,16 +14,14 @@ import App from "@/app"
 import { makeTheme } from "@/theme"
 import { pressKeys, renderApp } from "@test/support/render-ui"
 import { splitHighlighted } from "@/table/data-table"
-import {
-  freshConfigFile,
-  freshSqliteDataFile,
-  resolveTestServices,
-  seedProject,
-} from "@test/support/services-fixture"
+import { freshConfigFile, freshSqliteDataFile, resolveTestServices, seedProject } from "@test/support/services-fixture"
 
 /** A sqlite file at a distinctive basename so connections can be told apart
     in the sidebar (the shared fixture always names its file "data.db"). */
-function namedDataFile(basename: string, rows: ReadonlyArray<Record<string, unknown>> = [{ id: 9, name: "zed", email: "zed@example.com" }]): string {
+function namedDataFile(
+  basename: string,
+  rows: ReadonlyArray<Record<string, unknown>> = [{ id: 9, name: "zed", email: "zed@example.com" }]
+): string {
   const path = join(mkdtempSync(join(tmpdir(), "dient-data-")), basename)
   const db = new SqliteDatabase(path)
   db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT)")
@@ -35,9 +33,7 @@ function namedDataFile(basename: string, rows: ReadonlyArray<Record<string, unkn
 
 async function connect(setup: Awaited<ReturnType<typeof renderApp>>) {
   await pressKeys(setup, ["RETURN"])
-  await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("▸ main"))
-  await pressKeys(setup, ["j", "RETURN"])
-  await setup.waitForFrame(f => f.includes("○ data.db"))
+  await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
   await pressKeys(setup, ["j", "RETURN"])
   await setup.waitForFrame(f => f.includes("USERS") && f.includes("alice"))
   await pressKeys(setup, ["l"])
@@ -112,7 +108,7 @@ describe("command line", () => {
 
   test(":connect <name> switches the active connection", async () => {
     const services = await resolveTestServices(freshConfigFile())
-    /* one project, one database, two connections with distinct file names */
+    /* one project, two databases with distinct connections */
     const project = await Effect.runPromise(services.store.createProject({ name: "demo" }))
     const main = await Effect.runPromise(
       services.store.createDatabase({ projectId: project.id, name: "main", engine: "sqlite" })
@@ -120,9 +116,12 @@ describe("command line", () => {
     await Effect.runPromise(
       services.store.createConnection({ databaseId: main.id, filename: namedDataFile("a.db") })
     )
+    const alt = await Effect.runPromise(
+      services.store.createDatabase({ projectId: project.id, name: "alt", engine: "sqlite" })
+    )
     await Effect.runPromise(
       services.store.createConnection({
-        databaseId: main.id,
+        databaseId: alt.id,
         filename: namedDataFile("b.db", [
           { id: 1, name: "alice", email: "alice@example.com" },
           { id: 2, name: "bob", email: "bob@example.com" },
@@ -131,20 +130,20 @@ describe("command line", () => {
     )
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
-      /* expand project → database, then connect to the first listed (a.db) */
+      /* databases render name-sorted (alt before main): expand the project and
+         connect the first database — alt, seeded with alice */
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("▸ main"))
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ alt") && f.includes("○ main"))
       await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("○ a.db") && f.includes("○ b.db"))
-      await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("● a.db") && f.includes("USERS") && f.includes("zed"))
+      await setup.waitForFrame(f => f.includes("●") && f.includes("USERS") && f.includes("alice@example.com"))
       await pressKeys(setup, ["l"])
 
-      await pressKeys(setup, [":", "c", "o", "n", "n", "e", "c", "t", " ", "b", ".", "d", "b", "RETURN"])
-      await setup.waitForFrame(f => f.includes("● b.db") && f.includes("alice@example.com"))
+      /* :connect main switches to the zed-seeded database */
+      await pressKeys(setup, [":", "c", "o", "n", "n", "e", "c", "t", " ", "m", "a", "i", "n", "RETURN"])
+      await setup.waitForFrame(f => f.includes("zed@example.com"))
       const frame = setup.captureCharFrame()
-      expect(frame).toContain("alice")
-      expect(frame).not.toContain("zed@example.com")
+      expect(frame).toContain("zed")
+      expect(frame).not.toContain("alice@example.com")
     } finally {
       setup.renderer.destroy()
     }
@@ -164,17 +163,15 @@ describe("sidebar table browser", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("▸ main"))
-      await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("○ multi.db"))
-      /* Enter on the connection both connects and expands its table list */
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
+      /* Enter on the database row both connects and expands its table list */
       await pressKeys(setup, ["j", "RETURN"])
       await setup.waitForFrame(
-        f => f.includes("● multi.db") && f.includes("▸ users") && f.includes("▸ orders") && f.includes("USERS")
+        f => f.includes("●") && f.includes("▸ users") && f.includes("▸ orders") && f.includes("USERS")
       )
 
-      /* the sidebar is focused and the cursor is on multi.db → one down = the
-         first table (orders sorts before users) → Enter opens that table */
+      /* the sidebar is focused and the cursor is on the database → one down
+         = the first table (orders sorts before users) → Enter opens that table */
       await pressKeys(setup, ["j", "RETURN"])
       await setup.waitForFrame(f => f.includes("▶ ORDERS"))
       const frame = setup.captureCharFrame()

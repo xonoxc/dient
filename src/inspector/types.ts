@@ -37,11 +37,11 @@ export interface SchemaInspectorService {
   readonly listTables: (conn: ActiveConnection) => Effect.Effect<ReadonlyArray<string>, QueryError>
   readonly describeTable: (
     conn: ActiveConnection,
-    tableName: string,
+    tableName: string
   ) => Effect.Effect<Option.Option<TableInfo>, QueryError>
   readonly getPrimaryKey: (
     conn: ActiveConnection,
-    tableName: string,
+    tableName: string
   ) => Effect.Effect<ReadonlyArray<string>, QueryError>
 }
 
@@ -50,10 +50,10 @@ export interface TableQueries {
   readonly listTables: (conn: ActiveConnection) => Effect.Effect<ReadonlyArray<string>, QueryError>
   readonly describeTable: (
     conn: ActiveConnection,
-    tableName: string,
+    tableName: string
   ) => Effect.Effect<Option.Option<TableInfo>, QueryError>
   readonly getPrimaryKey: (
     conn: ActiveConnection,
-    tableName: string,
+    tableName: string
   ) => Effect.Effect<ReadonlyArray<string>, QueryError>
 }

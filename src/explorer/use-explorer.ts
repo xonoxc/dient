@@ -12,7 +12,7 @@ import { Effect, Option } from "effect"
 import { useDialog, useServices, useToasts } from "@/app-context"
 import { useSidebar, type SidebarNode, type TablesByConnection } from "@/sidebar/use-sidebar"
 import type { ConnectionStatus } from "@/connection/connection-manager"
-import type { Connection, ConnectionId, Database } from "@/domain"
+import type { Connection, ConnectionId, Database, ProjectId } from "@/domain"
 import type { ActiveConnection, ColumnInfo } from "@/drivers/types"
 import type { TableInfo } from "@/inspector/types"
 import { cleanIdentifier } from "@/query/identifier"
@@ -46,7 +46,14 @@ export interface UseExplorerResult {
   readonly selectActive: (index?: number) => void
   readonly openTable: (name: string) => void
   readonly cycleConnection: () => void
+  /** Jump to a specific connection from the finder, expanding the containing
+      project first if its (lazily loaded) tree has not reached it yet. */
+  readonly jumpToConnection: (projectId: ProjectId, connectionId: ConnectionId) => void
   readonly saveCell: (rowIndex: number, column: string, value: string) => Promise<boolean>
+  readonly saveRow: (
+    row: Record<string, unknown>,
+    updates: ReadonlyArray<{ readonly column: string; readonly param: unknown }>
+  ) => Promise<boolean>
 }
 
 const PAGE_SIZE = 200
@@ -177,6 +184,12 @@ export const useExplorer = (): UseExplorerResult => {
       return
     }
 
+    /* A database with no stored connection can't be browsed from here. */
+    if (target.kind === "database") {
+      toasts.push("info", `"${target.label}" has no connection — add one from settings`)
+      return
+    }
+
     if (target.kind !== "connection") {
       sidebar.open(index ?? sidebar.cursorRef.current)
       return
@@ -265,6 +278,28 @@ export const useExplorer = (): UseExplorerResult => {
     if (index >= 0) selectActive(index)
   }
 
+  const jumpToConnection = (projectId: ProjectId, connectionId: ConnectionId): void => {
+    const liveItems = sidebar.itemsRef.current
+    const reveal = (): void => {
+      const index = sidebar.itemsRef.current.findIndex(
+        node => node.kind === "connection" && node.refId === connectionId
+      )
+      if (index >= 0) {
+        sidebar.goTo(index)
+        selectActive(index)
+      } else {
+        toasts.push("error", "connection not found")
+      }
+    }
+    if (liveItems.some(node => node.kind === "connection" && node.refId === connectionId)) {
+      reveal()
+      return
+    }
+    /* The project may be collapsed (its databases not loaded yet); expand it
+       and select once its rows land in the tree. */
+    void sidebar.expandProject(projectId).then(reveal)
+  }
+
   const searchedRows = useMemo(
     () => (search.trim() ? rows.filter(row => rowMatches(row, search)) : rows),
     [rows, search]
@@ -302,7 +337,9 @@ export const useExplorer = (): UseExplorerResult => {
     const type = columnInfo?.type ?? ""
     /* Keep numeric cells numeric (whatever the draft looks like) and let a
        blank draft on a nullable column clear the value back to NULL. */
-    const param: unknown = /int|bigint|numeric|decimal|real|float|double|money|double_precision/.test(type.toLowerCase())
+    const param: unknown = /int|bigint|numeric|decimal|real|float|double|money|double_precision/.test(
+      type.toLowerCase()
+    )
       ? Number(value)
       : value === "" && columnInfo?.nullable
         ? null
@@ -322,6 +359,54 @@ export const useExplorer = (): UseExplorerResult => {
       })
       .catch(cause => {
         errorLog.append("explorer.saveCell", cause)
+        toasts.push("error", `save failed: ${String(cause)}`)
+        return false
+      })
+  }
+
+  /* Persist a whole edited row: one UPDATE with a SET clause per changed
+     field, always keyed on the primary key from the schema inspector. */
+  const saveRow = (
+    row: Record<string, unknown>,
+    updates: ReadonlyArray<{ readonly column: string; readonly param: unknown }>
+  ): Promise<boolean> => {
+    const explorer = activeExplorer.current
+    if (!explorer || !tableName) {
+      toasts.push("error", "nothing open to edit")
+      return Promise.resolve(false)
+    }
+    if (!tableInfo) {
+      toasts.push("error", `no schema info for ${tableName}`)
+      return Promise.resolve(false)
+    }
+    const pk = tableInfo.primaryKey
+    if (pk.length === 0) {
+      toasts.push("error", `table ${tableName} has no primary key — can't edit rows`)
+      return Promise.resolve(false)
+    }
+    if (updates.length === 0) {
+      toasts.push("info", "no changes to save")
+      return Promise.resolve(false)
+    }
+    const engine = explorer.database.engine
+    const sets = updates.map(update => `${cleanIdentifier(engine, update.column)} = ?`).join(", ")
+    const where = pk.map(column => `${cleanIdentifier(engine, column)} = ?`).join(" AND ")
+    const params = [...updates.map(update => update.param), ...pk.map(column => row[column])]
+    return runService(
+      queryExecutor.execute(
+        explorer.id,
+        `UPDATE ${cleanIdentifier(engine, tableName)} SET ${sets} WHERE ${where}`,
+        params
+      )
+    )
+      .then(() => {
+        const changed = updates.length === 1 ? updates[0]!.column : `${updates.length} columns`
+        toasts.push("success", `saved ${tableName}.${changed}`)
+        openTable(tableName)
+        return true
+      })
+      .catch(cause => {
+        errorLog.append("explorer.saveRow", cause)
         toasts.push("error", `save failed: ${String(cause)}`)
         return false
       })
@@ -347,13 +432,31 @@ export const useExplorer = (): UseExplorerResult => {
       selectActive,
       openTable,
       cycleConnection,
+      jumpToConnection,
       saveCell,
+      saveRow,
     }),
-    [sidebar, focus, statuses, active, tables, loading, error, tableName, table, tableInfo, total, search, setSearch, searchedRows.length, saveCell]
+    [
+      sidebar,
+      focus,
+      statuses,
+      active,
+      tables,
+      loading,
+      error,
+      tableName,
+      table,
+      tableInfo,
+      total,
+      search,
+      setSearch,
+      searchedRows.length,
+      saveCell,
+      saveRow,
+    ]
   )
 
   return result
 }
 
 export type { SidebarNode }
-

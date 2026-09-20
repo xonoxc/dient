@@ -120,8 +120,7 @@ function Shell() {
     match: () => false,
     run: text => void text,
   }
-  const matchedCommand = (text: string): AppCommand =>
-    allCommands.find(command => command.match(text)) ?? fallback
+  const matchedCommand = (text: string): AppCommand => allCommands.find(command => command.match(text)) ?? fallback
 
   /* The command line is owned by the shell, so its key handling lives here on
      an always-mounted hook. A per-line component could only register after `:`
@@ -225,10 +224,20 @@ function CommandBar({ commands }: { commands: ReadonlyArray<ShellCommand> }) {
   /* The palette is one line; cut the help text deterministically in JS so the
      strip never flips which commands it shows (OpenTUI truncate is width-
      dependent). The bus commands lead (see Shell.allCommands). */
-  const paletteText = commands.map(x => x.help).join("  ").slice(0, 64)
+  const paletteText = commands
+    .map(x => x.help)
+    .join("  ")
+    .slice(0, 64)
 
   return (
-    <box height={1} flexDirection="row" alignItems="center" paddingX={1} backgroundColor={c.bgSurface} overflow="hidden">
+    <box
+      height={1}
+      flexDirection="row"
+      alignItems="center"
+      paddingX={1}
+      backgroundColor={c.bgSurface}
+      overflow="hidden"
+    >
       <text fg={c.success}>:</text>
       <box flexDirection="row">
         <text fg={c.textBright}>{commandLine.text}</text>

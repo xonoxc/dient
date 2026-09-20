@@ -41,10 +41,7 @@ export async function renderApp(
  * why handlers that consume key events must live on always-mounted components
  * rather than on nodes that mount for the first time mid-batch.
  */
-export async function pressKeys(
-  setup: TestRendererSetup,
-  keys: ReadonlyArray<string>
-): Promise<void> {
+export async function pressKeys(setup: TestRendererSetup, keys: ReadonlyArray<string>): Promise<void> {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   try {
     await act(async () => {
@@ -58,4 +55,27 @@ export async function pressKeys(
     globalThis.IS_REACT_ACT_ENVIRONMENT = false
   }
   await setup.waitForVisualIdle()
+}
+
+/**
+ * Drive frames explicitly until a predicate matches. Used when a renderer
+ * pause (e.g. an external `$EDITOR` suspend/resume session) leaves the
+ * scheduler idle: commits still paint, but only when the loop is driven, so
+ * `waitForFrame` (which waits for the scheduler and gives up when idle) would
+ * miss them. Mirrors a real terminal where the loop runs continuously.
+ */
+export async function waitForFrameDriven(
+  setup: TestRendererSetup,
+  predicate: (frame: string) => boolean,
+  maxPasses = 60
+): Promise<string> {
+  let last = ""
+  for (let pass = 0; pass <= maxPasses; pass++) {
+    await setup.renderOnce()
+    await setup.waitForVisualIdle().catch(() => {})
+    last = setup.captureCharFrame()
+    if (predicate(last)) return last
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  throw new Error(`frame predicate never matched while driving frames; last frame:\n${last}`)
 }

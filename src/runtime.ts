@@ -37,4 +37,3 @@ export const resolveAppServices = (configPath?: string): Effect.Effect<AppServic
       errorLog: makeErrorLog(defaultLogPath()),
     }
   })
-

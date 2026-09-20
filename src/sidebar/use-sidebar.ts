@@ -12,7 +12,6 @@ import { Effect } from "effect"
 import { Option } from "effect"
 import type { ConfigStoreService } from "@/config"
 import type { Connection, Database, DatabaseId, Project, ProjectId } from "@/domain"
-import { connectionLabel } from "@/connection/config"
 
 export type SidebarKind = "project" | "database" | "connection" | "table"
 
@@ -41,9 +40,13 @@ export type TablesByConnection = Readonly<Record<string, ReadonlyArray<string>>>
 
 const EMPTY: SidebarData = { projects: [], databases: new Map(), connections: new Map() }
 
-/* Flatten the three-level tree in display order, honoring what is expanded.
-   An expanded *connected* connection surfaces its loaded tables as leaves, so
-   the sidebar doubles as the table browser. */
+/* Flatten the tree in display order, honoring what is expanded. A database is
+   a leaf: its (single) connection is folded into the database's row so the
+   sidebar reads project → database, matching how users think about a
+   database — the connection settings belong to it, not under it. The primary
+   (first-stored) connection wins; extra legacy connections are ignored for
+   browsing. An active database surfaces its loaded tables as leaves, so the
+   sidebar doubles as the table browser. */
 export const buildTree = (
   data: SidebarData,
   expanded: ReadonlySet<string>,
@@ -63,45 +66,47 @@ export const buildTree = (
     })
     if (!expanded.has(project.id)) continue
     for (const database of data.databases.get(project.id) ?? []) {
+      const connections = data.connections.get(database.id) ?? []
+      const primary = connections[0]
+      if (!primary) {
+        nodes.push({
+          id: `database:${database.id}`,
+          kind: "database",
+          refId: database.id,
+          label: database.name,
+          depth: 1,
+          expandable: false,
+          expanded: false,
+          database,
+        })
+        continue
+      }
+      const connectionExpanded = expanded.has(primary.id)
       nodes.push({
-        id: `database:${database.id}`,
-        kind: "database",
-        refId: database.id,
+        id: `connection:${primary.id}`,
+        kind: "connection",
+        refId: primary.id,
         label: database.name,
         depth: 1,
         expandable: true,
-        expanded: expanded.has(database.id),
+        expanded: connectionExpanded,
         database,
+        connection: primary,
       })
-      if (!expanded.has(database.id)) continue
-      for (const connection of data.connections.get(database.id) ?? []) {
-        const connectionExpanded = expanded.has(connection.id)
+      if (!connectionExpanded) continue
+      for (const table of tablesByConnection[primary.id] ?? []) {
         nodes.push({
-          id: `connection:${connection.id}`,
-          kind: "connection",
-          refId: connection.id,
-          label: connectionLabel(connection),
+          id: `table:${primary.id}:${table}`,
+          kind: "table",
+          refId: table,
+          label: table,
           depth: 2,
-          expandable: true,
-          expanded: connectionExpanded,
+          expandable: false,
+          expanded: false,
           database,
-          connection,
+          connection: primary,
+          table,
         })
-        if (!connectionExpanded) continue
-        for (const table of tablesByConnection[connection.id] ?? []) {
-          nodes.push({
-            id: `table:${connection.id}:${table}`,
-            kind: "table",
-            refId: table,
-            label: table,
-            depth: 3,
-            expandable: false,
-            expanded: false,
-            database,
-            connection,
-            table,
-          })
-        }
       }
     }
   }
@@ -122,9 +127,15 @@ export interface UseSidebarResult {
   readonly jump: (position: "first" | "last") => void
   readonly toggle: (index: number) => void
   readonly open: (index: number) => void
+  /** Place the cursor on a node without selecting it (finder jumps). */
+  readonly goTo: (index: number) => void
   /** Force a connection node open so a freshly connected connection's tables
       are visible without a second Enter. */
   readonly expandConnection: (connectionId: string) => void
+  /** Expand a project and await its databases (and their connections) being
+      loaded, so external callers (e.g. the finder) can select a row that the
+      lazy tree has not reached yet. Resolves immediately if already expanded. */
+  readonly expandProject: (projectId: ProjectId) => Promise<void>
 }
 
 type ReactMutableRef<T> = { readonly current: T }
@@ -140,6 +151,10 @@ export const useSidebar = (
   const expandedRef = useRef<ReadonlySet<string>>(new Set())
   const cursorRef = useRef(0)
   const loadedRef = useRef(false)
+
+  /* In-flight database loads, so `expandProject` fans out requests and the
+     caller can await the same promise a chained keyboard press already fired. */
+  const pendingDatabases = useRef(new Map<ProjectId, Promise<void>>())
 
   const [items, setItems] = useState<ReadonlyArray<SidebarNode>>(() => buildTree(EMPTY, new Set()))
   const [cursor, setCursor] = useState(0)
@@ -188,17 +203,30 @@ export const useSidebar = (
     }
   }, [configStore])
 
-  const loadDatabases = (projectId: ProjectId): void => {
-    void Effect.runPromise(configStore.listDatabases(projectId))
-      .then(rows => {
-        const next = new Map(dataRef.current.databases)
-        next.set(projectId, rows)
-        dataRef.current = { ...dataRef.current, databases: next }
+  const loadDatabases = (projectId: ProjectId): Promise<void> => {
+    const existing = pendingDatabases.current.get(projectId)
+    if (existing) return existing
+    const promise = Effect.runPromise(configStore.listDatabases(projectId))
+      .then(async rows => {
+        const databases = new Map(dataRef.current.databases)
+        databases.set(projectId, rows)
+        /* Databases are leaves now — their (single) connection rides along, so
+           the row can show status and connect in one step. Load the primary
+           connection's params with the database, not on a later expand. */
+        const connections = new Map(dataRef.current.connections)
+        for (const database of rows) {
+          if (connections.has(database.id)) continue
+          const rowsConn = await Effect.runPromise(configStore.listConnections(database.id)).catch(() => [])
+          connections.set(database.id, rowsConn)
+        }
+        dataRef.current = { ...dataRef.current, databases, connections }
         recompute()
       })
       .catch(() => {
         /* failed load leaves the node collapsed silently */
       })
+    pendingDatabases.current.set(projectId, promise)
+    return promise
   }
 
   const loadConnections = (databaseId: DatabaseId): void => {
@@ -219,7 +247,7 @@ export const useSidebar = (
     if (!node || !node.expandable) return
     const willExpand = !expandedRef.current.has(node.refId)
     if (willExpand) {
-      if (node.kind === "project") loadDatabases(node.refId as ProjectId)
+      if (node.kind === "project") void loadDatabases(node.refId as ProjectId)
       else if (node.kind === "database") loadConnections(node.refId as DatabaseId)
     }
     const next = new Set(expandedRef.current)
@@ -230,6 +258,13 @@ export const useSidebar = (
   }
 
   const clamp = (next: number): number => Math.max(0, Math.min(itemsRef.current.length - 1, next))
+
+  const expandProject = (projectId: ProjectId): Promise<void> => {
+    const node = itemsRef.current.find(node => node.kind === "project" && node.refId === projectId)
+    if (!node || expandedRef.current.has(projectId)) return Promise.resolve()
+    toggleExpanded(itemsRef.current.indexOf(node))
+    return loadDatabases(projectId)
+  }
 
   return {
     items,
@@ -254,12 +289,17 @@ export const useSidebar = (
       setCursor(index)
       if (node.kind !== "connection" && node.expandable) toggleExpanded(index)
     },
+    goTo: index => {
+      cursorRef.current = clamp(index)
+      setCursor(cursorRef.current)
+    },
     expandConnection: connectionId => {
       const next = new Set(expandedRef.current)
       next.add(connectionId)
       expandedRef.current = next
       recompute()
     },
+    expandProject,
   }
 }
 

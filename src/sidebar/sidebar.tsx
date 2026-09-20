@@ -89,11 +89,10 @@ function SidebarRow({
     const dotFg = status === "connected" ? c.success : status === "error" ? c.error : c.textMuted
     const glyph = node.expanded ? "▾" : "▸"
     return (
-      <box height={1} flexDirection="row" backgroundColor={rowBg} paddingX={1}>
+      <box height={1} flexDirection="row" paddingX={1} backgroundColor={rowBg}>
         <text fg={rowFg}>
           {indent}
-          {glyph}{" "}
-          {active ? "▶" : " "}
+          {glyph} {active ? "▶" : " "}
         </text>
         <text fg={dotFg}>{dot}</text>
         <text fg={rowFg}> {node.label}</text>
@@ -105,7 +104,7 @@ function SidebarRow({
 
   if (node.kind === "table") {
     return (
-      <box height={1} flexDirection="row" backgroundColor={rowBg} paddingX={1}>
+      <box height={1} flexDirection="row" paddingX={1} backgroundColor={rowBg}>
         <text fg={rowFg}>
           {indent}▸ {node.label}
         </text>
@@ -113,9 +112,22 @@ function SidebarRow({
     )
   }
 
+  /* A database row with no connection yet: leaf, no status, muted dot. */
+  if (node.kind === "database") {
+    return (
+      <box height={1} flexDirection="row" paddingX={1} backgroundColor={rowBg}>
+        <text fg={rowFg}>
+          {indent}○ {node.label}
+        </text>
+        <box flexGrow={1} />
+        <text fg={c.textMuted}>{ENGINE_BADGE[node.database?.engine ?? ""] ?? ""}</text>
+      </box>
+    )
+  }
+
   const glyph = node.expanded ? "▾" : "▸"
   return (
-    <box height={1} flexDirection="row" backgroundColor={rowBg} paddingX={1}>
+    <box height={1} flexDirection="row" paddingX={1} backgroundColor={rowBg}>
       <text fg={rowFg}>
         {indent}
         {glyph} {node.label}

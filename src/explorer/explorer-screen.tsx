@@ -5,17 +5,21 @@
  * `SessionProvider`.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { useKeyboard } from "@opentui/react"
+import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
+import type { ScrollBoxRenderable } from "@opentui/core"
 import { useTheme } from "@/theme-context"
-import { useRouter, useCommandLine, useSessionStatus, useToasts } from "@/app-context"
+import { useRouter, useCommandLine, useSessionStatus, useToasts, useServices } from "@/app-context"
 import { Sidebar } from "@/sidebar/sidebar"
 import { DataTable } from "@/table/data-table"
 import { useVimMode } from "@/vim"
 import { useExplorer } from "@/explorer/use-explorer"
 import { useCellEditor } from "@/editor/use-cell-editor"
+import { editRowInEditor } from "@/editor/edit-row-in-editor"
 import { formatCell } from "@/table/use-table"
-import { connectionLabel } from "@/connection/config"
 import { useCommand } from "@/app-context"
+import { buildFinderIndex, type FinderEntry } from "@/finder/finder"
+import { FinderOverlay } from "@/finder/finder-overlay"
+import { fuzzyMatch } from "@/finder/fuzzy"
 
 const TABLE_MOVE_KEYS = new Set(["j", "k", "g", "G"])
 
@@ -28,6 +32,7 @@ export function ExplorerScreen() {
   const toasts = useToasts()
   const explorer = useExplorer()
   const { sidebar, focus, setFocus, active, loading, error, tableName, tables, tableInfo } = explorer
+  const { configStore } = useServices()
 
   /* Vim mode drives the cursor inside the currently loaded rows. */
   const vim = useVimMode(explorer.table.sortedRows.length)
@@ -37,6 +42,21 @@ export function ExplorerScreen() {
      (right/left arrows), with the draft validated against the schema. */
   const [editColumn, setEditColumn] = useState(0)
   const editor = useCellEditor()
+
+  /* Whole-row editing runs in the user's `$EDITOR` over a TSV temp file, so
+     nothing in the app can swallow a keystroke or drop an edit. Guard against
+     re-entering while a session is still open. */
+  const renderer = useRenderer()
+  const editorBusyRef = useRef(false)
+
+  /* Fill the data pane: the table is virtualized, so showing as many rows as
+     the terminal affords (minus the status bar and table strip) makes the two
+     panes read the same height, as in a GUI client. */
+  const { height, width } = useTerminalDimensions()
+  const viewportRows = Math.max(1, height - 2)
+  /* The area the grid gets for its columns: terminal width less the app page
+     padding, the 28-wide sidebar, the leading cursor glyph, and row padding. */
+  const dataWidth = Math.max(0, width - 2 - 28 - 3)
 
   /* `/` search: a ref-backed buffer so a whole chord can be typed and entered
      inside one frame without dropping keys (mirrors the command line). */
@@ -66,6 +86,89 @@ export function ExplorerScreen() {
     bumpSearch(v => v + 1)
   }
 
+  /* Finder (telescope-style jump). Space opens it; a chord can be typed in one
+     frame so the buffer + open flag live in refs, echoed to state for the
+     overlay. The index (projects / databases / tables) rebuilds from the config
+     store each time it opens, so it always reflects the latest connections. */
+  const finderOpenRef = useRef(false)
+  const [finderOpen, setFinderOpen] = useState(false)
+  const [finderQuery, setFinderQuery] = useState("")
+  const finderQueryRef = useRef("")
+  const [finderCursor, setFinderCursor] = useState(0)
+  const [finderEntries, setFinderEntries] = useState<ReadonlyArray<FinderEntry>>([])
+
+  const openFinder = () => {
+    finderOpenRef.current = true
+    setFinderOpen(true)
+    finderQueryRef.current = ""
+    setFinderQuery("")
+    setFinderCursor(0)
+    setFinderEntries([])
+    void buildFinderIndex(configStore, active ? active.database : null, explorer.tables)
+      .then(entries => setFinderEntries(entries))
+      .catch(() => setFinderEntries([]))
+  }
+  const closeFinder = () => {
+    finderOpenRef.current = false
+    setFinderOpen(false)
+    finderQueryRef.current = ""
+    setFinderQuery("")
+    setFinderCursor(0)
+    setFinderEntries([])
+  }
+  const finderType = (character: string) => {
+    finderQueryRef.current += character
+    setFinderQuery(finderQueryRef.current)
+    setFinderCursor(0)
+  }
+  const finderBackspace = () => {
+    finderQueryRef.current = finderQueryRef.current.slice(0, -1)
+    setFinderQuery(finderQueryRef.current)
+    setFinderCursor(0)
+  }
+  const finderMove = (delta: -1 | 1) => {
+    setFinderCursor(current => Math.min(Math.max(0, finderMatches.length - 1), current + delta))
+  }
+
+  const finderMatches = useMemo(() => {
+    /* Empty query lists everything (tables first, then databases, then
+       projects); a query fuzzy-ranks every matching entry. */
+    const rank = { project: 0, db: 1, table: 2 } as const
+    const scored: Array<{ entry: FinderEntry; score: number }> = []
+    for (const entry of finderEntries) {
+      const match = fuzzyMatch(finderQuery, entry.label)
+      if (!match) continue
+      scored.push({ entry, score: match.score })
+    }
+    scored.sort(
+      (a, b) =>
+        b.score - a.score ||
+        rank[b.entry.kind] - rank[a.entry.kind] ||
+        a.entry.label.localeCompare(b.entry.label)
+    )
+    return scored.slice(0, 10).map(result => result.entry)
+  }, [finderEntries, finderQuery])
+
+  const jumpFinder = () => {
+    const entry = finderMatches[finderCursor]
+    if (!entry) return
+    closeFinder()
+    if (entry.kind === "table") {
+      explorer.openTable(entry.label)
+      setFocus("table")
+      return
+    }
+    if (entry.kind === "db") {
+      if (entry.projectId && entry.connectionId) explorer.jumpToConnection(entry.projectId, entry.connectionId)
+      else toasts.push("info", `database "${entry.label}" has no connection — add one from settings`)
+      return
+    }
+    /* project: reveal it in the sidebar and park the cursor on it */
+    const index = explorer.sidebar.items.findIndex(node => node.kind === "project" && node.refId === entry.projectId)
+    if (index >= 0) explorer.sidebar.open(index)
+    setFocus("sidebar")
+  }
+
   /* Explorer-scoped `:` commands. Registered once via the command bus; the
      closures read live explorer state on demand. */
   useCommand({
@@ -93,14 +196,13 @@ export function ExplorerScreen() {
     run: text => {
       const name = text.trim().split(/\s+/)[1] ?? ""
       const items = explorer.sidebar.items
-      let currentDatabase = ""
-      const index = items.findIndex(node => {
-        if (node.kind === "database") currentDatabase = node.database?.name ?? ""
-        if (node.kind !== "connection") return false
-        return currentDatabase === name || node.label === name || node.connection?.id === name
-      })
+      const index = items.findIndex(
+        node =>
+          node.kind === "connection" &&
+          (node.label === name || node.database?.name === name || node.connection?.id === name)
+      )
       if (index < 0) {
-        toasts.push("error", `no connection named "${name}"`)
+        toasts.push("error", `no database named "${name}"`)
         return
       }
       explorer.selectActive(index)
@@ -123,23 +225,56 @@ export function ExplorerScreen() {
     void explorer.saveCell(target.rowIndex, target.column, result.value)
   }
 
+  const editCurrentRow = () => {
+    if (!tableName || !active) {
+      toasts.push("error", "no table open to edit")
+      return
+    }
+    if (!tableInfo || tableInfo.primaryKey.length === 0) {
+      toasts.push("error", `table ${tableName} has no primary key — can't edit rows`)
+      return
+    }
+    const row = explorer.table.sortedRows[vim.cursor]
+    if (!row) {
+      toasts.push("info", "no rows to edit")
+      return
+    }
+    if (editorBusyRef.current) return
+    editorBusyRef.current = true
+    editRowInEditor({
+      renderer,
+      tableName,
+      columns: tableInfo.columns,
+      primaryKey: tableInfo.primaryKey,
+      row,
+      callbacks: {
+        notice: message => toasts.push("info", message),
+        error: message => toasts.push("error", message),
+        onChanges: updates => void explorer.saveRow(row, updates),
+        done: () => {
+          editorBusyRef.current = false
+        },
+      },
+    })
+  }
+
   const hints = useMemo(
     () =>
       focus === "sidebar"
-        ? ["s settings", "j/k move", "Enter open", "h/l panels", "Tab next conn", "? help"]
+        ? ["s settings", "j/k move", "Enter open", "space jump", "h/l panels", "Tab next conn", "? help"]
         : explorer.search.trim()
           ? [`${explorer.searchCount} matches`, "n/N jump", "Esc clear"]
-          : ["s settings", "j/k move", "gg/G jump", "h/l panels", "Tab next conn", "? help"],
+          : ["s settings", "i edit row", "Enter cell", "j/k move", "space jump", "gg/G jump", "/ search", "h/l panels", "? help"],
     [focus, explorer.search, explorer.searchCount]
   )
 
-  /* Push the story to the shell's status bar. */
+  /* Push the story to the shell's status bar. The database is the connection:
+     one name, its engine alongside. */
   const { setStatus } = session
   useEffect(() => {
     setStatus({
       mode: vimMode,
       engine: active?.database.engine,
-      connection: active ? connectionLabel(active.connection) : undefined,
       database: active?.database.name,
       table: tableName ?? undefined,
       rows: explorer.table.sortedRows.length,
@@ -151,6 +286,40 @@ export function ExplorerScreen() {
   useKeyboard(e => {
     if (router.helpOpen || commandLine.open) return
     const key = e.name
+
+    /* The finder consumes everything while open: type to filter, j/k or the
+       arrow keys to move, Enter to jump, Esc to close. */
+    if (finderOpenRef.current) {
+      if (key === "\u001b" || key === "Escape" || key === "escape") {
+        closeFinder()
+        return
+      }
+      if (key === "return" || key === "enter" || key === "\r") {
+        jumpFinder()
+        return
+      }
+      if (key === "backspace") {
+        finderBackspace()
+        return
+      }
+      if (key === " " || key === "space") {
+        finderType(" ")
+        return
+      }
+      if (key === "j" || key === "down" || (e.ctrl === true && key === "n")) {
+        finderMove(1)
+        return
+      }
+      if (key === "k" || key === "up" || (e.ctrl === true && key === "p")) {
+        finderMove(-1)
+        return
+      }
+      if (key && key.length === 1) {
+        finderType(key)
+        return
+      }
+      return
+    }
 
     if (focus === "sidebar") {
       switch (key) {
@@ -164,8 +333,17 @@ export function ExplorerScreen() {
         case "G":
           sidebar.jump(key === "G" ? "last" : "first")
           return
+        case " ":
+        case "space":
+          openFinder()
+          return
         case "s":
           router.setScreen("settings")
+          return
+        case "i":
+          /* Connect auto-opens the first table but leaves focus here, so row
+             editing is reachable from either panel. */
+          editCurrentRow()
           return
         case "\u001b":
         case "Escape":
@@ -228,6 +406,10 @@ export function ExplorerScreen() {
         }
         return
       }
+      if (key === " " || key === "space") {
+        openFinder()
+        return
+      }
       if (key === "h" || key === "left") {
         setFocus("sidebar")
         return
@@ -249,8 +431,12 @@ export function ExplorerScreen() {
         setEditColumn(current => Math.max(0, current - 1))
         return
       }
-      if (key === "i" || key === "v") {
-        toasts.push("info", `${key.toUpperCase()} editing lands in a later phase`)
+      if (key === "i") {
+        editCurrentRow()
+        return
+      }
+      if (key === "v") {
+        toasts.push("info", "visual mode lands in a later phase")
         return
       }
       if (key === "\u001b" || key === "Escape" || key === "escape") {
@@ -303,9 +489,7 @@ export function ExplorerScreen() {
 
       <box flexGrow={1} flexDirection="column">
         <TableStrip tables={tables} tableName={tableName} loading={loading} focus={focus === "table"} />
-        {searchOpenRef.current ? (
-          <SearchBar query={searchBuffer.current} matches={explorer.searchCount} />
-        ) : null}
+        {searchOpenRef.current ? <SearchBar query={searchBuffer.current} matches={explorer.searchCount} /> : null}
         {error ? (
           <box flexGrow={1} alignItems="center" justifyContent="center">
             <text fg={c.error}>{error}</text>
@@ -317,9 +501,11 @@ export function ExplorerScreen() {
         ) : active ? (
           <DataTable
             table={{ ...explorer.table, cursor: vim.cursor }}
-            viewportRows={16}
+            viewportRows={viewportRows}
+            availableWidth={dataWidth}
             empty="no rows"
             editing={editor.preview}
+            activeColumn={explorer.table.columns[editColumn]?.name ?? explorer.table.columns[0]?.name}
             highlight={explorer.search.trim() || undefined}
           />
         ) : (
@@ -328,6 +514,7 @@ export function ExplorerScreen() {
           </box>
         )}
       </box>
+      {finderOpen ? <FinderOverlay query={finderQuery} entries={finderMatches} cursor={finderCursor} /> : null}
     </box>
   )
 }
@@ -336,7 +523,13 @@ function SearchBar({ query, matches }: { query: string; matches: number }) {
   const theme = useTheme()
   const c = theme.colors
   return (
-    <box height={1} paddingX={1} flexDirection="row" alignItems="center" backgroundColor={c.bgSurface} overflow="hidden">
+    <box
+      height={1}
+      paddingX={1}
+      flexDirection="row"
+      alignItems="center"
+      overflow="hidden"
+    >
       <text fg={c.accent}>/</text>
       <text fg={c.textBright}>{query}</text>
       <text fg={c.accent}>▍</text>
@@ -359,33 +552,37 @@ function TableStrip({
 }) {
   const theme = useTheme()
   const c = theme.colors
+  const scrollRef = useRef<ScrollBoxRenderable | null>(null)
+
+  /* Keep the active tab reachable: pan the strip sideways so the focused table
+     stays visible even when the connection has dozens of tables. */
+  useEffect(() => {
+    if (tableName) scrollRef.current?.scrollChildIntoView(`dient-tab-${tableName}`)
+  }, [tableName])
 
   if (tables.length === 0 && !loading) {
     return (
-      <box height={1} paddingX={1} backgroundColor={c.bgSurface}>
+      <box height={1} paddingX={1}>
         <text fg={c.textMuted}>{loading ? "loading tables…" : "no tables"}</text>
       </box>
     )
   }
 
   return (
-    <box height={1} paddingX={1} flexDirection="row" backgroundColor={c.bgSurface} overflow="hidden">
-      {tables.map(name => {
-        const current = name === tableName
-        return (
-          <box key={name} marginRight={1}>
-            <text
-              fg={current ? c.textBright : focus ? c.text : c.textMuted}
-              bg={current ? c.bgHighlight : undefined}
-              truncate
-            >
-              {current ? "▶ " : ""}
-              {name.toUpperCase()}
-            </text>
-          </box>
-        )
-      })}
-    </box>
+    <scrollbox ref={scrollRef} scrollX scrollY={false} height={1} horizontalScrollbarOptions={{ showArrows: false }}>
+      <box height={1} paddingX={1} flexDirection="row">
+        {tables.map(name => {
+          const current = name === tableName
+          return (
+            <box key={name} id={current ? `dient-tab-${name}` : undefined} marginRight={1}>
+              <text fg={current ? c.textBright : focus ? c.text : c.textMuted} bg={current ? c.bgHighlight : undefined} truncate>
+                {current ? "▶ " : ""}
+                {name.toUpperCase()}
+              </text>
+            </box>
+          )
+        })}
+      </box>
+    </scrollbox>
   )
 }
-

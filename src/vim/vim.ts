@@ -171,4 +171,3 @@ export const selectionRange = (selection: Selection): SelectionRange => ({
   start: Math.min(selection.anchor, selection.head),
   end: Math.max(selection.anchor, selection.head),
 })
-

@@ -26,8 +26,7 @@ const connection = (id: string, databaseId: string, overrides: Partial<Connectio
 const databasesOf = (
   projectId: string,
   rows: ReadonlyArray<Database>
-): ReadonlyMap<Project["id"], ReadonlyArray<Database>> =>
-  new Map([[S.decodeSync(ProjectId)(projectId), rows]])
+): ReadonlyMap<Project["id"], ReadonlyArray<Database>> => new Map([[S.decodeSync(ProjectId)(projectId), rows]])
 const databasesOfMany = (
   entries: ReadonlyArray<readonly [string, ReadonlyArray<Database>]>
 ): ReadonlyMap<Project["id"], ReadonlyArray<Database>> =>
@@ -35,8 +34,7 @@ const databasesOfMany = (
 const connectionsOf = (
   databaseId: string,
   rows: ReadonlyArray<Connection>
-): ReadonlyMap<Database["id"], ReadonlyArray<Connection>> =>
-  new Map([[S.decodeSync(DatabaseId)(databaseId), rows]])
+): ReadonlyMap<Database["id"], ReadonlyArray<Connection>> => new Map([[S.decodeSync(DatabaseId)(databaseId), rows]])
 
 describe("buildTree", () => {
   test("returns an empty list for empty data", () => {
@@ -49,7 +47,14 @@ describe("buildTree", () => {
     const data: SidebarData = { projects: [p], databases: new Map(), connections: new Map() }
     const nodes = buildTree(data, new Set())
     expect(nodes).toHaveLength(1)
-    expect(nodes[0]).toMatchObject({ kind: "project", refId: p.id, label: "demo", depth: 0, expanded: false, expandable: true })
+    expect(nodes[0]).toMatchObject({
+      kind: "project",
+      refId: p.id,
+      label: "demo",
+      depth: 0,
+      expanded: false,
+      expandable: true,
+    })
   })
 
   test("an expanded project surfaces its databases at depth 1", () => {
@@ -58,10 +63,10 @@ describe("buildTree", () => {
     const data: SidebarData = { projects: [p], databases: databasesOf("p1", [db]), connections: new Map() }
     const nodes = buildTree(data, new Set(["p1"]))
     expect(nodes).toHaveLength(2)
-    expect(nodes[1]).toMatchObject({ kind: "database", refId: db.id, label: "main", depth: 1, expanded: false })
+    expect(nodes[1]).toMatchObject({ kind: "database", refId: db.id, label: "main", depth: 1, expanded: false, expandable: false })
   })
 
-  test("an expanded database surfaces its connections at depth 2", () => {
+  test("a database with a connection folds the connection into the database row", () => {
     const p = project("p1", "demo")
     const db = database("d1", "p1", "main", "sqlite")
     const conn = connection("c1", "d1", { filename: "/tmp/data.db" })
@@ -70,12 +75,18 @@ describe("buildTree", () => {
       databases: databasesOf("p1", [db]),
       connections: connectionsOf("d1", [conn]),
     }
-    const nodes = buildTree(data, new Set(["p1", "d1"]))
-    expect(nodes).toHaveLength(3)
-    expect(nodes[2]).toMatchObject({ kind: "connection", refId: conn.id, depth: 2, expandable: true })
+    const nodes = buildTree(data, new Set(["p1"]))
+    expect(nodes).toHaveLength(2)
+    expect(nodes[1]).toMatchObject({
+      kind: "connection",
+      refId: conn.id,
+      label: "main",
+      depth: 1,
+      expandable: true,
+    })
   })
 
-  test("an expanded connection surfaces its tables as depth-3 leaves", () => {
+  test("an expanded connection surfaces its tables as depth-2 leaves", () => {
     const p = project("p1", "demo")
     const db = database("d1", "p1", "main", "sqlite")
     const conn = connection("c1", "d1", { filename: "/tmp/data.db" })
@@ -84,17 +95,16 @@ describe("buildTree", () => {
       databases: databasesOf("p1", [db]),
       connections: connectionsOf("d1", [conn]),
     }
-    const nodes = buildTree(data, new Set(["p1", "d1", "c1"]), {
+    const nodes = buildTree(data, new Set(["p1", "c1"]), {
       [conn.id as ConnectionId]: ["users", "orders"],
     })
     expect(nodes.map(n => ({ kind: n.kind, label: n.label, depth: n.depth }))).toEqual([
       { kind: "project", label: "demo", depth: 0 },
-      { kind: "database", label: "main", depth: 1 },
-      { kind: "connection", label: "data.db", depth: 2 },
-      { kind: "table", label: "users", depth: 3 },
-      { kind: "table", label: "orders", depth: 3 },
+      { kind: "connection", label: "main", depth: 1 },
+      { kind: "table", label: "users", depth: 2 },
+      { kind: "table", label: "orders", depth: 2 },
     ])
-    expect(nodes[4]).toMatchObject({ kind: "table", table: "orders", expandable: false })
+    expect(nodes[3]).toMatchObject({ kind: "table", table: "orders", expandable: false })
   })
 
   test("collapsing a node hides its children", () => {
@@ -115,17 +125,18 @@ describe("buildTree", () => {
       connections: connectionsOf("d1", [connection("c1", "d1", { filename: "x.db" })]),
     }
     const nodes = buildTree(data, new Set(["p1", "d1", "p2", "d2"]))
-    expect(nodes.map(n => n.label)).toEqual(["alpha", "a-db", "x.db", "beta", "b-db"])
+    expect(nodes.map(n => n.label)).toEqual(["alpha", "a-db", "beta", "b-db"])
   })
 
-  test("connection labels are derived from the filename basename", () => {
+  test("the database row carries its connection's params", () => {
     const data: SidebarData = {
       projects: [project("p1", "demo")],
       databases: databasesOf("p1", [database("d1", "p1", "main", "sqlite")]),
       connections: connectionsOf("d1", [connection("c1", "d1", { filename: "/deep/path/data.db" })]),
     }
-    const nodes = buildTree(data, new Set(["p1", "d1"]))
-    expect(nodes[2]!.label).toBe("data.db")
+    const nodes = buildTree(data, new Set(["p1"]))
+    expect(nodes[1]!.label).toBe("main")
+    expect(nodes[1]!.connection?.filename).toBe("/deep/path/data.db")
   })
 
   test("expansion is tracked by refId, not by display id", () => {
@@ -139,7 +150,10 @@ describe("buildTree", () => {
 
 describe("selectedConnection", () => {
   test("returns null for a non-connection row", () => {
-    const nodes = buildTree({ projects: [project("p1", "demo")], databases: new Map(), connections: new Map() }, new Set())
+    const nodes = buildTree(
+      { projects: [project("p1", "demo")], databases: new Map(), connections: new Map() },
+      new Set()
+    )
     expect(selectedConnection(nodes, 0)).toBeNull()
   })
 
@@ -149,8 +163,8 @@ describe("selectedConnection", () => {
       databases: databasesOf("p1", [database("d1", "p1", "main", "sqlite")]),
       connections: connectionsOf("d1", [connection("c1", "d1", { filename: "data.db" })]),
     }
-    const nodes = buildTree(data, new Set(["p1", "d1"]))
-    const selected = selectedConnection(nodes, 2)
+    const nodes = buildTree(data, new Set(["p1"]))
+    const selected = selectedConnection(nodes, 1)
     expect(selected).not.toBeNull()
     expect(selected!.kind).toBe("connection")
     expect(selected!.connection).toMatchObject({ id: S.decodeSync(ConnectionId)("c1") })

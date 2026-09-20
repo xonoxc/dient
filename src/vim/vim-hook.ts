@@ -39,7 +39,7 @@ export const useVimMode = (rowCount = 0): UseVimModeResult => {
     mode: state.mode,
     cursor: state.cursor,
     selection: state.selection,
-    pressKey: (key) => dispatch({ _tag: "Key", key }),
-    setRowCount: (count) => dispatch({ _tag: "SetRows", count }),
+    pressKey: key => dispatch({ _tag: "Key", key }),
+    setRowCount: count => dispatch({ _tag: "SetRows", count }),
   }
 }

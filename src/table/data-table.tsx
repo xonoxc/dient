@@ -1,20 +1,76 @@
 /**
  * Data table view. Renders column headers plus a small window of rows around
- * the cursor (full virtualization), alternating row tint, a selection accent,
- * sort indicators, and an in-place cell-edit preview.
+ * the cursor (full virtualization), a cursor arrow, sort indicators, and an
+ * in-place cell-edit preview.
+ *
+ * Horizontal layout is a `<scrollbox>`: when columns overflow the pane, the
+ * view scrolls sideways (keyboard left/right pan via the active column, shift+
+ * wheel via the terminal) and a thin horizontal scrollbar shows the position.
+ * Vertical navigation stays keyboard-driven — the vim cursor slides the row
+ * window, which is what keeps 1500-row pages cheap — so the grid scrolls on
+ * both axes without ever rendering more rows than fit on screen.
+ *
+ * The active column is kept in view: only the focused row's cells carry ids
+ * (`dient-col-<row>-<column>`), and after the cursor or column moves we ask
+ * the scrollbox to reveal that cell (nearest-edge, no-op when already
+ * visible). Selected rows read via bright text on the theme's lighter
+ * `bgHighlight` band, which follows the terminal colorscheme.
  */
+import { useEffect, useMemo, useRef } from "react"
 import { useTheme } from "@/theme-context"
+import type { ScrollBoxRenderable } from "@opentui/core"
 import { formatCell, MAX_COL_WIDTH, MIN_COL_WIDTH, type UseTableResult } from "@/table/use-table"
 
 export interface DataTableProps {
   readonly table: UseTableResult
   readonly viewportRows?: number
+  readonly availableWidth?: number
   readonly editing?: { readonly column: string; readonly draft: string } | null
+  readonly activeColumn?: string
   readonly highlight?: string
   readonly empty?: string
 }
 
-export function DataTable({ table, viewportRows = 20, editing = null, highlight, empty }: DataTableProps) {
+/** Trailing gap after every column so cells never butt against the next. */
+export const COLUMN_GUTTER = 2
+
+/**
+ * Column widths for a frame: the content width from `useTable`, plus a fixed
+ * gutter, plus a share of any *remaining* pane width so the grid fills the
+ * terminal instead of ending at the widest value. Each column caps at
+ * `MAX_COL_WIDTH`, like the content widths already do — the grid never grows
+ * a column absurdly wide just because the terminal is.
+ */
+export const useColumnWidths = (
+  columns: ReadonlyArray<{ readonly name: string }>,
+  baseWidthOf: (column: string) => number,
+  availableWidth?: number
+): ((column: string) => number) =>
+  useMemo(() => {
+    const n = columns.length
+    if (n === 0) return () => 0
+    const base = columns.map(column => baseWidthOf(column.name))
+    const fixed = base.reduce((sum, width) => sum + width, 0) + COLUMN_GUTTER * n
+    const extra = Math.max(0, (availableWidth ?? fixed) - fixed)
+    const per = Math.floor(extra / n)
+    const rest = extra - per * n
+    const widths: Record<string, number> = {}
+    columns.forEach((column, index) => {
+      const share = per + (index < rest ? 1 : 0)
+      widths[column.name] = Math.min(base[index]! + share, MAX_COL_WIDTH) + COLUMN_GUTTER
+    })
+    return column => widths[column] ?? COLUMN_GUTTER
+  }, [columns, baseWidthOf, availableWidth])
+
+export function DataTable({
+  table,
+  viewportRows = 20,
+  availableWidth,
+  editing = null,
+  activeColumn,
+  highlight,
+  empty,
+}: DataTableProps) {
   const theme = useTheme()
   const c = theme.colors
   const { columns, cursor, sortedRows, sort } = table
@@ -27,28 +83,47 @@ export function DataTable({ table, viewportRows = 20, editing = null, highlight,
     )
   }
 
+  const widthOf = useColumnWidths(columns, table.widthOf, availableWidth)
   const window = rowsWindow(sortedRows, cursor, viewportRows)
 
+  const scrollRef = useRef<ScrollBoxRenderable | null>(null)
+
+  /* Keep the focused column in view as the cursor or the cell cursor moves.
+     Only the focused row's cells carry ids, so there is exactly one target. */
+  useEffect(() => {
+    if (!activeColumn || !scrollRef.current) return
+    scrollRef.current.scrollChildIntoView(`dient-col-${cursor}-${activeColumn}`)
+  }, [activeColumn, cursor, columns, sortedRows.length])
+
   return (
-    <box flexGrow={1} flexDirection="column">
-      <HeaderRow columns={columns} sort={sort} widthOf={table.widthOf} />
-      {window.rows.map((row, windowIndex) => {
-        const rowIndex = window.offset + windowIndex
-        const selected = rowIndex === cursor
-        return (
-          <RowLine
-            key={rowIndex}
-            row={row}
-            columns={columns}
-            rowIndex={rowIndex}
-            selected={selected}
-            widthOf={table.widthOf}
-            editing={editing}
-            highlight={highlight}
-          />
-        )
-      })}
-    </box>
+    <scrollbox
+      ref={scrollRef}
+      scrollX
+      scrollY={false}
+      flexGrow={1}
+      horizontalScrollbarOptions={{ showArrows: false }}
+    >
+      <box flexDirection="column">
+        <HeaderRow columns={columns} sort={sort} widthOf={widthOf} />
+        {window.rows.map((row, windowIndex) => {
+          const rowIndex = window.offset + windowIndex
+          const selected = rowIndex === cursor
+          return (
+            <RowLine
+              key={rowIndex}
+              row={row}
+              columns={columns}
+              selected={selected}
+              widthOf={widthOf}
+              editing={editing}
+              activeColumn={activeColumn}
+              rowIndex={rowIndex}
+              highlight={highlight}
+            />
+          )
+        })}
+      </box>
+    </scrollbox>
   )
 }
 
@@ -84,7 +159,7 @@ function HeaderRow({
   const theme = useTheme()
   const c = theme.colors
   return (
-    <box flexDirection="row" paddingX={1} backgroundColor={c.bgSurface}>
+    <box flexDirection="row" paddingX={1}>
       <text fg={c.textBright} width={1}>
         {" "}
       </text>
@@ -106,49 +181,55 @@ function HeaderRow({
 function RowLine({
   row,
   columns,
-  rowIndex,
   selected,
+  rowIndex,
   widthOf,
   editing,
+  activeColumn,
   highlight,
 }: {
   row: Record<string, unknown>
   columns: DataTableProps["table"]["columns"]
-  rowIndex: number
   selected: boolean
+  rowIndex: number
   widthOf: (column: string) => number
   editing?: DataTableProps["editing"]
+  activeColumn?: string
   highlight?: string
 }) {
   const theme = useTheme()
   const c = theme.colors
-  const tinted = rowIndex % 2 === 1
+  const matches = (formatted: string): boolean =>
+    highlight !== undefined &&
+    highlight.length > 0 &&
+    formatted.toLowerCase().includes(highlight.toLowerCase())
 
   return (
-    <box flexDirection="row" paddingX={1} backgroundColor={tinted ? c.bgSurface : undefined}>
+    <box flexDirection="row" paddingX={1} backgroundColor={selected ? c.bgHighlight : undefined}>
       <text fg={selected ? c.accent : c.textMuted} width={1}>
         {selected ? "▶" : " "}
       </text>
       {columns.map(column => {
         const editingThis = editing && editing.column === column.name
+        /* Only the focused row's cells carry scroll ids, unique per row, so
+           `scrollChildIntoView` has exactly one child to reveal. */
+        const cellId = selected && activeColumn === column.name ? `dient-col-${rowIndex}-${column.name}` : undefined
         const formatted = editingThis ? editing.draft : formatCell(row[column.name])
         const fg = selected ? c.textBright : editingThis ? c.success : c.text
-        const matches =
-          highlight && !editingThis && formatted.toLowerCase().includes(highlight.toLowerCase())
-            ? splitHighlighted(formatted, highlight)
-            : null
+        const parts =
+          matches(formatted) && !editingThis ? splitHighlighted(formatted, highlight!) : null
         return (
-          <box key={column.name} width={widthOf(column.name)} overflow="hidden">
-            {matches ? (
-              <box flexDirection="row" backgroundColor={selected ? c.selection : undefined}>
-                {matches.map((part, index) => (
+          <box key={column.name} id={cellId} width={widthOf(column.name)}>
+            {parts ? (
+              <box flexDirection="row">
+                {parts.map((part, index) => (
                   <text key={index} fg={part.matched ? c.accent : fg} truncate>
                     {part.text}
                   </text>
                 ))}
               </box>
             ) : (
-              <text fg={fg} bg={selected ? c.selection : undefined} truncate>
+              <text fg={fg} truncate>
                 {formatted}
               </text>
             )}

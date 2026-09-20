@@ -52,15 +52,14 @@ const sqliteConfig = (): SqliteConnectionConfig => ({
   filename: `/tmp/dient-inspector-${uid()}.db`,
 })
 
-const value = <A, E>(exit: Exit.Exit<A, E>): A =>
-  (exit as unknown as { value: A }).value
+const value = <A, E>(exit: Exit.Exit<A, E>): A => (exit as unknown as { value: A }).value
 
 /*
  * Run a program with the SchemaInspector + DatabaseDriver layers provided and
  * a fresh scope, so `connect`'s Scope requirement is satisfied.
  */
 const runInspector = <A, E>(
-  program: (inspector: SchemaInspectorService) => Effect.Effect<A, E, Scope.Scope | DatabaseDriver>,
+  program: (inspector: SchemaInspectorService) => Effect.Effect<A, E, Scope.Scope | DatabaseDriver>
 ): Promise<Exit.Exit<A, E>> =>
   Effect.runPromiseExit(
     Effect.scoped(
@@ -70,23 +69,23 @@ const runInspector = <A, E>(
             const inspector = yield* SchemaInspector
             return yield* program(inspector)
           }),
-          SchemaInspector.layer,
+          SchemaInspector.layer
         ),
-        DatabaseDriver.layer,
-      ),
-    ),
+        DatabaseDriver.layer
+      )
+    )
   )
 
 /* Connect, run `program`, and disconnect when the scope closes. */
 const withConnection = <A, E>(
   config: ConnectionConfig,
-  program: (conn: ActiveConnection) => Effect.Effect<A, E, Scope.Scope | DatabaseDriver>,
+  program: (conn: ActiveConnection) => Effect.Effect<A, E, Scope.Scope | DatabaseDriver>
 ) =>
   Effect.gen(function* () {
     const driver = yield* DatabaseDriver
     const conn = yield* driver.connect(config)
     return yield* Effect.acquireRelease(Effect.succeed(conn), c => driver.disconnect(c)).pipe(
-      Effect.flatMap(c => program(c)),
+      Effect.flatMap(c => program(c))
     )
   })
 
@@ -97,20 +96,18 @@ const withConnection = <A, E>(
 const withTables = <A, E>(
   conn: ActiveConnection,
   tables: ReadonlyArray<{ name: string; ddl: string }>,
-  program: () => Effect.Effect<A, E, never>,
+  program: () => Effect.Effect<A, E, never>
 ): Effect.Effect<A, E | QueryError, Scope.Scope | DatabaseDriver> =>
   Effect.gen(function* () {
     const driver = yield* DatabaseDriver
     for (const table of tables) {
       yield* driver.query(conn, table.ddl)
     }
-    const cleanup = Effect.acquireRelease(
-      Effect.succeed(undefined),
-      () =>
-        Effect.all(
-          [...tables].reverse().map(t => driver.query(conn, `DROP TABLE IF EXISTS ${t.name}`)),
-          { discard: true },
-        ).pipe(Effect.catchAll(() => Effect.void)),
+    const cleanup = Effect.acquireRelease(Effect.succeed(undefined), () =>
+      Effect.all(
+        [...tables].reverse().map(t => driver.query(conn, `DROP TABLE IF EXISTS ${t.name}`)),
+        { discard: true }
+      ).pipe(Effect.catchAll(() => Effect.void))
     )
     return yield* cleanup.pipe(Effect.flatMap(() => program()))
   })
@@ -146,9 +143,7 @@ describe("SchemaInspector · postgres", () => {
 
   it("listTables returns user tables and never system tables", async () => {
     const exit = await runInspector(inspector =>
-      withConnection(pgConfig(), conn =>
-        withTables(conn, tables, () => inspector.listTables(conn)),
-      ),
+      withConnection(pgConfig(), conn => withTables(conn, tables, () => inspector.listTables(conn)))
     )
     expect(exit._tag).toBe("Success")
     const tables0 = value(exit)
@@ -160,9 +155,7 @@ describe("SchemaInspector · postgres", () => {
 
   it("describeTable returns columns with types, nullability and defaults", async () => {
     const exit = await runInspector(inspector =>
-      withConnection(pgConfig(), conn =>
-        withTables(conn, tables, () => inspector.describeTable(conn, users.name)),
-      ),
+      withConnection(pgConfig(), conn => withTables(conn, tables, () => inspector.describeTable(conn, users.name)))
     )
     expect(exit._tag).toBe("Success")
     const info = value(exit) as Option.Option<TableInfo>
@@ -179,9 +172,7 @@ describe("SchemaInspector · postgres", () => {
 
   it("getPrimaryKey returns composite key columns in order", async () => {
     const exit = await runInspector(inspector =>
-      withConnection(pgConfig(), conn =>
-        withTables(conn, tables, () => inspector.getPrimaryKey(conn, orders.name)),
-      ),
+      withConnection(pgConfig(), conn => withTables(conn, tables, () => inspector.getPrimaryKey(conn, orders.name)))
     )
     expect(exit._tag).toBe("Success")
     expect(value(exit)).toEqual(["order_id", "item_id"])
@@ -189,9 +180,7 @@ describe("SchemaInspector · postgres", () => {
 
   it("describeTable on a missing table returns None", async () => {
     const exit = await runInspector(inspector =>
-      withConnection(pgConfig(), conn =>
-        withTables(conn, tables, () => inspector.describeTable(conn, "nope_xyz")),
-      ),
+      withConnection(pgConfig(), conn => withTables(conn, tables, () => inspector.describeTable(conn, "nope_xyz")))
     )
     expect(exit._tag).toBe("Success")
     expect(Option.isNone(value(exit) as Option.Option<TableInfo>)).toBe(true)
@@ -199,9 +188,7 @@ describe("SchemaInspector · postgres", () => {
 
   it("getPrimaryKey on a missing table returns []", async () => {
     const exit = await runInspector(inspector =>
-      withConnection(pgConfig(), conn =>
-        withTables(conn, tables, () => inspector.getPrimaryKey(conn, "nope_xyz")),
-      ),
+      withConnection(pgConfig(), conn => withTables(conn, tables, () => inspector.getPrimaryKey(conn, "nope_xyz")))
     )
     expect(exit._tag).toBe("Success")
     expect(value(exit)).toEqual([])
@@ -240,9 +227,7 @@ describe("SchemaInspector · mysql", () => {
 
   it("listTables returns user tables from the current database", async () => {
     const exit = await runInspector(inspector =>
-      withConnection(mysqlConfig(), conn =>
-        withTables(conn, tables, () => inspector.listTables(conn)),
-      ),
+      withConnection(mysqlConfig(), conn => withTables(conn, tables, () => inspector.listTables(conn)))
     )
     expect(exit._tag).toBe("Success")
     const tables0 = value(exit)
@@ -252,9 +237,7 @@ describe("SchemaInspector · mysql", () => {
 
   it("describeTable returns columns with types, nullability and defaults", async () => {
     const exit = await runInspector(inspector =>
-      withConnection(mysqlConfig(), conn =>
-        withTables(conn, tables, () => inspector.describeTable(conn, users.name)),
-      ),
+      withConnection(mysqlConfig(), conn => withTables(conn, tables, () => inspector.describeTable(conn, users.name)))
     )
     expect(exit._tag).toBe("Success")
     const info = value(exit) as Option.Option<TableInfo>
@@ -271,9 +254,7 @@ describe("SchemaInspector · mysql", () => {
 
   it("getPrimaryKey returns composite key columns in order", async () => {
     const exit = await runInspector(inspector =>
-      withConnection(mysqlConfig(), conn =>
-        withTables(conn, tables, () => inspector.getPrimaryKey(conn, orders.name)),
-      ),
+      withConnection(mysqlConfig(), conn => withTables(conn, tables, () => inspector.getPrimaryKey(conn, orders.name)))
     )
     expect(exit._tag).toBe("Success")
     expect(value(exit)).toEqual(["order_id", "item_id"])
@@ -296,10 +277,8 @@ describe("SchemaInspector · mysql", () => {
         const admin = yield* driver.connect(rootConfig())
         yield* driver.query(admin, `CREATE DATABASE IF NOT EXISTS \`${db}\``)
         yield* driver.disconnect(admin)
-        return yield* withConnection({ ...rootConfig(), defaultDatabase: db }, conn =>
-          inspector.listTables(conn),
-        )
-      }),
+        return yield* withConnection({ ...rootConfig(), defaultDatabase: db }, conn => inspector.listTables(conn))
+      })
     )
     expect(exit._tag).toBe("Success")
     expect(value(exit)).toEqual([])
@@ -307,9 +286,7 @@ describe("SchemaInspector · mysql", () => {
 
   it("describeTable on a missing table returns None", async () => {
     const exit = await runInspector(inspector =>
-      withConnection(mysqlConfig(), conn =>
-        withTables(conn, tables, () => inspector.describeTable(conn, "nope_xyz")),
-      ),
+      withConnection(mysqlConfig(), conn => withTables(conn, tables, () => inspector.describeTable(conn, "nope_xyz")))
     )
     expect(exit._tag).toBe("Success")
     expect(Option.isNone(value(exit) as Option.Option<TableInfo>)).toBe(true)
@@ -346,18 +323,14 @@ describe("SchemaInspector · sqlite", () => {
   ]
 
   it("listTables returns [] for an empty database", async () => {
-    const exit = await runInspector(inspector =>
-      withConnection(sqliteConfig(), conn => inspector.listTables(conn)),
-    )
+    const exit = await runInspector(inspector => withConnection(sqliteConfig(), conn => inspector.listTables(conn)))
     expect(exit._tag).toBe("Success")
     expect(value(exit)).toEqual([])
   })
 
   it("listTables returns user tables and never sqlite internals", async () => {
     const exit = await runInspector(inspector =>
-      withConnection(sqliteConfig(), conn =>
-        withTables(conn, tables, () => inspector.listTables(conn)),
-      ),
+      withConnection(sqliteConfig(), conn => withTables(conn, tables, () => inspector.listTables(conn)))
     )
     expect(exit._tag).toBe("Success")
     const tables0 = value(exit)
@@ -368,9 +341,7 @@ describe("SchemaInspector · sqlite", () => {
 
   it("describeTable returns columns with types, nullability and defaults", async () => {
     const exit = await runInspector(inspector =>
-      withConnection(sqliteConfig(), conn =>
-        withTables(conn, tables, () => inspector.describeTable(conn, users.name)),
-      ),
+      withConnection(sqliteConfig(), conn => withTables(conn, tables, () => inspector.describeTable(conn, users.name)))
     )
     expect(exit._tag).toBe("Success")
     const info = value(exit) as Option.Option<TableInfo>
@@ -387,9 +358,7 @@ describe("SchemaInspector · sqlite", () => {
 
   it("getPrimaryKey returns composite key columns in order", async () => {
     const exit = await runInspector(inspector =>
-      withConnection(sqliteConfig(), conn =>
-        withTables(conn, tables, () => inspector.getPrimaryKey(conn, orders.name)),
-      ),
+      withConnection(sqliteConfig(), conn => withTables(conn, tables, () => inspector.getPrimaryKey(conn, orders.name)))
     )
     expect(exit._tag).toBe("Success")
     expect(value(exit)).toEqual(["order_id", "item_id"])
@@ -397,9 +366,7 @@ describe("SchemaInspector · sqlite", () => {
 
   it("describeTable on a missing table returns None", async () => {
     const exit = await runInspector(inspector =>
-      withConnection(sqliteConfig(), conn =>
-        withTables(conn, tables, () => inspector.describeTable(conn, "nope_xyz")),
-      ),
+      withConnection(sqliteConfig(), conn => withTables(conn, tables, () => inspector.describeTable(conn, "nope_xyz")))
     )
     expect(exit._tag).toBe("Success")
     expect(Option.isNone(value(exit) as Option.Option<TableInfo>)).toBe(true)
@@ -407,9 +374,7 @@ describe("SchemaInspector · sqlite", () => {
 
   it("getPrimaryKey on a missing table returns []", async () => {
     const exit = await runInspector(inspector =>
-      withConnection(sqliteConfig(), conn =>
-        withTables(conn, tables, () => inspector.getPrimaryKey(conn, "nope_xyz")),
-      ),
+      withConnection(sqliteConfig(), conn => withTables(conn, tables, () => inspector.getPrimaryKey(conn, "nope_xyz")))
     )
     expect(exit._tag).toBe("Success")
     expect(value(exit)).toEqual([])

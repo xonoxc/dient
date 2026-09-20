@@ -1,14 +1,17 @@
 /**
- * Bottom status bar. One row, always visible, split into three zones:
- *   - the current vim mode (colored per mode),
- *   - the active connection and table with row counts,
- *   - quick key hints on the right.
+ * Bottom status bar. One row, always visible, with a colored zone per section:
+ *   - the current vim mode (in the mode's color),
+ *   - the brand (accent),
+ *   - the active connection, table, and row counts (bright text),
+ *   - quick key hints on the right (muted).
  *
- * Everything is themed through semantic tokens, never hardcoded colors. The
- * total width is budgeted up-front: OpenTUI flex rows do not truncate
- * overflowing text reliably, so each zone is truncated in JS to a fixed cap
- * that always fits 80 columns. When space is tight the location is dropped
- * first — the row count is the part users need most.
+ * No backgrounds are painted: every zone is text colored through the ANSI
+ * palette slots the terminal itself renders, so the strip always follows the
+ * active colorscheme regardless of theme. The total width is budgeted
+ * up-front: OpenTUI flex rows do not truncate overflowing text reliably, so
+ * each zone is truncated in JS to a fixed cap that always fits 80 columns.
+ * When space is tight the location is dropped first — the row count is the
+ * part users need most.
  */
 import { useTheme } from "@/theme-context"
 import type { Engine } from "@/domain"
@@ -31,10 +34,10 @@ const MODE_LABEL: Record<VimMode, string> = {
   visual: "VISUAL",
 }
 
-/* Fixed credits: mode(9) + brand(7) + hints(30) + page padding(2×2) leaves the
+/* Fixed credits: mode(9) + brand(8) + hints(30) + page padding(2×2) leaves the
  * middle. Budget the worst case (80-col terminal, app padded on both sides): */
 const HINTS_MAX = 30
-const MID_MAX = 80 - 4 - 9 - 7 - HINTS_MAX
+const MID_MAX = 80 - 4 - 9 - 8 - HINTS_MAX
 
 export function StatusBar(props: StatusBarProps) {
   const theme = useTheme()
@@ -60,14 +63,12 @@ export function StatusBar(props: StatusBarProps) {
   const hints = (props.hints ?? []).join("  ").slice(0, HINTS_MAX)
 
   return (
-    <box height={1} flexDirection="row" alignItems="center" backgroundColor={c.bgSurface}>
-      <text bg={modeColor} fg={c.bg}>
-        {mode}
-      </text>
-      <text fg={c.accent}> dient </text>
-      {mid ? <text fg={c.textBright}>{mid}</text> : null}
+    <box height={1} flexDirection="row" alignItems="center">
+      <text fg={modeColor}>{mode}</text>
+      <text fg={c.accent}>dient</text>
+      {mid ? <text fg={c.textBright}> {mid}</text> : null}
       <box flexGrow={1} />
-      {hints ? <text fg={c.textMuted}>{hints}</text> : null}
+      {hints ? <text fg={c.textMuted}> {hints}</text> : null}
     </box>
   )
 }

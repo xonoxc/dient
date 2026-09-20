@@ -23,21 +23,23 @@ const quoteIdentifier = (name: string): string | undefined => {
 
 export const listTablesSqlite = (
   driver: DriverService,
-  conn: ActiveConnection,
+  conn: ActiveConnection
 ): Effect.Effect<ReadonlyArray<string>, QueryError> =>
-  driver.query(
-    conn,
-    `SELECT name
+  driver
+    .query(
+      conn,
+      `SELECT name
      FROM sqlite_master
      WHERE type = 'table'
        AND name NOT LIKE 'sqlite_%'
-     ORDER BY name`,
-  ).pipe(Effect.map(result => result.rows.map(row => String(row.name))))
+     ORDER BY name`
+    )
+    .pipe(Effect.map(result => result.rows.map(row => String(row.name))))
 
 export const pragmaColumns = (
   driver: DriverService,
   conn: ActiveConnection,
-  tableName: string,
+  tableName: string
 ): Effect.Effect<ReadonlyArray<TableColumn>, QueryError> => {
   const quoted = quoteIdentifier(tableName)
   if (quoted === undefined) {
@@ -45,20 +47,23 @@ export const pragmaColumns = (
   }
   return driver.query(conn, `PRAGMA table_info(${quoted})`).pipe(
     Effect.map(result =>
-      result.rows.map(row => ({
-        name: String(row.name),
-        type: String(row.type),
-        nullable: row.notnull !== 1,
-        default: row.dflt_value ?? undefined,
-      }) as TableColumn)
-    ),
+      result.rows.map(
+        row =>
+          ({
+            name: String(row.name),
+            type: String(row.type),
+            nullable: row.notnull !== 1,
+            default: row.dflt_value ?? undefined,
+          }) as TableColumn
+      )
+    )
   )
 }
 
 export const getPrimaryKeySqlite = (
   driver: DriverService,
   conn: ActiveConnection,
-  tableName: string,
+  tableName: string
 ): Effect.Effect<ReadonlyArray<string>, QueryError> => {
   const quoted = quoteIdentifier(tableName)
   if (quoted === undefined) {
@@ -70,14 +75,14 @@ export const getPrimaryKeySqlite = (
         .filter(row => Number(row.pk) > 0)
         .sort((a, b) => Number(a.pk) - Number(b.pk))
         .map(row => String(row.name))
-    ),
+    )
   )
 }
 
 export const describeTableSqlite = (
   driver: DriverService,
   conn: ActiveConnection,
-  tableName: string,
+  tableName: string
 ): Effect.Effect<Option.Option<TableInfo>, QueryError> =>
   pragmaColumns(driver, conn, tableName).pipe(
     Effect.flatMap(columns => {
@@ -85,11 +90,9 @@ export const describeTableSqlite = (
         return Effect.succeed(Option.none<TableInfo>())
       }
       return getPrimaryKeySqlite(driver, conn, tableName).pipe(
-        Effect.map(primaryKey =>
-          Option.some<TableInfo>({ name: tableName, columns, primaryKey }),
-        ),
+        Effect.map(primaryKey => Option.some<TableInfo>({ name: tableName, columns, primaryKey }))
       )
-    }),
+    })
   )
 
 export const sqliteQueries = (driver: DriverService): TableQueries => ({

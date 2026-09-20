@@ -47,8 +47,7 @@ export const resolveTestServices = (configPath: string): Promise<TestAppServices
 const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
 
 /** A throwaway file path for the ConfigStore SQLite database. */
-export const freshConfigFile = (): string =>
-  join(mkdtempSync(join(tmpdir(), "dient-config-")), "config.db")
+export const freshConfigFile = (): string => join(mkdtempSync(join(tmpdir(), "dient-config-")), "config.db")
 
 /** A throwaway SQLite data file, pre-filled with one table of rows. */
 export const freshSqliteDataFile = (

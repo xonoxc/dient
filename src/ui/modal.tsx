@@ -54,4 +54,3 @@ export function ModalView() {
     </box>
   )
 }
-

@@ -6,10 +6,7 @@ import { pgQueries } from "@/inspector/pg"
 import { sqliteQueries } from "@/inspector/sqlite"
 import type { SchemaInspectorService } from "@/inspector/types"
 
-export class SchemaInspector extends Context.Tag("SchemaInspector")<
-  SchemaInspector,
-  SchemaInspectorService
->() {}
+export class SchemaInspector extends Context.Tag("SchemaInspector")<SchemaInspector, SchemaInspectorService>() {}
 
 /**
  * `SchemaInspector` facade. Like `DatabaseDriver`, it presents the
@@ -48,6 +45,6 @@ export namespace SchemaInspector {
               ? mysql.getPrimaryKey(conn, tableName)
               : sqlite.getPrimaryKey(conn, tableName),
       }
-    }),
+    })
   )
 }

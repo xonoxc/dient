@@ -16,7 +16,8 @@ export interface TablePage {
   readonly offset: number
 }
 
-export type QueryFailure = import("@/drivers/types").QueryError | import("@/drivers/types").ConnectionError | import("@/config").ConfigError
+export type QueryFailure =
+  import("@/drivers/types").QueryError | import("@/drivers/types").ConnectionError | import("@/config").ConfigError
 
 export interface QueryExecutorService {
   readonly execute: (
@@ -30,7 +31,11 @@ export interface QueryExecutorService {
     table: string,
     page: TablePage
   ) => Effect.Effect<QueryResult, QueryFailure>
-  readonly count: (connectionId: ConnectionId, database: import("@/domain").Database, table: string) => Effect.Effect<number, QueryFailure>
+  readonly count: (
+    connectionId: ConnectionId,
+    database: import("@/domain").Database,
+    table: string
+  ) => Effect.Effect<number, QueryFailure>
 }
 
 export class QueryExecutor extends Context.Tag("QueryExecutor")<QueryExecutor, QueryExecutorService>() {}
@@ -45,18 +50,27 @@ export namespace QueryExecutor {
           manager.query(connectionId, sql, params).pipe(Effect.mapError(e => e as QueryFailure)),
         loadTable: (connectionId, database, table, page) =>
           Effect.gen(function* () {
-            if (!isSafeName(table)) return yield* Effect.fail(new QueryError({ engine: database.engine, message: `unsafe table name: ${table}` }))
+            if (!isSafeName(table))
+              return yield* Effect.fail(
+                new QueryError({ engine: database.engine, message: `unsafe table name: ${table}` })
+              )
             const name = cleanIdentifier(database.engine, table)
             return yield* manager.query(connectionId, `SELECT * FROM ${name} ${limitClause(page.limit, page.offset)}`)
           }),
         count: (connectionId, database, table) =>
           Effect.gen(function* () {
-            if (!isSafeName(table)) return yield* Effect.fail(new QueryError({ engine: database.engine, message: `unsafe table name: ${table}` }))
+            if (!isSafeName(table))
+              return yield* Effect.fail(
+                new QueryError({ engine: database.engine, message: `unsafe table name: ${table}` })
+              )
             const name = cleanIdentifier(database.engine, table)
             const result = yield* manager.query(connectionId, `SELECT COUNT(*) AS total FROM ${name}`)
             const total = result.rows[0]?.["total"]
             const parsed = typeof total === "number" ? total : Number.parseInt(String(total ?? ""), 10)
-            if (Number.isNaN(parsed)) return yield* Effect.fail(new QueryError({ engine: database.engine, message: `COUNT(*) returned an unexpected shape` }))
+            if (Number.isNaN(parsed))
+              return yield* Effect.fail(
+                new QueryError({ engine: database.engine, message: `COUNT(*) returned an unexpected shape` })
+              )
             return parsed
           }),
       }
