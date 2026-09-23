@@ -152,4 +152,34 @@ describe("settings screen", () => {
       setup.renderer.destroy()
     }
   })
+
+test("p opens the new-project prompt and creates a second project", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: "data.db",
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await openSettings(setup)
+      await expandProject(setup)
+
+      await pressKeys(setup, ["p"])
+      await setup.waitForFrame(f => f.includes("new project"))
+      await pressKeys(setup, ["w", "o", "r", "k"])
+      await setup.waitForFrame(f => f.includes("work"))
+
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("project added"))
+      await setup.waitForFrame(f => f.includes("demo") && f.includes("work"))
+
+      const projects = await Effect.runPromise(services.store.listProjects())
+      expect(projects).toHaveLength(2)
+      expect(projects.map(project => project.name).sort()).toEqual(["demo", "work"])
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
 })

@@ -4,7 +4,9 @@
  *
  * The model is deliberately flat: a database *is* its connection. Pressing `a`
  * opens a single-line prompt where you paste a connection string — a
- * `postgres://` / `mysql://` URL or a filesystem path (SQLite). The tail of
+ * `postgres://` / `mysql://` URL or a filesystem path (SQLite). `A` opens the
+ * same style of prompt for a new project (a project is a folder onto which
+ * databases hang). The tail of
  * the string becomes the database's display name, so adding a database is one
  * paste. A credentials form (host/port/user/…) is one key away for people who
  * prefer filling fields, and when a server URL carries no database name the
@@ -94,6 +96,8 @@ export interface UseSettingsResult {
   readonly jump: (position: "first" | "last") => void
   readonly toggle: () => void
   readonly add: () => void
+  /** Open the single-line prompt for creating a new project. */
+  readonly addProject: () => void
   readonly remove: () => void
   readonly rename: () => void
   readonly testConnection: () => void
@@ -252,6 +256,11 @@ export const useSettings = (): UseSettingsResult => {
     draftRef.current = buffer
     setFormState(next)
     setDraftState(buffer)
+  }
+
+  /** Open the single-line prompt for creating a new project. */
+  const addProject = (): void => {
+    openForm({ kind: "project" })
   }
 
   const typeChar = (char: string): void => {
@@ -544,7 +553,7 @@ export const useSettings = (): UseSettingsResult => {
     add: () => {
       const item = items[Math.min(cursor, items.length - 1)]
       if (!item) {
-        openForm({ kind: "project" })
+        addProject()
         return
       }
       const projectId =
@@ -552,11 +561,12 @@ export const useSettings = (): UseSettingsResult => {
           ? (item.refId as ProjectId)
           : ((item.parentId ?? projects[0]?.id ?? null) as ProjectId | null)
       if (!projectId) {
-        openForm({ kind: "project" })
+        addProject()
         return
       }
       openForm({ kind: "connect", projectId, mode: "uri", fieldIndex: 0, values: {}, engine: "postgres" })
     },
+    addProject,
     remove: () => {
       const item = items[Math.min(cursor, items.length - 1)]
       if (!item) return

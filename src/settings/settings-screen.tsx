@@ -2,7 +2,8 @@
  * Settings screen. Renders the config tree (projects → databases) and drives
  * the keyboard forms: `a` opens a single-line connection prompt (paste a
  * `postgres://` / `mysql://` URL or a SQLite path; the tail becomes the name),
- * `u` flips to a credentials form, `r` renames a database, `t` pings it with
+ * same style of prompt for a new project (`p` selects it), `u` flips to a
+ * credentials form, `r` renames a database, `t` pings it with
  * retry, `d` deletes. Focus lives entirely here while this screen is active.
  */
 import { useEffect } from "react"
@@ -31,6 +32,7 @@ export function SettingsScreen() {
     jump,
     toggle,
     add,
+    addProject,
     remove,
     rename,
     testConnection,
@@ -62,7 +64,7 @@ export function SettingsScreen() {
                 : form.kind === "rename"
                   ? ["new name", "Enter save", "Esc cancel"]
                   : ["type name", "Enter save", "Esc cancel"]
-          : ["e explorer", "j/k move", "Enter expand", "a add", "r rename", "t test", "d delete", "? help"],
+          : ["a db", "p project", "e explorer", "j/k move", "Enter expand", "r rename", "t test", "d delete", "? help"],
     })
   }, [session.setStatus, form, field, testing, completions.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -127,6 +129,9 @@ export function SettingsScreen() {
         return
       case "a":
         add()
+        return
+      case "p":
+        addProject()
         return
       case "r":
         rename()
@@ -215,7 +220,7 @@ function FormStatus({
     return (
       <box height={1} flexDirection="row" paddingX={1} overflow="hidden">
         <text fg={c.textMuted}>
-          e explorer · j/k move · Enter expand · a add · r rename · t test · d delete · ? help
+          e explorer  j/k move  Enter  a db  A project  r rename  t test  d delete  ? help
         </text>
       </box>
     )
