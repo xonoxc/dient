@@ -28,35 +28,43 @@ export function Sidebar(props: SidebarProps) {
   if (props.items.length === 0) {
     return (
       <box
-        width={28}
+        width={26}
         height="100%"
-        borderStyle="rounded"
-        borderColor={props.focus ? c.borderFocused : c.border}
-        flexDirection="column"
-        paddingX={1}
+        flexDirection="row"
+        overflow="hidden"
       >
-        <text fg={c.textBright}>PROJECTS</text>
-        <text fg={c.textMuted}>no projects yet — open settings to add one</text>
+        <box flexGrow={1} flexDirection="column" paddingX={1}>
+          <box height={1}>
+            <text fg={c.textMuted}>PROJECTS</text>
+          </box>
+          <text fg={c.textMuted}>no projects yet</text>
+          <text fg={c.textMuted}>open settings to add one</text>
+        </box>
+        <box width={1} height="100%">
+          <text fg={c.border}>{"│\n".repeat(100)}</text>
+        </box>
       </box>
     )
   }
 
   return (
     <box
-      width={28}
+      width={26}
       height="100%"
-      borderStyle="rounded"
-      borderColor={props.focus ? c.borderFocused : c.border}
-      flexDirection="column"
-      paddingX={0}
+      flexDirection="row"
       overflow="hidden"
     >
-      <box paddingX={1}>
-        <text fg={c.textBright}>PROJECTS</text>
+      <box flexGrow={1} flexDirection="column" overflow="hidden">
+        <box height={1} paddingX={1}>
+          <text fg={c.textMuted}>PROJECTS</text>
+        </box>
+        {props.items.map((node, index) => (
+          <SidebarRow key={node.id} node={node} index={index} {...props} />
+        ))}
       </box>
-      {props.items.map((node, index) => (
-        <SidebarRow key={node.id} node={node} index={index} {...props} />
-      ))}
+      <box width={1} height="100%">
+        <text fg={c.border}>{"│\n".repeat(100)}</text>
+      </box>
     </box>
   )
 }
@@ -67,18 +75,22 @@ function SidebarRow({
   cursor,
   statuses,
   activeConnectionId,
+  focus,
 }: {
   node: SidebarNode
   index: number
   cursor: number
   statuses: Readonly<Record<string, ConnectionStatus>>
   activeConnectionId?: ConnectionId
+  focus: boolean
 }) {
   const theme = useTheme()
   const c = theme.colors
   const selected = index === cursor
   const rowFg = selected ? c.textBright : c.text
-  const rowBg = selected ? c.bgHighlight : undefined
+  /* Only paint the selection band when this panel owns focus; otherwise the
+     bright text alone marks the cursor position without a distracting bar. */
+  const rowBg = selected && focus ? c.bgHighlight : undefined
 
   const indent = "  ".repeat(node.depth)
 

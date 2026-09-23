@@ -1,8 +1,8 @@
 /**
  * Bottom status bar. One row, always visible, with a colored zone per section:
- *   - the current vim mode (in the mode's color),
- *   - the brand (accent),
- *   - the active connection, table, and row counts (bright text),
+ *   - the current vim mode (in the mode's ANSI color),
+ *   - the brand (muted),
+ *   - the active connection, table, and row counts (normal text),
  *   - quick key hints on the right (muted).
  *
  * No backgrounds are painted: every zone is text colored through the ANSI
@@ -65,8 +65,8 @@ export function StatusBar(props: StatusBarProps) {
   return (
     <box height={1} flexDirection="row" alignItems="center">
       <text fg={modeColor}>{mode}</text>
-      <text fg={c.accent}>dient</text>
-      {mid ? <text fg={c.textBright}> {mid}</text> : null}
+      <text fg={c.textMuted}>dient</text>
+      {mid ? <text fg={c.text}> {mid}</text> : null}
       <box flexGrow={1} />
       {hints ? <text fg={c.textMuted}> {hints}</text> : null}
     </box>

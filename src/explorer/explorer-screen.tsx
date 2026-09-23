@@ -56,7 +56,7 @@ export function ExplorerScreen() {
   const viewportRows = Math.max(1, height - 2)
   /* The area the grid gets for its columns: terminal width less the app page
      padding, the 28-wide sidebar, the leading cursor glyph, and row padding. */
-  const dataWidth = Math.max(0, width - 2 - 28 - 3)
+  const dataWidth = Math.max(0, width - 2 - 26 - 3)
 
   /* `/` search: a ref-backed buffer so a whole chord can be typed and entered
      inside one frame without dropping keys (mirrors the command line). */
@@ -575,7 +575,7 @@ function TableStrip({
           const current = name === tableName
           return (
             <box key={name} id={current ? `dient-tab-${name}` : undefined} marginRight={1}>
-              <text fg={current ? c.textBright : focus ? c.text : c.textMuted} bg={current ? c.bgHighlight : undefined} truncate>
+              <text fg={current ? c.accent : focus ? c.text : c.textMuted} truncate>
                 {current ? "▶ " : ""}
                 {name.toUpperCase()}
               </text>

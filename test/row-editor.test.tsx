@@ -47,12 +47,7 @@ describe("$EDITOR row editing", () => {
     const services = await resolveTestServices(freshConfigFile())
     await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: dataPath })
     /* The fake editor rewrites the row file: rename alice, clear her email. */
-    setEditor(
-      installEditor(
-        "save.sh",
-        `cat > "$1" <<'DIENTEOF'\nid\tname\temail\n1\tamy\t\nDIENTEOF\n`
-      )
-    )
+    setEditor(installEditor("save.sh", `cat > "$1" <<'DIENTEOF'\nid\tname\temail\n1\tamy\t\nDIENTEOF\n`))
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openUsers(setup)
@@ -61,9 +56,7 @@ describe("$EDITOR row editing", () => {
 
       const db = new SqliteDatabase(dataPath)
       const row = db
-        .query<{ id: number; name: string; email: string | null }, []>(
-          "SELECT id, name, email FROM users WHERE id = 1"
-        )
+        .query<{ id: number; name: string; email: string | null }, []>("SELECT id, name, email FROM users WHERE id = 1")
         .get()!
       db.close()
       expect(row.id).toBe(1)
@@ -135,3 +128,4 @@ describe("$EDITOR row editing", () => {
     }
   })
 })
+

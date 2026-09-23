@@ -30,7 +30,7 @@ export function FinderOverlay({ query, entries, cursor }: FinderOverlayProps) {
         marginTop={1}
         width={70}
         borderStyle="rounded"
-        borderColor={c.borderFocused}
+        borderColor={c.border}
         flexDirection="column"
         paddingX={1}
         paddingY={0}

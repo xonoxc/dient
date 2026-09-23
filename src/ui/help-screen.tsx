@@ -44,15 +44,11 @@ const half = <T,>(items: ReadonlyArray<T>): readonly [ReadonlyArray<T>, Readonly
 }
 
 function BindingCell({ entry }: { entry: readonly [string, string, string] }) {
-  const theme = useTheme()
-  const c = theme.colors
   const [mode, key, action] = entry
   return <text truncate>{`${pad(mode, 9)}${pad(key, 14)}${action}`}</text>
 }
 
 function CommandCell({ entry }: { entry: readonly [string, string] }) {
-  const theme = useTheme()
-  const c = theme.colors
   const [cmd, hint] = entry
   return <text truncate>{`${pad(cmd, 20)}${hint}`}</text>
 }
@@ -84,7 +80,7 @@ export function HelpScreen() {
     >
       <box
         borderStyle="rounded"
-        borderColor={c.borderFocused}
+        borderColor={c.border}
         width={70}
         flexDirection="column"
         paddingX={1}

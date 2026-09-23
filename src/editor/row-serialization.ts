@@ -31,18 +31,26 @@ export const serializeRowToTsv = (
   columns: ReadonlyArray<TableColumn>,
   row: Readonly<Record<string, unknown>>
 ): string => {
-  const header = columns.map(column => quoteCell(column.name)).join("\t")
+  /* Build header and value strings first, then compute widths for alignment. */
+  const headers = columns.map(column => quoteCell(column.name))
   const cells = columns.map(column => {
     const value = row[column.name]
-    /* NULL is an empty, unquoted cell; an empty string is a quoted "" so the
-       two stay distinguishable when the file is parsed back. */
     if (value === null || value === undefined) return ""
     return quoteCell(formatCell(value))
   })
-  return `${header}\n${cells.join("\t")}\n`
+  /* Pad each column to the widest of header/value + 2 gutter so the file
+     looks clean and grid-like when opened in $EDITOR. */
+  const widths = columns.map((_, index) =>
+    Math.max(headers[index]!.length, cells[index]!.length) + 2
+  )
+  const padded = (arr: string[]) =>
+    arr.map((cell, index) => cell.padEnd(widths[index]!)).join("\t")
+  return `${padded([...headers])}\n${padded([...cells])}\n`
 }
 
-/** Parse one TSV line into cells; `null` means an unquoted empty cell (NULL). */
+/** Parse one TSV line into cells; `null` means an unquoted empty cell (NULL).
+ *  Trailing whitespace on unquoted cells is stripped so the column-aligned
+ *  padding from `serializeRowToTsv` does not pollute values. */
 export const parseTsvCells = (line: string): ReadonlyArray<string | null> => {
   const cells: Array<string | null> = []
   let index = 0
@@ -67,8 +75,14 @@ export const parseTsvCells = (line: string): ReadonlyArray<string | null> => {
           index += 1
         }
       }
+      /* Skip post-quote padding: any spaces between the closing "
+         and the next tab are column padding, not value content. */
+      while (index < line.length && line[index] === " ") index += 1
     } else if (ch === "\t") {
-      cells.push(current === "" && !quoted ? null : current)
+      /* Trim trailing whitespace from unquoted cells — it is alignment
+         padding, not meaningful value content. Quoted cells stay as-is. */
+      const trimmed = quoted ? current : current.trimEnd()
+      cells.push(trimmed === "" && !quoted ? null : trimmed)
       current = ""
       quoted = false
       index += 1
@@ -77,7 +91,8 @@ export const parseTsvCells = (line: string): ReadonlyArray<string | null> => {
       index += 1
     }
   }
-  cells.push(current === "" && !quoted ? null : current)
+  const trimmed = quoted ? current : current.trimEnd()
+  cells.push(trimmed === "" && !quoted ? null : trimmed)
   return cells
 }
 

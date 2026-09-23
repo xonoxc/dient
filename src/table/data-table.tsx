@@ -160,14 +160,14 @@ function HeaderRow({
   const c = theme.colors
   return (
     <box flexDirection="row" paddingX={1}>
-      <text fg={c.textBright} width={1}>
+      <text fg={c.text} width={1}>
         {" "}
       </text>
       {columns.map(column => {
         const marker = sort?.column === column.name ? (sort.dir === "asc" ? " ▲" : " ▼") : ""
         return (
           <box key={column.name} width={widthOf(column.name)} overflow="hidden">
-            <text fg={c.textBright} truncate>
+            <text fg={c.accent} truncate>
               {column.name.toUpperCase()}
               {marker}
             </text>

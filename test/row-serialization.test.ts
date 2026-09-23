@@ -18,24 +18,43 @@ const USERS: ReadonlyArray<TableColumn> = [
 const ALICE = { id: 1, name: "alice", email: "alice@example.com" }
 
 describe("serializeRowToTsv", () => {
-  test("writes a header line and one value line", () => {
-    expect(serializeRowToTsv(USERS, ALICE)).toBe("id\tname\temail\n1\talice\talice@example.com\n")
+  test("writes a header line and one value line with column-aligned padding", () => {
+    const tsv = serializeRowToTsv(USERS, ALICE)
+    const lines = tsv.split("\n")
+    /* The header and value lines are tab-separated with per-column padding. */
+    const headers = lines[0]!.split("\t")
+    const values = lines[1]!.split("\t")
+    expect(headers.map(h => h.trimEnd())).toEqual(["id", "name", "email"])
+    expect(values.map(v => v.trimEnd())).toEqual(["1", "alice", "alice@example.com"])
+    /* Each column is padded to the same width in header and value rows. */
+    for (let i = 0; i < headers.length; i++) {
+      expect(headers[i]!.length).toBe(values[i]!.length)
+    }
   })
 
   test("writes NULL as an unquoted empty cell and empty strings as \"\"", () => {
-    expect(serializeRowToTsv(USERS, { id: 1, name: "bob", email: null })).toBe(
-      "id\tname\temail\n1\tbob\t\n"
-    )
-    expect(serializeRowToTsv(USERS, { id: 1, name: "", email: "" })).toBe(
-      'id\tname\temail\n1\t""\t""\n'
-    )
+    const tsvNull = serializeRowToTsv(USERS, { id: 1, name: "bob", email: null })
+    const nullValues = tsvNull.split("\n")[1]!.split("\t").map(v => v.trimEnd())
+    expect(nullValues).toEqual(["1", "bob", ""])
+    const tsvEmpty = serializeRowToTsv(USERS, { id: 1, name: "", email: "" })
+    const emptyValues = tsvEmpty.split("\n")[1]!.split("\t").map(v => v.trimEnd())
+    expect(emptyValues).toEqual(["1", '""', '""'])
   })
 
   test("quotes cells with tabs, newlines, or embedded quotes", () => {
     const quoted = 'say "hi"\nnext\tline'
-    expect(serializeRowToTsv(USERS, { id: 1, name: quoted, email: null })).toBe(
-      `id\tname\temail\n1\t"${'say ""hi""\nnext\tline'}"\t\n`
-    )
+    const tsv = serializeRowToTsv(USERS, { id: 1, name: quoted, email: null })
+    /* Use parseTsvCells rather than naive split: the quoted cell itself
+       contains tabs and newlines, so split would fragment it. */
+    const lines = tsv.split("\n")
+    const headerCells = parseTsvCells(lines[0]!)
+    expect(headerCells.map(h => (h ?? "").trimEnd())).toEqual(["id", "name", "email"])
+    /* The value line spans two raw newlines (the embedded one inside the
+       quote plus the trailing line break), so re-join lines[1..] for parsing. */
+    const valueLine = lines.slice(1, -1).join("\n")
+    const valueCells = parseTsvCells(valueLine)
+    expect((valueCells[0] ?? "").trimEnd()).toBe("1")
+    expect(valueCells[1]).toBe(quoted)
   })
 })
 

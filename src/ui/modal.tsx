@@ -38,7 +38,7 @@ export function ModalView() {
       <box
         flexDirection="column"
         borderStyle="single"
-        borderColor={dialog.options.danger ? c.error : c.borderFocused}
+        borderColor={dialog.options.danger ? c.error : c.border}
         paddingX={1}
         paddingY={0}
         width={60}

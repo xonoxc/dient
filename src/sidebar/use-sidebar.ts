@@ -150,7 +150,6 @@ export const useSidebar = (
   const dataRef = useRef<SidebarData>(EMPTY)
   const expandedRef = useRef<ReadonlySet<string>>(new Set())
   const cursorRef = useRef(0)
-  const loadedRef = useRef(false)
 
   /* In-flight database loads, so `expandProject` fans out requests and the
      caller can await the same promise a chained keyboard press already fired. */
@@ -245,6 +244,7 @@ export const useSidebar = (
   const toggleExpanded = (index: number): void => {
     const node = itemsRef.current[index]
     if (!node || !node.expandable) return
+
     const willExpand = !expandedRef.current.has(node.refId)
     if (willExpand) {
       if (node.kind === "project") void loadDatabases(node.refId as ProjectId)
@@ -261,7 +261,11 @@ export const useSidebar = (
 
   const expandProject = (projectId: ProjectId): Promise<void> => {
     const node = itemsRef.current.find(node => node.kind === "project" && node.refId === projectId)
-    if (!node || expandedRef.current.has(projectId)) return Promise.resolve()
+
+    if (!node || expandedRef.current.has(projectId)) {
+      return Promise.resolve()
+    }
+
     toggleExpanded(itemsRef.current.indexOf(node))
     return loadDatabases(projectId)
   }

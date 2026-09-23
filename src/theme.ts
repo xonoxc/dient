@@ -22,6 +22,11 @@
  * light ones — always relative to the active colorscheme, never a hardcoded gray
  * that ignores the palette. Text on top keeps using the terminal's own contrast
  * slots (`textBright` on dark bands, `text` on light ones).
+ *
+ * Borders are structural, not decorative: `border` and `borderFocused` both
+ * paint the terminal's own muted gray ANSI slot (indexed, so the theme renders
+ * its exact gray), which reads as a thin low-contrast separator on any
+ * colorscheme — never a bright colored outline.
  */
 import { Context, Effect, Layer } from "effect"
 import { RGBA } from "@opentui/core"
@@ -152,7 +157,7 @@ export const makeTheme = (mode: ThemeMode, palette?: TerminalPalette): ThemeServ
     bgSurface: blend(bg, surfaceTint, SURFACE_TINT_AMOUNT),
     bgHighlight: highlight,
     border: slot(8),
-    borderFocused: slot(12),
+    borderFocused: slot(8),
     error: slot(1),
     warning: slot(3),
     success: slot(2),

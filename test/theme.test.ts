@@ -31,14 +31,15 @@ describe("Theme tokens", () => {
     const colors = makeTheme("dark").colors
     expect(colors.textMuted).toMatchObject({ intent: "indexed", slot: 8 })
     expect(colors.textBright).toMatchObject({ intent: "indexed", slot: 15 })
-    expect(colors.border).toMatchObject({ intent: "indexed", slot: 8 })
-    expect(colors.borderFocused).toMatchObject({ intent: "indexed", slot: 12 })
     expect(colors.error).toMatchObject({ intent: "indexed", slot: 1 })
     expect(colors.warning).toMatchObject({ intent: "indexed", slot: 3 })
     expect(colors.success).toMatchObject({ intent: "indexed", slot: 2 })
     expect(colors.info).toMatchObject({ intent: "indexed", slot: 6 })
     expect(colors.accent).toMatchObject({ intent: "indexed", slot: 12 })
     expect(colors.accentMuted).toMatchObject({ intent: "indexed", slot: 4 })
+    /* borders resolve to the terminal's own gray slot */
+    expect(colors.border).toMatchObject({ intent: "indexed", slot: 8 })
+    expect(colors.borderFocused).toMatchObject({ intent: "indexed", slot: 8 })
     /* the highlight is a blend of the terminal bg + fg, not a palette slot */
     expect(colors.bgHighlight.intent).toBe("rgb")
   })
