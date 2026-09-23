@@ -1,9 +1,10 @@
 /**
  * `$EDITOR`-based row editing end to end. Pressing `i` suspends the renderer,
- * hands a TSV of the cursor row to `$EDITOR`, and on exit parses the file back
- * into typed UPDATE params and persists them. These tests substitute a shell
- * script for the editor: one that rewrites the temp file (save), one that does
- * nothing useful (abort), and one that reproduces the file (no changes).
+ * hands a `column: value` file of the cursor row to `$EDITOR`, and on exit
+ * parses the file back into typed UPDATE params and persists them. These tests
+ * substitute a shell script for the editor: one that rewrites the temp file
+ * (save), one that does nothing useful (abort), and one that reproduces the
+ * file (no changes).
  */
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, writeFileSync } from "node:fs"
@@ -47,7 +48,12 @@ describe("$EDITOR row editing", () => {
     const services = await resolveTestServices(freshConfigFile())
     await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: dataPath })
     /* The fake editor rewrites the row file: rename alice, clear her email. */
-    setEditor(installEditor("save.sh", `cat > "$1" <<'DIENTEOF'\nid\tname\temail\n1\tamy\t\nDIENTEOF\n`))
+    setEditor(
+      installEditor(
+        "save.sh",
+        `cat > "$1" <<'DIENTEOF'\nid: 1\nname: amy\nemail: NULL\nDIENTEOF\n`
+      )
+    )
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openUsers(setup)

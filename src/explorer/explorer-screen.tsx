@@ -43,9 +43,9 @@ export function ExplorerScreen() {
   const [editColumn, setEditColumn] = useState(0)
   const editor = useCellEditor()
 
-  /* Whole-row editing runs in the user's `$EDITOR` over a TSV temp file, so
-     nothing in the app can swallow a keystroke or drop an edit. Guard against
-     re-entering while a session is still open. */
+  /* Whole-row editing runs in the user's `$EDITOR` over a `column: value` temp
+     file, so nothing in the app can swallow a keystroke or drop an edit. Guard
+     against re-entering while a session is still open. */
   const renderer = useRenderer()
   const editorBusyRef = useRef(false)
 

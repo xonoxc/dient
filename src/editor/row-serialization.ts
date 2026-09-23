@@ -1,15 +1,28 @@
 /**
- * Row ↔ TSV serialization for `$EDITOR`-based row editing. A row is presented
- * as a two-line, tab-separated table: a header line of column names and one
- * line of values. The user edits it in their editor of choice and the file is
- * parsed back into typed UPDATE parameters.
+ * Row ↔ `$EDITOR` file serialization. A row is presented as one `column: value`
+ * pair per line, generated from the actual table schema, plus a short comment
+ * header explaining the format:
  *
- * Cells follow RFC-4180-style quoting limited to what matters here: a cell
- * containing a tab, newline, or double quote is wrapped in double quotes with
- * embedded quotes doubled. An *unquoted empty* cell means NULL; `""` is an
- * empty string. Values are written the way the table displays them
- * (`formatCell`), so the diff against the original row compares like with
- * like.
+ *   # Edit values using: column: value
+ *   # Use NULL explicitly for SQL NULL.
+ *   # Missing columns are left unchanged.
+ *   id: 3
+ *   user_id: 2
+ *   quantity: 3
+ *
+ * Semantics:
+ *   - `column: value` updates that column to the parsed value.
+ *   - `column: NULL` (case-sensitive) sets it to SQL `NULL`.
+ *   - `""` (exactly two double quotes) sets the empty string.
+ *   - A missing column is left unchanged.
+ *   - `column:` with nothing after the colon is a validation error.
+ *   - Unknown columns and lines without a `:` are validation errors.
+ *   - Only the *first* `:` splits, so values containing `:` stay intact.
+ *   - `#` comment lines and blank lines are ignored.
+ *
+ * The primary key is written (for orientation) but never updated — it keys the
+ * UPDATE. Only columns whose value differs from the original row are reported,
+ * and each is validated against its column type before being parsed.
  */
 import type { TableColumn } from "@/inspector/types"
 import { formatCell } from "@/table/use-table"
@@ -24,76 +37,30 @@ export type RowParseResult =
   | { readonly ok: true; readonly updates: ReadonlyArray<RowValueUpdate> }
   | { readonly ok: false; readonly error: string }
 
-const quoteCell = (value: string): string =>
-  value === "" || /[\t\n\r"]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value
+const COMMENT = "#"
+const NULL_LITERAL = "NULL"
+const EMPTY_LITERAL = '""'
 
-export const serializeRowToTsv = (
+const FORMAT_HEADER: ReadonlyArray<string> = [
+  "# Edit values using: column: value",
+  "# Use NULL explicitly for SQL NULL.",
+  "# Missing columns are left unchanged.",
+]
+
+/** Serialize a row as schema-ordered `column: value` lines with a comment header. */
+export const serializeRowToKeyValue = (
   columns: ReadonlyArray<TableColumn>,
   row: Readonly<Record<string, unknown>>
 ): string => {
-  /* Build header and value strings first, then compute widths for alignment. */
-  const headers = columns.map(column => quoteCell(column.name))
-  const cells = columns.map(column => {
+  const lines = columns.map(column => {
     const value = row[column.name]
-    if (value === null || value === undefined) return ""
-    return quoteCell(formatCell(value))
+    if (value === null || value === undefined) return `${column.name}: ${NULL_LITERAL}`
+    const text = formatCell(value)
+    /* An empty string would otherwise serialize as a bare `column:` line,
+       which the parser rightly rejects as an empty value. */
+    return `${column.name}: ${text === "" ? EMPTY_LITERAL : text}`
   })
-  /* Pad each column to the widest of header/value + 2 gutter so the file
-     looks clean and grid-like when opened in $EDITOR. */
-  const widths = columns.map((_, index) =>
-    Math.max(headers[index]!.length, cells[index]!.length) + 2
-  )
-  const padded = (arr: string[]) =>
-    arr.map((cell, index) => cell.padEnd(widths[index]!)).join("\t")
-  return `${padded([...headers])}\n${padded([...cells])}\n`
-}
-
-/** Parse one TSV line into cells; `null` means an unquoted empty cell (NULL).
- *  Trailing whitespace on unquoted cells is stripped so the column-aligned
- *  padding from `serializeRowToTsv` does not pollute values. */
-export const parseTsvCells = (line: string): ReadonlyArray<string | null> => {
-  const cells: Array<string | null> = []
-  let index = 0
-  let current = ""
-  let quoted = false
-  while (index < line.length) {
-    const ch = line[index]
-    if (ch === '"') {
-      quoted = true
-      index += 1
-      while (index < line.length) {
-        if (line[index] === '"') {
-          if (line[index + 1] === '"') {
-            current += '"'
-            index += 2
-          } else {
-            index += 1
-            break
-          }
-        } else {
-          current += line[index]
-          index += 1
-        }
-      }
-      /* Skip post-quote padding: any spaces between the closing "
-         and the next tab are column padding, not value content. */
-      while (index < line.length && line[index] === " ") index += 1
-    } else if (ch === "\t") {
-      /* Trim trailing whitespace from unquoted cells — it is alignment
-         padding, not meaningful value content. Quoted cells stay as-is. */
-      const trimmed = quoted ? current : current.trimEnd()
-      cells.push(trimmed === "" && !quoted ? null : trimmed)
-      current = ""
-      quoted = false
-      index += 1
-    } else {
-      current += ch
-      index += 1
-    }
-  }
-  const trimmed = quoted ? current : current.trimEnd()
-  cells.push(trimmed === "" && !quoted ? null : trimmed)
-  return cells
+  return [...FORMAT_HEADER, ...lines].join("\n") + "\n"
 }
 
 /** Parse a field's edited text into a query parameter (cell-editor semantics):
@@ -109,40 +76,71 @@ export const parseFieldValue = (column: TableColumn, value: string): unknown => 
 }
 
 /**
- * Parse an edited TSV file back into UPDATE parameters. The primary key is
- * never written (it keys the UPDATE); only columns whose cell differs from the
- * original row are included, and each is validated before being parsed.
+ * Parse an edited `$EDITOR` file back into UPDATE parameters. The primary key
+ * is never written (it keys the UPDATE); only columns whose value differs from
+ * the original row are included, and each is validated before being parsed.
+ * Any malformed line (no `:`, empty value, unknown column, type mismatch) fails
+ * parsing with a line-numbered error and no updates — the database is never
+ * touched on a bad file.
  */
-export const parseRowTsv = (
+export const parseRowKeyValue = (
   content: string,
   columns: ReadonlyArray<TableColumn>,
   primaryKey: ReadonlyArray<string>,
   row: Readonly<Record<string, unknown>>
 ): RowParseResult => {
+  const byName = new Map(columns.map(column => [column.name, column]))
   const lines = content.replace(/\r\n/g, "\n").split("\n")
-  while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop()
-  if (lines.length < 2) {
-    return { ok: false, error: "the editor file needs a header row and one data row" }
-  }
-  const header = parseTsvCells(lines[0]!)
-  const values = parseTsvCells(lines[1]!)
-  const updates: RowValueUpdate[] = []
-  for (const column of columns) {
-    if (primaryKey.includes(column.name)) continue
-    const index = header.indexOf(column.name)
-    if (index < 0 || index >= values.length) continue
-    const edited = values[index]
+  const pending = new Map<string, RowValueUpdate>()
+
+  for (let index = 0; index < lines.length; index++) {
+    const lineNo = index + 1
+    const line = lines[index]!.trim()
+    if (line === "" || line.startsWith(COMMENT)) continue
+
+    const colon = line.indexOf(":")
+    if (colon < 0) {
+      return { ok: false, error: `line ${lineNo}: expected "column: value"` }
+    }
+
+    const key = line.slice(0, colon).trim()
+    const rawValue = line.slice(colon + 1).trim()
+    if (rawValue === "") {
+      return { ok: false, error: `line ${lineNo}: empty value for column "${key}"` }
+    }
+    if (key === "") {
+      return { ok: false, error: `line ${lineNo}: missing column name` }
+    }
+
+    const column = byName.get(key)
+    if (!column) {
+      return { ok: false, error: `line ${lineNo}: unknown column "${key}"` }
+    }
+    /* The primary key never changes; it only keys the UPDATE. */
+    if (primaryKey.includes(key)) continue
+
     const original = row[column.name]
     const originalText = original === null || original === undefined ? null : formatCell(original)
-    if (edited === null) {
-      if (originalText === null) continue
-    } else if (originalText !== null && edited === originalText) {
+
+    if (rawValue === NULL_LITERAL) {
+      if (column.nullable === false) {
+        return { ok: false, error: `line ${lineNo}: column "${key}" cannot be NULL` }
+      }
+      if (originalText !== null) pending.set(key, { column: key, param: null })
       continue
     }
-    const value = edited ?? ""
-    const validation = validateCellValue(column, value)
-    if (validation) return { ok: false, error: validation }
-    updates.push({ column: column.name, param: parseFieldValue(column, value) })
+
+    if (rawValue === EMPTY_LITERAL) {
+      if (originalText !== "") pending.set(key, { column: key, param: "" })
+      continue
+    }
+
+    if (originalText !== null && rawValue === originalText) continue
+
+    const validation = validateCellValue(column, rawValue)
+    if (validation) return { ok: false, error: `line ${lineNo}: ${validation}` }
+    pending.set(key, { column: key, param: parseFieldValue(column, rawValue) })
   }
-  return { ok: true, updates }
+
+  return { ok: true, updates: [...pending.values()] }
 }
