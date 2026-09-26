@@ -97,7 +97,12 @@ export namespace ConnectionManager {
              hooks (`Effect.runPromise`) that live outside any scope. */
           const active = yield* Effect.scoped(driver.connect(config))
           yield* Ref.update(slots, s => {
-            s.active.set(id, { id, connection: found.connection, database: found.database, active })
+            s.active.set(id, {
+              id,
+              connection: found.connection,
+              database: found.database,
+              active,
+            })
             s.failed.delete(id)
             return s
           })

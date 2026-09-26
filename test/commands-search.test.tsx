@@ -75,7 +75,7 @@ describe("command line", () => {
     try {
       await connect(setup)
       await pressKeys(setup, [":", "e", " ", "u", "s", "e", "r", "s", "RETURN"])
-      await setup.waitForFrame(f => f.includes("▶ USERS") && f.includes("alice"))
+      await setup.waitForFrame(f => f.includes("▌ USERS") && f.includes("alice"))
       expect(setup.captureCharFrame()).toContain("alice@example.com")
     } finally {
       setup.renderer.destroy()
@@ -166,14 +166,14 @@ describe("sidebar table browser", () => {
       await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
       /* Enter on the database row both connects and expands its table list */
       await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(
-        f => f.includes("●") && f.includes("▸ users") && f.includes("▸ orders") && f.includes("USERS")
-      )
+      /* The sidebar is where the full table list lives; the top bar only shows
+         whichever table is open, so assert on the rows, not the strip. */
+      await setup.waitForFrame(f => f.includes("●") && f.includes("▸ users") && f.includes("▸ orders"))
 
       /* the sidebar is focused and the cursor is on the database → one down
          = the first table (orders sorts before users) → Enter opens that table */
       await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("▶ ORDERS"))
+      await setup.waitForFrame(f => f.includes("▌ ORDERS"))
       const frame = setup.captureCharFrame()
       expect(frame).not.toContain("alice")
     } finally {

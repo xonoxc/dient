@@ -81,7 +81,17 @@ export interface SeededProject {
 /** Seed a project → database → connection chain in the config store. */
 export const seedProject = (
   store: ConfigStoreService,
-  input: { name: string; database: string; engine: Engine; filename?: string } = {
+  input: {
+    name: string
+    database: string
+    engine: Engine
+    filename?: string
+    host?: string
+    port?: number
+    user?: string
+    password?: string
+    defaultDatabase?: string
+  } = {
     name: "demo",
     database: "main",
     engine: "sqlite",
@@ -99,6 +109,11 @@ export const seedProject = (
       const connection = yield* store.createConnection({
         databaseId: database.id,
         filename: input.filename,
+        host: input.host,
+        port: input.port,
+        user: input.user,
+        password: input.password,
+        defaultDatabase: input.defaultDatabase,
       })
       return { project, database, connection }
     })

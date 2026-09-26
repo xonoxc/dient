@@ -17,6 +17,7 @@ import { join } from "node:path"
 import type { TableColumn } from "@/inspector/types"
 import type { RowValueUpdate } from "@/editor/row-serialization"
 import { parseRowKeyValue, serializeRowToKeyValue } from "@/editor/row-serialization"
+import { describeError } from "@/errors/describe"
 
 /** The suspend/resume surface the editor session needs from the renderer. */
 export interface EditorRenderer {
@@ -60,7 +61,7 @@ export const editRowInEditor = (options: EditRowOptions): void => {
     writeFileSync(file, serializeRowToKeyValue(columns, row), "utf8")
     wrote = true
   } catch (cause) {
-    callbacks.error(`could not stage the row for editing: ${String(cause)}`)
+    callbacks.error(`could not stage the row for editing: ${describeError(cause)}`)
     return
   }
 
@@ -107,7 +108,7 @@ export const editRowInEditor = (options: EditRowOptions): void => {
       edited = readFileSync(file, "utf8")
     } catch (cause) {
       clean()
-      callbacks.error(`could not read the edited file: ${String(cause)}`)
+      callbacks.error(`could not read the edited file: ${describeError(cause)}`)
       callbacks.done()
       return
     }

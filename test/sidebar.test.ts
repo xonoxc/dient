@@ -7,6 +7,7 @@
 import { describe, expect, test } from "bun:test"
 import { Schema as S } from "effect"
 import { buildTree, selectedConnection, type SidebarData } from "@/sidebar/use-sidebar"
+import { fitLabel, SIDEBAR_WIDTH } from "@/sidebar/fit-label"
 import { ConnectionId, DatabaseId, ProjectId, type Connection, type Database, type Project } from "@/domain"
 
 const project = (id: string, name: string): Project => ({ id: S.decodeSync(ProjectId)(id), name })
@@ -176,5 +177,56 @@ describe("selectedConnection", () => {
       new Set()
     )
     expect(selectedConnection(nodes, 9)).toBeNull()
+  })
+})
+
+describe("fitLabel", () => {
+  /* A row whose label overran the panel used to render as *nothing* — not a
+     clipped prefix, an empty row. Real schemas are full of long names, so the
+     budget and the ellipsis are part of the contract. */
+  test("leaves a label that fits alone", () => {
+    expect(fitLabel("Games", 6)).toBe("Games")
+  })
+
+  test("clips a label that overruns the panel instead of dropping the row", () => {
+    const clipped = fitLabel("ProviderRestrictedCountry", 6)
+    expect(clipped.endsWith("…")).toBe(true)
+    /* The real contract, measured rather than assumed: a row whose content
+       reaches the panel edge is measured at zero columns and draws nothing at
+       all. Content must stay 2 columns short of the 29 usable columns. */
+    expect(6 + clipped.length).toBeLessThanOrEqual(SIDEBAR_WIDTH - 5)
+  })
+
+  /* The budget is the panel minus the 1-cell divider, 2 cells of row padding
+     and the 2-cell safety margin, so these widths leave 2, 1, 0 and negative
+     cells of label room respectively. */
+  test("keeps one character plus the ellipsis when only two cells remain", () => {
+    expect(fitLabel("Anything", 0, 7)).toBe("A…")
+  })
+
+  test("degenerates to an ellipsis rather than a negative slice", () => {
+    expect(fitLabel("Anything", 0, 6)).toBe("…")
+    expect(fitLabel("Anything", 0, 5)).toBe("")
+    expect(fitLabel("Anything", 0, 1)).toBe("")
+  })
+
+  /* `ProviderRestrictedCountry` is 25 characters and the depth-2 budget is 23.
+     It used to be returned whole, which filled the row and blanked it. */
+  test("the deepest table in a real schema is clipped short of the panel edge", () => {
+    const clipped = fitLabel("ProviderRestrictedCountry", 4)
+    expect(clipped).toBe("ProviderRestrictedCoun…")
+    /* 2 indent + "▸ " + label, and still 2 columns clear of the edge. */
+    expect(4 + clipped.length).toBeLessThanOrEqual(SIDEBAR_WIDTH - 5)
+  })
+
+  /* Every length must stay drawn: a row either shows the name or shows a
+     clipped prefix with an ellipsis, never a silently blank line. */
+  test("no label length can produce a row wider than the safe content width", () => {
+    for (let length = 1; length <= 60; length++) {
+      const clipped = fitLabel("n".repeat(length), 4)
+      expect(4 + clipped.length).toBeLessThanOrEqual(SIDEBAR_WIDTH - 5)
+      if (length <= 23) expect(clipped).toBe("n".repeat(length))
+      else expect(clipped.endsWith("…")).toBe(true)
+    }
   })
 })

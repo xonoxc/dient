@@ -39,7 +39,7 @@ async function openUsers(setup: Awaited<ReturnType<typeof renderApp>>) {
   await pressKeys(setup, ["RETURN"])
   await setup.waitForFrame(f => f.includes("○ main"))
   await pressKeys(setup, ["j", "RETURN"])
-  await setup.waitForFrame(f => f.includes("▶ USERS") && f.includes("alice"))
+  await setup.waitForFrame(f => f.includes("▌ USERS") && f.includes("alice"))
 }
 
 describe("$EDITOR row editing", () => {
@@ -126,7 +126,7 @@ describe("$EDITOR row editing", () => {
       await pressKeys(setup, ["RETURN"])
       await setup.waitForFrame(f => f.includes("○ main"))
       await pressKeys(setup, ["j", "RETURN"])
-      await setup.waitForFrame(f => f.includes("▶ NOTES") && f.includes("hello"))
+      await setup.waitForFrame(f => f.includes("▌ NOTES") && f.includes("hello"))
       await pressKeys(setup, ["i"])
       await setup.waitForFrame(f => f.includes("no primary key"))
     } finally {
@@ -135,3 +135,53 @@ describe("$EDITOR row editing", () => {
   })
 })
 
+
+describe("editing a paged table", () => {
+  /** A table spanning several pages, so an edit can be made off page 1. */
+  function pagedGames(rows: number): string {
+    const path = join(mkdtempSync(join(tmpdir(), "dient-page-edit-")), "games.db")
+    const db = new SqliteDatabase(path)
+    db.run("CREATE TABLE games (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+    for (let i = 1; i <= rows; i++) db.run("INSERT INTO games (id, name) VALUES (?, ?)", [i, `game-${i}`])
+    db.close()
+    return path
+  }
+
+  /* Saving used to call `openTable`, which resets the offset to 0. Once rows
+     were paged in the database that meant an edit on page 3 saved correctly and
+     then threw the reader back to page 1, losing their place. */
+  test("saving a row on page 3 keeps the reader on page 3", async () => {
+    const filename = pagedGames(450)
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename })
+    setEditor(installEditor("page-save.sh", `cat > "$1" <<'DIENTEOF'\nid: 402\nname: renamed-402\nDIENTEOF\n`))
+
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("○ main"))
+      await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(f => f.includes("▌ GAMES") && f.includes("1-200 of 450"))
+
+      /* Page to page 3 (rows 401-450) and move onto row id 402. */
+      await pressKeys(setup, ["l"])
+      await pressKeys(setup, ["CTRL+f", "CTRL+f"])
+      await setup.waitForFrame(f => f.includes("401-450 of 450"))
+      await pressKeys(setup, ["j"])
+
+      await pressKeys(setup, ["i"])
+      await waitForFrameDriven(setup, f => f.includes("saved games."))
+
+      /* The edit landed on the right row... */
+      const db = new SqliteDatabase(filename)
+      const row = db.query<{ name: string }, []>("SELECT name FROM games WHERE id = 402").get()!
+      db.close()
+      expect(row.name).toBe("renamed-402")
+
+      /* ...and the reader is still looking at it. */
+      await setup.waitForFrame(f => f.includes("401-450 of 450") && f.includes("renamed-402"))
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+})

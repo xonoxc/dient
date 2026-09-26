@@ -8,7 +8,12 @@ import { describe, expect, test } from "bun:test"
 import App from "@/app"
 import { makeTheme } from "@/theme"
 import { pressKeys, renderApp } from "@test/support/render-ui"
+import { Database as SqliteDatabase } from "bun:sqlite"
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { freshConfigFile, freshSqliteDataFile, resolveTestServices, seedProject } from "@test/support/services-fixture"
+import { fitLabel } from "@/sidebar/fit-label"
 
 /* Open the tree down to the database row (project → database/connection). */
 async function expandToDatabase(setup: Awaited<ReturnType<typeof renderApp>>) {
@@ -121,6 +126,68 @@ describe("sidebar tree", () => {
       const frame = setup.captureCharFrame()
       expect(frame).toContain("PROJECTS")
       expect(frame).toContain("no projects yet")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+})
+
+describe("sidebar labels", () => {
+  /* Reproduces a real schema: names long enough to overrun the panel used to
+     render as blank rows, which read as a glitch rather than as a long name. */
+  const LONG_TABLES = [
+    "Aggregators",
+    "Category",
+    "GameCategory",
+    "GameSessions",
+    "Games",
+    "ProviderRestrictedCountry",
+    "ProviderUserMapping",
+    "Providers",
+    "SequelizeMeta",
+    "UserFavouriteGames",
+    "UserRecentGames",
+  ]
+
+  test("a table name that exactly fills the row is still drawn", async () => {
+    /* `ProviderRestrictedCountry` is 25 characters, which was exactly the
+       label budget for a depth-2 table. A row that fills the panel is measured
+       at zero columns and drew *nothing* — the name opened its table correctly
+       but showed as a blank sidebar row. Asserting only that `fitLabel`
+       returned a non-empty string missed this entirely: the function handed
+       back the full 25 characters and the renderer threw them away. This
+       checks the rendered panel. */
+    const path = join(mkdtempSync(join(tmpdir(), "dient-sidebar-")), "game.db")
+    const db = new SqliteDatabase(path)
+    for (const name of LONG_TABLES) db.run(`CREATE TABLE "${name}" (id INTEGER PRIMARY KEY)`)
+    db.close()
+
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, { name: "work", database: "game_service", engine: "sqlite", filename: path })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("▾ work"))
+      /* Connecting lists the tables as sidebar leaves. */
+      await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(f => f.includes("game_service") && f.includes("Aggregators"))
+
+      const sidebarColumn = setup
+        .captureCharFrame()
+        .split("\n")
+        .map(line => line.slice(0, 32))
+        .join("\n")
+
+      /* Every name is either shown in full or clipped with a visible ellipsis —
+         never a row that is simply blank. */
+      for (const name of LONG_TABLES) {
+        const row = sidebarColumn.split("\n").find(line => line.includes(name.slice(0, 12)))
+        expect(row).toBeDefined()
+        expect(row!.trim()).not.toBe("▸")
+        expect(row).toContain("▸ ")
+      }
+      /* The name that started this is visibly clipped, not dropped. */
+      expect(sidebarColumn).toContain("ProviderRestricted")
     } finally {
       setup.renderer.destroy()
     }

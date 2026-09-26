@@ -4,6 +4,7 @@ import { Context, Effect, Exit, Layer, Redacted, Scope } from "effect"
 import type { MysqlConnectionConfig } from "@/domain"
 import type { ActiveConnection, ColumnInfo, DriverService, QueryResult } from "@/drivers/types"
 import { ConnectionError, QueryError } from "@/drivers/types"
+import { describeError } from "@/errors/describe"
 
 const ENGINE = "mysql" as const
 
@@ -34,7 +35,7 @@ export const connectMysql = (
         cause =>
           new ConnectionError({
             engine: ENGINE,
-            message: String(cause),
+            message: describeError(cause),
             cause,
           })
       )
@@ -56,7 +57,7 @@ export const queryMysql = (
   Effect.gen(function* () {
     const rows = yield* (conn._client as MysqlClient.MysqlClient)
       .unsafe<Record<string, unknown>>(sql, params)
-      .pipe(Effect.mapError(cause => new QueryError({ engine: ENGINE, message: String(cause), cause })))
+      .pipe(Effect.mapError(cause => new QueryError({ engine: ENGINE, message: describeError(cause), cause })))
 
     return toQueryResult(rows)
   })

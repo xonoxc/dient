@@ -25,6 +25,9 @@ export interface StatusBarProps {
   readonly table?: string
   readonly rows?: number
   readonly total?: number
+  /** 1-based index of the first row on screen. Set when rows are paged in the
+      database, so the count reads as a range rather than a total. */
+  readonly rowStart?: number
   readonly hints?: ReadonlyArray<string>
 }
 
@@ -48,11 +51,15 @@ export function StatusBar(props: StatusBarProps) {
   const location = [props.connection, props.database].filter(Boolean).join("@")
   const locationText = location ? (props.engine ? `${location} · ${props.engine}` : location) : ""
   const tableInfo = props.table ? ` ${props.table}` : ""
+  /* Paged: name the window, because "200 / 378" read as a progress figure and
+     gave no hint that Ctrl+f could reach the rest. */
   const rowInfo =
     props.rows !== undefined
-      ? props.total !== undefined && props.total > props.rows
-        ? ` ${props.rows} / ${props.total} rows`
-        : ` ${props.rows} row${props.rows === 1 ? "" : "s"}`
+      ? props.rowStart !== undefined && props.total !== undefined && props.total > props.rows
+        ? ` ${props.rowStart}-${props.rowStart + props.rows - 1} of ${props.total}`
+        : props.total !== undefined && props.total > props.rows
+          ? ` ${props.rows} / ${props.total} rows`
+          : ` ${props.rows} row${props.rows === 1 ? "" : "s"}`
       : ""
 
   /* Keep table/rows (rightmost) whole; drop location only if it does not fit. */

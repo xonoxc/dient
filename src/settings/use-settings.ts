@@ -24,6 +24,8 @@ import { completePath, pathCandidates } from "@/fs/path-complete"
 import { parseConnectionString, type ConnectionString } from "@/connection/parse"
 import type { CreateConnectionInput } from "@/config"
 import type { Connection, ConnectionId, Database, DatabaseId, Engine, Project, ProjectId } from "@/domain"
+import { describeError } from "@/errors/describe"
+import { runService } from "@/effect/run"
 
 export type SettingsKind = "project" | "database"
 
@@ -217,18 +219,18 @@ export const useSettings = (): UseSettingsResult => {
       setFormState(null)
       setDraftState("")
     }
-    void Effect.runPromise(configStore.listProjects())
+    void runService(configStore.listProjects())
       .then(async rows => {
         setProjects(rows)
         for (const project of rows) {
-          const dbRows = (await Effect.runPromise(configStore.listDatabases(project.id)).catch(() => null)) ?? []
+          const dbRows = (await runService(configStore.listDatabases(project.id)).catch(() => null)) ?? []
           setDatabases(current => {
             const next = new Map(current)
             next.set(project.id, dbRows)
             return next
           })
           for (const database of dbRows) {
-            const connRows = (await Effect.runPromise(configStore.listConnections(database.id)).catch(() => null)) ?? []
+            const connRows = (await runService(configStore.listConnections(database.id)).catch(() => null)) ?? []
             setConnections(current => {
               const next = new Map(current)
               next.set(database.id, connRows)
@@ -389,7 +391,7 @@ export const useSettings = (): UseSettingsResult => {
     engine: Engine,
     params: Partial<Omit<CreateConnectionInput, "databaseId">>
   ): Promise<void> =>
-    Effect.runPromise(
+    runService(
       Effect.gen(function* () {
         const database = yield* configStore.createDatabase({ projectId, name, engine })
         yield* configStore.createConnection({ databaseId: database.id, ...params })
@@ -400,7 +402,7 @@ export const useSettings = (): UseSettingsResult => {
     })
 
   const nameTaken = (projectId: ProjectId, name: string): Promise<boolean> =>
-    Effect.runPromise(configStore.listDatabases(projectId)).then(rows => rows.some(row => row.name === name))
+    runService(configStore.listDatabases(projectId)).then(rows => rows.some(row => row.name === name))
 
   const submitConnectionForm = (form: Extract<SettingsForm, { kind: "connect" }>): void => {
     const finish = (): void => {
@@ -425,7 +427,7 @@ export const useSettings = (): UseSettingsResult => {
           finish()
         })().catch(cause => {
           errorLog.append("settings.addConnection", cause)
-          toasts.push("error", `failed to add: ${String(cause)}`)
+          toasts.push("error", `failed to add: ${describeError(cause)}`)
         })
         return
       }
@@ -452,7 +454,7 @@ export const useSettings = (): UseSettingsResult => {
         finish()
       })().catch(cause => {
         errorLog.append("settings.addConnection", cause)
-        toasts.push("error", `failed to add: ${String(cause)}`)
+        toasts.push("error", `failed to add: ${describeError(cause)}`)
       })
       return
     }
@@ -477,7 +479,7 @@ export const useSettings = (): UseSettingsResult => {
         finish()
       })().catch(cause => {
         errorLog.append("settings.addConnection", cause)
-        toasts.push("error", `failed to add: ${String(cause)}`)
+        toasts.push("error", `failed to add: ${describeError(cause)}`)
       })
       return
     }
@@ -505,7 +507,7 @@ export const useSettings = (): UseSettingsResult => {
       finish()
     })().catch(cause => {
       errorLog.append("settings.addConnection", cause)
-      toasts.push("error", `failed to add: ${String(cause)}`)
+      toasts.push("error", `failed to add: ${describeError(cause)}`)
     })
   }
 
@@ -532,7 +534,7 @@ export const useSettings = (): UseSettingsResult => {
       refresh()
     })().catch(cause => {
       errorLog.append("settings.addConnection", cause)
-      toasts.push("error", `failed to add: ${String(cause)}`)
+      toasts.push("error", `failed to add: ${describeError(cause)}`)
     })
   }
 
@@ -557,7 +559,7 @@ export const useSettings = (): UseSettingsResult => {
     testingRef.current = label
     setTesting(label)
     toasts.push("info", `testing ${label}…`)
-    void Effect.runPromise(connectionManager.pingConnection(database, connection))
+    void runService(connectionManager.pingConnection(database, connection))
       .then(ok => {
         testingRef.current = null
         setTesting(null)
@@ -568,7 +570,7 @@ export const useSettings = (): UseSettingsResult => {
         testingRef.current = null
         setTesting(null)
         errorLog.append("settings.testConnection", cause)
-        toasts.push("error", `${label} unreachable: ${String(cause)}`)
+        toasts.push("error", `${label} unreachable: ${describeError(cause)}`)
       })
   }
 
@@ -675,26 +677,26 @@ export const useSettings = (): UseSettingsResult => {
           })
           .then(ok => {
             if (!ok) return
-            void Effect.runPromise(configStore.deleteDatabase(item.refId as DatabaseId))
+            void runService(configStore.deleteDatabase(item.refId as DatabaseId))
               .then(() => {
                 toasts.push("success", "database deleted")
                 refresh()
               })
               .catch(cause => {
                 errorLog.append("settings.deleteDatabase", cause)
-                toasts.push("error", `failed to delete: ${String(cause)}`)
+                toasts.push("error", `failed to delete: ${describeError(cause)}`)
               })
           })
         return
       }
-      void Effect.runPromise(configStore.deleteProject(item.refId as ProjectId))
+      void runService(configStore.deleteProject(item.refId as ProjectId))
         .then(() => {
           toasts.push("success", "project deleted")
           refresh()
         })
         .catch(cause => {
           errorLog.append("settings.deleteProject", cause)
-          toasts.push("error", `failed to delete: ${String(cause)}`)
+          toasts.push("error", `failed to delete: ${describeError(cause)}`)
         })
     },
     rename: () => {
@@ -723,7 +725,7 @@ export const useSettings = (): UseSettingsResult => {
           toasts.push("error", "a name is required")
           return
         }
-        void Effect.runPromise(configStore.updateDatabase(current.databaseId, { name }))
+        void runService(configStore.updateDatabase(current.databaseId, { name }))
           .then(() => {
             toasts.push("success", `renamed to ${name}`)
             openForm(null)
@@ -731,7 +733,7 @@ export const useSettings = (): UseSettingsResult => {
           })
           .catch(cause => {
             errorLog.append("settings.rename", cause)
-            toasts.push("error", `rename failed: ${String(cause)}`)
+            toasts.push("error", `rename failed: ${describeError(cause)}`)
           })
         return
       }
@@ -740,14 +742,14 @@ export const useSettings = (): UseSettingsResult => {
         toasts.push("error", "a name is required")
         return
       }
-      void Effect.runPromise(configStore.createProject({ name }))
+      void runService(configStore.createProject({ name }))
         .then(() => {
           toasts.push("success", "project added")
           openForm(null)
           refresh()
         })
         .catch(cause => {
-          toasts.push("error", `failed to add project: ${String(cause)}`)
+          toasts.push("error", `failed to add project: ${describeError(cause)}`)
           openForm(null)
           refresh()
         })

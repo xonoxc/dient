@@ -216,6 +216,7 @@ function Shell() {
           table={status.table}
           rows={status.rows}
           total={status.total}
+          rowStart={status.rowStart}
           hints={status.hints}
         />
       </box>

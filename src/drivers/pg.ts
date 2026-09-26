@@ -4,6 +4,7 @@ import { Context, Effect, Exit, Layer, Redacted, Scope } from "effect"
 import type { PostgresConnectionConfig } from "@/domain"
 import type { ActiveConnection, ColumnInfo, DriverService, QueryResult } from "@/drivers/types"
 import { ConnectionError, QueryError } from "@/drivers/types"
+import { describeError } from "@/errors/describe"
 
 const ENGINE = "postgres" as const
 
@@ -40,7 +41,7 @@ export const connectPg = (
         cause =>
           new ConnectionError({
             engine: ENGINE,
-            message: String(cause),
+            message: describeError(cause),
             cause,
           })
       )
@@ -115,7 +116,7 @@ export const queryPg = (
         cause =>
           new QueryError({
             engine: ENGINE,
-            message: String(cause),
+            message: describeError(cause),
             cause,
           })
       )

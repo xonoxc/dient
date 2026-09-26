@@ -9,6 +9,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Effect, Option } from "effect"
+import { describeError } from "@/errors/describe"
+import { runService } from "@/effect/run"
 import { useDialog, useServices, useToasts } from "@/app-context"
 import { useSidebar, type SidebarNode, type TablesByConnection } from "@/sidebar/use-sidebar"
 import type { ConnectionStatus } from "@/connection/connection-manager"
@@ -40,6 +42,18 @@ export interface UseExplorerResult {
   readonly table: UseTableResult
   readonly tableInfo: TableInfo | null
   readonly total: number | null
+  /** Row offset of the page currently loaded. */
+  readonly offset: number
+  /** How many rows a page holds. */
+  readonly pageSize: number
+  /** True when another page exists after this one. */
+  readonly hasNextPage: boolean
+  /** True when a page exists before this one. */
+  readonly hasPrevPage: boolean
+  /** Load the next page of rows. No-op on the last page. */
+  readonly nextPage: () => void
+  /** Load the previous page of rows. No-op on the first page. */
+  readonly prevPage: () => void
   readonly search: string
   readonly setSearch: (query: string) => void
   readonly searchCount: number
@@ -58,7 +72,16 @@ export interface UseExplorerResult {
 
 const PAGE_SIZE = 200
 
-const runService = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
+/**
+ * Name the thing that failed to connect.
+ *
+ * The old title paired `target.label` with `target.database?.name`, but a
+ * sidebar connection row is *labelled* with its database and a `Connection`
+ * carries no name of its own, so the two were always identical and every
+ * failure read `Connection "game_service · game_service" failed`. One
+ * name is the whole truth here.
+ */
+const describeTarget = (target: SidebarNode): string => target.database?.name ?? target.label
 
 /** Case-insensitive substring match across every cell (formatted like the
     table renders them), so `/alice` finds "alice" even in `alice@example.com`. */
@@ -82,6 +105,14 @@ export const useExplorer = (): UseExplorerResult => {
   const [columns, setColumns] = useState<ReadonlyArray<ColumnInfo>>([])
   const [tableInfo, setTableInfo] = useState<TableInfo | null>(null)
   const [total, setTotal] = useState<number | null>(null)
+  /* Rows are paged in the database, not in the view: one `SELECT ... LIMIT n
+     OFFSET m` per page, so opening a table on a large production database never
+     pulls the whole table into memory. */
+  const [offset, setOffset] = useState(0)
+  /* The page buttons read this rather than `offset`. Two presses inside one
+     render see the same `offset` closure, so paging from state made a fast
+     double Ctrl+f load page 2 twice and stall. */
+  const offsetRef = useRef(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState("")
@@ -133,17 +164,22 @@ export const useExplorer = (): UseExplorerResult => {
     toasts.push("error", message)
   }
 
-  const openTable = (name: string) => {
+  /** Load one page of `name` at `pageOffset`. The count is only re-read when
+      `withCount` is set: paging does not change it, and re-counting a large
+      table on every page turn is exactly the load we are trying to avoid. */
+  const loadPage = (name: string, pageOffset: number, withCount: boolean): void => {
     const explorer = activeExplorer.current
     if (!explorer) return
     const gen = ++generation.current
     setLoading(true)
     setError(null)
+    offsetRef.current = pageOffset
+    setOffset(pageOffset)
 
     runService(
       queryExecutor.loadTable(explorer.id, explorer.database, name, {
         limit: PAGE_SIZE,
-        offset: 0,
+        offset: pageOffset,
       })
     )
       .then(result => {
@@ -152,11 +188,12 @@ export const useExplorer = (): UseExplorerResult => {
         setRows(result.rows)
         setTableName(name)
         setLoading(false)
+        if (!withCount) return
         return runService(queryExecutor.count(explorer.id, explorer.database, name))
       })
       .then(count => {
         if (gen !== generation.current) return
-        setTotal(count ?? null)
+        if (count !== undefined) setTotal(count ?? null)
         return runService(schemaInspector.describeTable(activeHandle.current!, name))
       })
       .then(info => {
@@ -166,8 +203,34 @@ export const useExplorer = (): UseExplorerResult => {
       .catch(cause => {
         if (gen !== generation.current) return
         setLoading(false)
-        reportError("explorer.openTable", String(cause), cause)
+        reportError("explorer.openTable", describeError(cause), cause)
       })
+  }
+
+  /** Opening a table always starts at the first page. */
+  const openTable = (name: string): void => {
+    /* A new table invalidates the old page and any active filter, which only
+       ever matched rows on the page that was loaded. */
+    setSearch("")
+    loadPage(name, 0, true)
+  }
+
+  const hasNextPage = total !== null && offset + rows.length < total
+  const hasPrevPage = offset > 0
+
+  const nextPage = (): void => {
+    const from = offsetRef.current
+    if (!tableName || total === null || from + PAGE_SIZE >= total) return
+    /* Filter matches are page-local, so a page turn starts clean. */
+    setSearch("")
+    loadPage(tableName, from + PAGE_SIZE, false)
+  }
+
+  const prevPage = (): void => {
+    const from = offsetRef.current
+    if (!tableName || from <= 0) return
+    setSearch("")
+    loadPage(tableName, Math.max(0, from - PAGE_SIZE), false)
   }
 
   const selectActive = (index?: number): void => {
@@ -249,14 +312,14 @@ export const useExplorer = (): UseExplorerResult => {
         setTotal(null)
         setLoading(false)
         setStatusPoll(poll => poll + 1)
-        reportError("explorer.connect", `connect failed: ${String(cause)}`, cause)
+        reportError("explorer.connect", `connect failed: ${describeError(cause)}`, cause)
         /* Offer a retry so a transient failure (container still booting, host
            offline) recovers from the keyboard instead of forcing navigation. */
         const retryIndex = cursor
         void dialog
           .confirm({
-            title: `Connection "${target.connection ? `${target.label} · ${target.database?.name ?? ""}` : target.label}" failed`,
-            body: String(cause),
+            title: `Connection "${describeTarget(target)}" failed`,
+            body: describeError(cause),
             okLabel: "retry",
             danger: true,
           })
@@ -354,12 +417,16 @@ export const useExplorer = (): UseExplorerResult => {
     )
       .then(() => {
         toasts.push("success", `saved ${tableName}.${column}`)
-        openTable(tableName)
+        /* Reload the page we were on, not page 1: the UPDATE targeted this row
+           by primary key, so a `openTable` reset would lose the reader's place
+           in a long table. An UPDATE cannot change the row count, so the page
+           is still valid and the count does not need re-reading. */
+        loadPage(tableName, offset, false)
         return true
       })
       .catch(cause => {
         errorLog.append("explorer.saveCell", cause)
-        toasts.push("error", `save failed: ${String(cause)}`)
+        toasts.push("error", `save failed: ${describeError(cause)}`)
         return false
       })
   }
@@ -402,12 +469,13 @@ export const useExplorer = (): UseExplorerResult => {
       .then(() => {
         const changed = updates.length === 1 ? updates[0]!.column : `${updates.length} columns`
         toasts.push("success", `saved ${tableName}.${changed}`)
-        openTable(tableName)
+        /* Stay on the current page, as in saveCell. */
+        loadPage(tableName, offset, false)
         return true
       })
       .catch(cause => {
         errorLog.append("explorer.saveRow", cause)
-        toasts.push("error", `save failed: ${String(cause)}`)
+        toasts.push("error", `save failed: ${describeError(cause)}`)
         return false
       })
   }
@@ -426,6 +494,12 @@ export const useExplorer = (): UseExplorerResult => {
       table,
       tableInfo,
       total,
+      offset,
+      pageSize: PAGE_SIZE,
+      hasNextPage,
+      hasPrevPage,
+      nextPage,
+      prevPage,
       search,
       setSearch,
       searchCount: searchedRows.length,
@@ -448,8 +522,9 @@ export const useExplorer = (): UseExplorerResult => {
       table,
       tableInfo,
       total,
-      search,
-      setSearch,
+      offset,
+      hasNextPage,
+      hasPrevPage,
       searchedRows.length,
       saveCell,
       saveRow,

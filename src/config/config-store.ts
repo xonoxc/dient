@@ -15,6 +15,7 @@ import {
 } from "@/domain"
 import type { Connection, Database, Engine as EngineType, Project } from "@/domain"
 import { runMigrations } from "@/config/migrations"
+import { describeError } from "@/errors/describe"
 
 /**
  * ConfigStore is the service that persists everything the TUI lets the user
@@ -168,7 +169,7 @@ const onError = <A>(effect: Effect.Effect<A, unknown>): Effect.Effect<A, ConfigE
     cause instanceof ConfigError
       ? cause
       : new ConfigError({
-          message: String(cause),
+          message: describeError(cause),
           cause,
         })
   )

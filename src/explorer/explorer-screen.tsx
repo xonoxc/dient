@@ -4,9 +4,8 @@
  * state for table navigation and feeds the shell's status bar through
  * `SessionProvider`.
  */
-import { useEffect, useMemo, useRef, useState } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
-import type { ScrollBoxRenderable } from "@opentui/core"
 import { useTheme } from "@/theme-context"
 import { useRouter, useCommandLine, useSessionStatus, useToasts, useServices, useTextInput, type RoutedKey } from "@/app-context"
 import { Sidebar } from "@/sidebar/sidebar"
@@ -32,7 +31,7 @@ export function ExplorerScreen() {
   const session = useSessionStatus()
   const toasts = useToasts()
   const explorer = useExplorer()
-  const { sidebar, focus, setFocus, active, loading, error, tableName, tables, tableInfo } = explorer
+  const { sidebar, focus, setFocus, active, loading, error, tableName, tableInfo } = explorer
   const { configStore } = useServices()
 
   /* Vim mode drives the cursor inside the currently loaded rows. */
@@ -363,15 +362,31 @@ export function ExplorerScreen() {
     })
   }
 
-  const hints = useMemo(
-    () =>
-      focus === "sidebar"
-        ? ["s settings", "j/k move", "Enter open", "space jump", "h/l panels", "Tab next conn", "? help"]
-        : explorer.search.trim()
-          ? [`${explorer.searchCount} matches`, "n/N jump", "Esc clear"]
-          : ["s settings", "i edit row", "Enter cell", "j/k move", "space jump", "gg/G jump", "/ search", "h/l panels", "? help"],
-    [focus, explorer.search, explorer.searchCount]
-  )
+  const hints = useMemo(() => {
+    /* Paging leads the hint list. The budget is 30 characters, so a hint buried
+       at the end of eight others is never seen — and paging is the one action a
+       user cannot discover from the data on screen. */
+    const paging: string[] = []
+    if (explorer.hasNextPage) paging.push("^f next page")
+    if (explorer.hasPrevPage) paging.push("^b prev page")
+
+    if (focus === "sidebar") {
+      return [...paging, "s settings", "j/k move", "Enter open", "space jump", "h/l panels", "Tab next conn", "? help"]
+    }
+    if (explorer.search.trim()) return [...paging, `${explorer.searchCount} matches`, "n/N jump", "Esc clear"]
+    return [
+      ...paging,
+      "s settings",
+      "i edit row",
+      "Enter cell",
+      "j/k move",
+      "space jump",
+      "gg/G jump",
+      "/ search",
+      "h/l panels",
+      "? help",
+    ]
+  }, [focus, explorer.search, explorer.searchCount, explorer.hasNextPage, explorer.hasPrevPage])
 
   /* Push the story to the shell's status bar. The database is the connection:
      one name, its engine alongside. */
@@ -387,9 +402,22 @@ export function ExplorerScreen() {
       table: tableName ?? undefined,
       rows: explorer.table.sortedRows.length,
       total: explorer.total ?? undefined,
+      /* Only meaningful when the table is actually paged; a single page of rows
+         should just say "200 rows" as before. */
+      rowStart: explorer.total !== null && explorer.total > explorer.pageSize ? explorer.offset + 1 : undefined,
       hints,
     })
-  }, [setStatus, vimMode, active, tableName, explorer.table.sortedRows.length, explorer.total, hints])
+  }, [
+    setStatus,
+    vimMode,
+    active,
+    tableName,
+    explorer.table.sortedRows.length,
+    explorer.total,
+    explorer.offset,
+    explorer.pageSize,
+    hints,
+  ])
 
   useKeyboard(e => {
     /* NORMAL mode only. `route` hands the key to the INSERT-mode owner when
@@ -401,6 +429,20 @@ export function ExplorerScreen() {
 
     if (focus === "sidebar") {
       switch (key) {
+        /* Paging works from either panel, so a connection can be paged through
+           without first moving focus into the data pane. */
+        case "f":
+          if (e.ctrl === true) {
+            explorer.nextPage()
+            return
+          }
+          break
+        case "b":
+          if (e.ctrl === true) {
+            explorer.prevPage()
+            return
+          }
+          break
         case "j":
           sidebar.move(1)
           return
@@ -465,6 +507,16 @@ export function ExplorerScreen() {
         editCurrentRow()
         return
       }
+      /* Page through the table. Ctrl+f / Ctrl+b are chords a printable field
+         can never contain, so they stay free in NORMAL mode. */
+      if (e.ctrl === true && key === "f") {
+        explorer.nextPage()
+        return
+      }
+      if (e.ctrl === true && key === "b") {
+        explorer.prevPage()
+        return
+      }
       if (key === "v") {
         toasts.push("info", "visual mode lands in a later phase")
         return
@@ -519,7 +571,7 @@ export function ExplorerScreen() {
       />
 
       <box flexGrow={1} flexDirection="column">
-        <TableStrip tables={tables} tableName={tableName} loading={loading} focus={focus === "table"} />
+        <TableStrip tableName={tableName} loading={loading} focus={focus === "table"} />
         {searchOpenRef.current ? <SearchBar query={searchBuffer.current} matches={explorer.searchCount} /> : null}
         {error ? (
           <box flexGrow={1} alignItems="center" justifyContent="center">
@@ -570,50 +622,40 @@ function SearchBar({ query, matches }: { query: string; matches: number }) {
   )
 }
 
-function TableStrip({
-  tables,
-  tableName,
-  loading,
-  focus,
-}: {
-  tables: ReadonlyArray<string>
-  tableName: string | null
-  loading: boolean
-  focus: boolean
-}) {
+/**
+ * The open table, as a single tab.
+ *
+ * This used to be a scrolling strip with one tab per table in the database. On
+ * a wide schema that meant a hundred tabs in a one-line scroller, and because
+ * each tab was its own `<box marginRight={1}>` the layout engine placed every
+ * box one column left of where it belonged, so neighbours overwrote each other's
+ * last character and long runs fused into nonsense ("PROVIDERRICTEDCOUNTRY").
+ * The strip also auto-panned to the active tab, which made a partial window of
+ * the list look like the only tables that existed.
+ *
+ * None of that is worth solving when the answer is "show the open one": there is
+ * exactly one tab, so there is no row to lay out and nothing to scroll. The full
+ * table list already lives in the sidebar, where it is navigable.
+ */
+function TableStrip({ tableName, loading, focus }: { tableName: string | null; loading: boolean; focus: boolean }) {
   const theme = useTheme()
   const c = theme.colors
-  const scrollRef = useRef<ScrollBoxRenderable | null>(null)
 
-  /* Keep the active tab reachable: pan the strip sideways so the focused table
-     stays visible even when the connection has dozens of tables. */
-  useEffect(() => {
-    if (tableName) scrollRef.current?.scrollChildIntoView(`dient-tab-${tableName}`)
-  }, [tableName])
-
-  if (tables.length === 0 && !loading) {
+  if (!tableName) {
     return (
       <box height={1} paddingX={1}>
-        <text fg={c.textMuted}>{loading ? "loading tables…" : "no tables"}</text>
+        <text fg={c.textMuted}>{loading ? "loading tables…" : "no table open"}</text>
       </box>
     )
   }
 
   return (
-    <scrollbox ref={scrollRef} scrollX scrollY={false} height={1} horizontalScrollbarOptions={{ showArrows: false }}>
-      <box height={1} paddingX={1} flexDirection="row">
-        {tables.map(name => {
-          const current = name === tableName
-          return (
-            <box key={name} id={current ? `dient-tab-${name}` : undefined} marginRight={1}>
-              <text fg={current ? c.accent : focus ? c.text : c.textMuted} truncate>
-                {current ? "▶ " : ""}
-                {name.toUpperCase()}
-              </text>
-            </box>
-          )
-        })}
+    <box height={1} flexDirection="row">
+      <box height={1} paddingX={1} backgroundColor={c.bgHighlight}>
+        <text fg={focus ? c.accent : c.textBright} truncate>
+          {"\u258c " + tableName.toUpperCase()}
+        </text>
       </box>
-    </scrollbox>
+    </box>
   )
 }

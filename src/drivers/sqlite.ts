@@ -4,6 +4,7 @@ import { Context, Effect, Exit, Layer, Scope } from "effect"
 import type { SqliteConnectionConfig } from "@/domain"
 import type { ActiveConnection, ColumnInfo, DriverService, QueryResult } from "@/drivers/types"
 import { ConnectionError, QueryError } from "@/drivers/types"
+import { describeError } from "@/errors/describe"
 
 const ENGINE = "sqlite" as const
 
@@ -28,7 +29,7 @@ export const connectSqlite = (
        * other constructor throw) arrives as a defect. `catchAllCause` folds
        * every cause — fail or die — into the typed `ConnectionError`.
        */
-      Effect.catchAllCause(cause => Effect.fail(new ConnectionError({ engine: ENGINE, message: String(cause), cause })))
+      Effect.catchAllCause(cause => Effect.fail(new ConnectionError({ engine: ENGINE, message: describeError(cause), cause })))
     )
     return { id: crypto.randomUUID(), engine: ENGINE, _client: client, _scope: scope }
   })
@@ -45,7 +46,7 @@ export const querySqlite = (
         cause =>
           new QueryError({
             engine: ENGINE,
-            message: String(cause),
+            message: describeError(cause),
             cause,
           })
       )
