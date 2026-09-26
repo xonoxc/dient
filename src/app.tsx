@@ -19,6 +19,9 @@ import {
   ToastProvider,
   useCommandBus,
   useCommandLine,
+  TextInputProvider,
+  ConfigRevisionProvider,
+  useTextInput,
   useDialog,
   useRouter,
   useServices,
@@ -33,6 +36,7 @@ import { StatusBar } from "@/status-bar"
 import { ToastView } from "@/ui/toast"
 import { ModalView } from "@/ui/modal"
 import { HelpScreen } from "@/ui/help-screen"
+import { resolveTypedChar } from "@/ui/text-entry"
 
 export default function App({ theme, services }: { theme: ThemeService; services: AppServices }) {
   return (
@@ -44,7 +48,11 @@ export default function App({ theme, services }: { theme: ThemeService; services
               <SessionProvider>
                 <CommandBusProvider>
                   <CommandLineProvider>
-                    <Shell />
+                    <ConfigRevisionProvider>
+                      <TextInputProvider>
+                        <Shell />
+                      </TextInputProvider>
+                    </ConfigRevisionProvider>
                   </CommandLineProvider>
                 </CommandBusProvider>
               </SessionProvider>
@@ -69,6 +77,7 @@ function Shell() {
   const router = useRouter()
   const dialog = useDialog()
   const commandLine = useCommandLine()
+  const textInput = useTextInput()
   const status = useSessionStatus().status
   const bus = useCommandBus()
   const toasts = useToasts()
@@ -128,6 +137,13 @@ function Shell() {
   useKeyboard(e => {
     const key = e.name
 
+    /* INSERT mode is resolved first, before any NORMAL binding is consulted.
+       `route` is exactly-once per key event, so whichever subscriber runs first
+       delivers the key to the text owner and the others stand down. The command
+       line is a text surface too, but the shell owns it, so it is checked
+       alongside the registered owner. */
+    if (textInput.route(e)) return
+
     if (commandLine.open) {
       if (key === "escape" || key === "Escape" || key === "\u001b") {
         commandLine.closeLine()
@@ -167,12 +183,9 @@ function Shell() {
         commandLine.backspace()
         return
       }
-      if (key === " " || key === "space") {
-        commandLine.typeChar(" ")
-        return
-      }
-      if (key && key.length === 1) {
-        commandLine.typeChar(key)
+      const char = resolveTypedChar(e)
+      if (char !== null) {
+        commandLine.typeChar(char)
         return
       }
       return

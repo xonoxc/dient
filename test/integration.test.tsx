@@ -262,17 +262,19 @@ describe("integration (real containers)", () => {
 
       /* paste a connection string: reports.db → database "reports" */
       await pressKeys(setup, ["a"])
-      await setup.waitForFrame(f => f.includes("connection string"), WAIT)
+      await setup.waitForFrame(f => f.includes("Enter open"), WAIT)
+      await pressKeys(setup, ["1"])
+      await setup.waitForFrame(f => f.includes("connection string: "), WAIT)
       await pressKeys(setup, ["r", "e", "p", "o", "r", "t", "s", ".", "d", "b"])
       await setup.waitForFrame(f => f.includes("reports.db"), WAIT)
       await pressKeys(setup, ["RETURN"])
       await setup.waitForFrame(f => f.includes("added reports"), WAIT)
       await setup.waitForFrame(f => f.includes("reports.db"), WAIT)
 
-      /* back to the explorer: expand the tree and the new database shows up */
+      /* Back to the explorer. The sidebar reacts to the config change and
+         expands the project itself, so `reports` is already there — no manual
+         expanding, which is the whole point of revealing what was added. */
       await pressKeys(setup, [":", "e", "x", "p", "l", "o", "r", "e", "r", "RETURN"])
-      await setup.waitForFrame(f => !f.includes("SETTINGS"), WAIT)
-      await pressKeys(setup, ["RETURN"])
       await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("main") && f.includes("reports"), WAIT)
     } finally {
       setup.renderer.destroy()
@@ -328,7 +330,9 @@ describe("integration (real containers)", () => {
       await setup1.waitForFrame(f => f.includes("▾ demo") && f.includes("main"), WAIT)
       await pressKeys(setup1, ["j"])
       await pressKeys(setup1, ["a"])
-      await setup1.waitForFrame(f => f.includes("connection string"), WAIT)
+      await setup1.waitForFrame(f => f.includes("Enter open"), WAIT)
+      await pressKeys(setup1, ["1"])
+      await setup1.waitForFrame(f => f.includes("connection string: "), WAIT)
       await pressKeys(setup1, ["p", "e", "r", "s", "i", "s", "t", ".", "d", "b"])
       await pressKeys(setup1, ["RETURN"])
       await setup1.waitForFrame(f => f.includes("added persist") && f.includes("persist.db"), WAIT)

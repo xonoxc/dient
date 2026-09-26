@@ -184,6 +184,7 @@ export namespace ConnectionManager {
               .pipe(Effect.retry(Schedule.intersect(Schedule.recurs(2), Schedule.exponential("500 millis"))))
               .pipe(Effect.timeout("6 seconds"))
             return outcome
+            // this is just an empty line to make the diff cleaner, so the closing parens line up with the opening ones
           }).pipe(Effect.catchAll(() => Effect.succeed(false))),
         activeConnections: () =>
           slots.pipe(

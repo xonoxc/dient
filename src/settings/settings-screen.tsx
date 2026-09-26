@@ -1,17 +1,20 @@
 /**
  * Settings screen. Renders the config tree (projects → databases) and drives
- * the keyboard forms: `a` opens a single-line connection prompt (paste a
- * `postgres://` / `mysql://` URL or a SQLite path; the tail becomes the name),
- * same style of prompt for a new project (`p` selects it), `u` flips to a
- * credentials form, `r` renames a database, `t` pings it with
- * retry, `d` deletes. Focus lives entirely here while this screen is active.
+ * the keyboard forms. NORMAL mode binds `a` (add a database), `p` (add a
+ * project), `r` (rename), `t` (ping), `d` (delete), `e` (explorer), `j/k`,
+ * `Enter`; a form switches the screen to INSERT mode, where every printable
+ * key is typed text — a pasted `mysql://user:pw@host:3306/db` contains most
+ * of NORMAL mode's letters — and the form's own commands live on Ctrl chords
+ * (Ctrl+n flips the engine/credentials form, Ctrl+Esc cancels, Tab completes).
+ * Focus lives entirely here while this screen is active.
  */
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { useKeyboard } from "@opentui/react"
 import { useTheme } from "@/theme-context"
-import { useRouter, useCommandLine, useSessionStatus } from "@/app-context"
+import { useRouter, useCommandLine, useSessionStatus, useTextInput, type RoutedKey } from "@/app-context"
 import { useSettings, type SettingsForm, type SettingsListItem } from "@/settings/use-settings"
-import { FIELD_LABEL, CONNECTION_FIELDS } from "@/settings/use-settings"
+import { FIELD_LABEL, CONNECTION_FIELDS, ADD_CHOICES } from "@/settings/use-settings"
+import { resolveTypedChar } from "@/ui/text-entry"
 
 export function SettingsScreen() {
   const theme = useTheme()
@@ -33,6 +36,11 @@ export function SettingsScreen() {
     toggle,
     add,
     addProject,
+    addByUri,
+    addByFields,
+    addChoiceMove,
+    addChoiceSubmit,
+    projects,
     remove,
     rename,
     testConnection,
@@ -44,69 +52,108 @@ export function SettingsScreen() {
     backspace,
     testing,
     completions,
+    formNow,
   } = settings
+
+  const textInput = useTextInput()
 
   const fieldLabel = field ? (field === "uri" ? "connection string" : (FIELD_LABEL[field as keyof typeof FIELD_LABEL] ?? "value")) : ""
 
   useEffect(() => {
     session.setStatus({
-      mode: "normal",
+      /* Ownership decides the mode, not the local `form` value. */
+      mode: textInput.active ? "insert" : "normal",
       table: "settings",
       hints: testing
-        ? [`testing ${testing}…`, "Esc cancel"]
+        ? [`testing ${testing}…`]
         : form
-          ? form.kind === "connect" && form.mode === "uri"
-            ? ["paste connection string", "Tab complete", "u credentials", "Enter add", "Esc cancel"]
-            : form.kind === "connect"
-              ? [`type ${fieldLabel}`, "Tab field", "e engine", "u uri", "Enter add", "Esc cancel"]
-              : form.kind === "connectName"
-                ? ["database name missing", "Enter add", "Esc cancel"]
-                : form.kind === "rename"
-                  ? ["new name", "Enter save", "Esc cancel"]
-                  : ["type name", "Enter save", "Esc cancel"]
+          ? form.kind === "addChoice"
+            ? ["j/k move", "Enter open", "Esc cancel"]
+            : form.kind === "connect" && form.mode === "uri"
+              ? ["paste connection string", "Tab complete", "Ctrl+n credentials", "Enter add", "Esc cancel"]
+              : form.kind === "connect"
+                ? [`type ${fieldLabel}`, "Tab field", "Ctrl+n engine", "Enter add", "Esc cancel"]
+                : form.kind === "connectName"
+                  ? ["database name missing", "Enter add", "Esc cancel"]
+                  : form.kind === "rename"
+                    ? ["new name", "Enter save", "Esc cancel"]
+                    : ["type name", "Enter save", "Esc cancel"]
           : ["a db", "p project", "e explorer", "j/k move", "Enter expand", "r rename", "t test", "d delete", "? help"],
     })
-  }, [session.setStatus, form, field, testing, completions.length]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [session.setStatus, form, field, testing, completions.length, textInput.active]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useKeyboard(e => {
-    if (router.helpOpen || commandLine.open) return
+  /* INSERT mode: while a form is open it is the sole keyboard owner. The app
+     dispatcher routes every key here and never consults a NORMAL binding, so a
+     connection string can contain `: ? / u e` — anything — and still arrive
+     verbatim. The form's own commands therefore live on chords a connection
+     string never contains (Ctrl+Enter / Ctrl+Escape / Ctrl+Tab). */
+  const handleFormKey = (e: RoutedKey): boolean => {
+    const current = formNow()
+    if (current === null) return true
     const key = e.name
 
-    if (form) {
-      if (key === "escape" || key === "Escape" || key === "\u001b") {
-        cancelForm()
-        return
-      }
-      if (key === "return" || key === "enter" || key === "\r") {
-        submitForm()
-        return
-      }
-      if (key === "tab") {
-        tab()
-        return
-      }
-      if (key === "u" && form.kind === "connect") {
-        cycleEngine()
-        return
-      }
-      if (key === "e" && form.kind === "connect" && form.mode !== "uri") {
-        cycleEngine()
-        return
-      }
-      if (key === "backspace") {
-        backspace()
-        return
-      }
-      if (key === " " || key === "space") {
-        typeChar(" ")
-        return
-      }
-      if (key && key.length === 1) {
-        typeChar(key)
-        return
-      }
-      return
+    /* The add-database chooser is a two-key menu, not a text field. */
+    if (current.kind === "addChoice") {
+      /* A menu, not a text field: arrows and j/k move a visible highlight and
+         Enter opens it. 1/2 stay as shortcuts. Every key is swallowed, so
+         nothing leaks through to a NORMAL binding. */
+      if (key === "j" || key === "down") addChoiceMove(1)
+      else if (key === "k" || key === "up") addChoiceMove(-1)
+      else if (key === "return" || key === "enter" || key === "\r") addChoiceSubmit()
+      else if (key === "1") addByUri(current.projectId)
+      else if (key === "2") addByFields(current.projectId)
+      else if (key === "escape" || key === "Escape" || key === "\u001b") cancelForm()
+      return true
     }
+
+    if (key === "return" || key === "enter" || key === "\r") {
+      submitForm()
+      return true
+    }
+    if (key === "escape" || key === "Escape" || key === "\u001b") {
+      cancelForm()
+      return true
+    }
+    if (key === "tab") {
+      tab()
+      return true
+    }
+    if (key === "backspace") {
+      backspace()
+      return true
+    }
+    /* Chords: a modified key is never text, so this is safe. */
+    if (e.ctrl === true) {
+      if (key === "n" && current.kind === "connect") cycleEngine()
+      return true
+    }
+    const char = resolveTypedChar(e)
+    if (char !== null) typeChar(char)
+    return true
+  }
+
+  /* The claim installs a trampoline so it always runs the newest closure: a
+     claim outlives the render that created it, and a fast typist can outrun a
+     render. Same always-latest semantics the runtime's useEffectEvent gives a
+     plain `useKeyboard` handler. */
+  const liveFormKeyRef = useRef(handleFormKey)
+  liveFormKeyRef.current = handleFormKey
+  /* `claim` in a ref: the effect must key on the *form* alone. Depending on
+     the provider object would re-run the claim whenever ownership depth
+     changed, and release-then-claim would bounce the depth forever. */
+  const claimRef = useRef(textInput.claim)
+  claimRef.current = textInput.claim
+  useEffect(() => {
+    if (form === null) return
+    return claimRef.current(e => liveFormKeyRef.current(e))
+  }, [form])
+
+  useKeyboard(e => {
+    /* NORMAL mode only. `route` hands the key to the open form and says so;
+       there is nothing to bind in that case. */
+    if (textInput.route(e)) return
+    if (router.helpOpen || commandLine.open) return
+    const key = e.name
 
     switch (key) {
       case "e":
@@ -170,6 +217,7 @@ export function SettingsScreen() {
         draft={draft}
         testing={testing}
         completions={completions}
+        projectName={form?.kind === "addChoice" ? (projects.find(p => p.id === form.projectId)?.name ?? "project") : ""}
       />
 
       {/* Filesystem matches for a SQLite path, on their own row so they never
@@ -194,6 +242,7 @@ function FormStatus({
   draft,
   testing,
   completions,
+  projectName,
 }: {
   form: SettingsForm | null
   field: string | null
@@ -202,6 +251,7 @@ function FormStatus({
   draft: string
   testing: string | null
   completions: ReadonlyArray<string>
+  projectName: string
 }) {
   const theme = useTheme()
   const c = theme.colors
@@ -220,8 +270,31 @@ function FormStatus({
     return (
       <box height={1} flexDirection="row" paddingX={1} overflow="hidden">
         <text fg={c.textMuted}>
-          e explorer  j/k move  Enter  a db  A project  r rename  t test  d delete  ? help
+          e explorer  j/k move  Enter  a db  p project  r rename  t test  d delete  ? help
         </text>
+      </box>
+    )
+  }
+
+  if (form.kind === "addChoice") {
+    return (
+      <box height={4} flexDirection="column" paddingX={1} overflow="hidden">
+        <box height={1} flexDirection="row" overflow="hidden">
+          <text fg={c.info}>new database in {projectName}</text>
+        </box>
+        {ADD_CHOICES.map((choice, index) => {
+          const active = index === form.cursor
+          return (
+            <box key={choice.label} height={1} flexDirection="row" overflow="hidden">
+              <text fg={active ? c.accent : c.textMuted}>{active ? "▸ " : "  "}</text>
+              <text fg={active ? c.textBright : c.textMuted}>{choice.label}</text>
+              <text fg={c.textMuted}>  {choice.hint}</text>
+            </box>
+          )
+        })}
+        <box height={1} flexDirection="row" overflow="hidden">
+          <text fg={c.textMuted}>j/k move · Enter open · 1/2 direct · Esc cancel</text>
+        </box>
       </box>
     )
   }
@@ -237,8 +310,8 @@ function FormStatus({
         <box flexGrow={1} />
         {form.mode === "fields" ? (
           <text fg={c.textMuted}>
-            {completions.length > 0 ? "Tab complete · " : ""}field {field === "name" ? 1 : 2}/{fieldCount} · e engine ·
-            Enter add
+            {completions.length > 0 ? "Tab complete · " : ""}field {field === "name" ? 1 : 2}/{fieldCount} · Ctrl+n
+            engine · Enter add
           </text>
         ) : null}
       </box>

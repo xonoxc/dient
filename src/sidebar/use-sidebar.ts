@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Effect } from "effect"
 import { Option } from "effect"
+import { useConfigRevision } from "@/app-context"
 import type { ConfigStoreService } from "@/config"
 import type { Connection, Database, DatabaseId, Project, ProjectId } from "@/domain"
 
@@ -159,6 +160,7 @@ export const useSidebar = (
   const [cursor, setCursor] = useState(0)
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const [loaded, setLoaded] = useState(false)
+  const { revision, reveal } = useConfigRevision()
 
   const recompute = (): void => {
     const nextItems = buildTree(dataRef.current, expandedRef.current, tablesByConnection)
@@ -201,6 +203,38 @@ export const useSidebar = (
       cancelled = true
     }
   }, [configStore])
+
+  /* Another screen mutated the config (settings creating a database, say). The
+     sidebar caches databases per project, so it has to drop that cache, re-read,
+     and expand the project the caller asked to reveal — otherwise a brand new
+     connection exists but the sidebar still shows a collapsed project with
+     nothing under it. */
+  useEffect(() => {
+    if (revision === 0) return
+    let cancelled = false
+    pendingDatabases.current.clear()
+    void Effect.runPromise(configStore.listProjects())
+      .then(async projects => {
+        if (cancelled) return
+        dataRef.current = { ...dataRef.current, projects }
+        const targets = reveal ? [reveal] : []
+        await Promise.all(targets.map(projectId => loadDatabases(projectId as ProjectId)))
+        if (cancelled) return
+        if (targets.length > 0) {
+          /* Update the ref synchronously: `recompute` below reads it, and
+             `setExpanded` alone would not be visible until the next render. */
+          const next = new Set(expandedRef.current)
+          for (const projectId of targets) next.add(projectId)
+          expandedRef.current = next
+          setExpanded(next)
+        }
+        recompute()
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [revision]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadDatabases = (projectId: ProjectId): Promise<void> => {
     const existing = pendingDatabases.current.get(projectId)

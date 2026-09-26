@@ -42,7 +42,10 @@ describe("App shell", () => {
       await setup.waitForFrame(f => f.includes("SETTINGS"))
 
       const frame = setup.captureSpans()
-      expect(lastTextRow(frame)).toContain("j/k move")
+      /* The hint budget is 30 chars, so the leading settings bindings are
+         what the bar actually shows. */
+      expect(lastTextRow(frame)).toContain("a db")
+      expect(lastTextRow(frame)).toContain("p project")
     } finally {
       setup.renderer.destroy()
     }

@@ -4,13 +4,13 @@
  *
  * The model is deliberately flat: a database *is* its connection. Pressing `a`
  * opens a single-line prompt where you paste a connection string — a
- * `postgres://` / `mysql://` URL or a filesystem path (SQLite). `A` opens the
+ * `postgres://` / `mysql://` URL or a filesystem path (SQLite). `p` opens the
  * same style of prompt for a new project (a project is a folder onto which
  * databases hang). The tail of
  * the string becomes the database's display name, so adding a database is one
  * paste. A credentials form (host/port/user/…) is one key away for people who
- * prefer filling fields, and when a server URL carries no database name the
- * form asks for it in a follow-up prompt.
+ * prefer filling fields (Ctrl+n), and when a server URL carries no database
+ * name the form asks for it in a follow-up prompt.
  *
  * Form state is mirrored into refs: keyboard handlers fire between React
  * commits when a user (or a test pressing whole chords) types faster than a
@@ -19,7 +19,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Effect } from "effect"
-import { useDialog, useServices, useToasts } from "@/app-context"
+import { useConfigRevision, useDialog, useServices, useToasts } from "@/app-context"
 import { completePath, pathCandidates } from "@/fs/path-complete"
 import { parseConnectionString, type ConnectionString } from "@/connection/parse"
 import type { CreateConnectionInput } from "@/config"
@@ -44,6 +44,10 @@ export type ConnectionFormField = "name" | "host" | "port" | "user" | "password"
 
 export type SettingsForm =
   | { readonly kind: "project" }
+  /** First stop when adding a database: paste a URL, or fill in fields. Both
+      styles every DB client offers; picking one up front beats hiding the
+      field form behind a chord. */
+  | { readonly kind: "addChoice"; readonly projectId: ProjectId; readonly cursor: number }
   | {
       readonly kind: "connect"
       readonly projectId: ProjectId
@@ -79,8 +83,13 @@ export const FIELD_LABEL: Record<ConnectionFormField, string> = {
 
 export interface UseSettingsResult {
   readonly items: ReadonlyArray<SettingsListItem>
+  /** Projects as loaded from the config store; the add menu names its target. */
+  readonly projects: ReadonlyArray<Project>
   readonly cursor: number
   readonly form: SettingsForm | null
+  /** Live accessor for the open form, so a key handler firing between React
+      commits reads the current form and never a stale render closure. */
+  readonly formNow: () => SettingsForm | null
   readonly draft: string
   readonly engine: Engine
   readonly field: string | null
@@ -98,6 +107,14 @@ export interface UseSettingsResult {
   readonly add: () => void
   /** Open the single-line prompt for creating a new project. */
   readonly addProject: () => void
+  /** From the "add database" choice: paste a connection string. */
+  readonly addByUri: (projectId: ProjectId) => void
+  /** From the "add database" choice: type host / port / user / password. */
+  readonly addByFields: (projectId: ProjectId) => void
+  /** Move the highlight in the "add database" menu. */
+  readonly addChoiceMove: (delta: number) => void
+  /** Open the highlighted "add database" choice. */
+  readonly addChoiceSubmit: () => void
   readonly remove: () => void
   readonly rename: () => void
   readonly testConnection: () => void
@@ -150,18 +167,30 @@ export const buildSettingsTree = (
   return items
 }
 
+/** The two add-database choices, in render order. Exported so the menu render
+    and the key handler cannot drift apart. */
+export const ADD_CHOICES = [
+  { label: "paste connection string", hint: "mysql://user:pass@host:3306/db" },
+  { label: "host / user / password", hint: "name, host, port, user, password, database" },
+] as const
+
 const ENGINES: ReadonlyArray<Engine> = ["postgres", "mysql", "sqlite"]
 
 export const useSettings = (): UseSettingsResult => {
   const { configStore, connectionManager, errorLog } = useServices()
   const toasts = useToasts()
   const dialog = useDialog()
+  const configRevision = useConfigRevision()
 
   const [projects, setProjects] = useState<ReadonlyArray<Project>>([])
   const [databases, setDatabases] = useState<ReadonlyMap<ProjectId, ReadonlyArray<Database>>>(new Map())
   const [connections, setConnections] = useState<ReadonlyMap<DatabaseId, ReadonlyArray<Connection>>>(new Map())
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [cursor, setCursor] = useState(0)
+  /* Set when a create succeeds; the next tree build parks the cursor on it. */
+  const pendingRevealRef = useRef<{ readonly kind: "database"; readonly projectId: ProjectId; readonly name: string } | null>(
+    null
+  )
   const [form, setFormState] = useState<SettingsForm | null>(null)
   const [draft, setDraftState] = useState("")
   const [engine, setEngineState] = useState<Engine>("postgres")
@@ -219,6 +248,18 @@ export const useSettings = (): UseSettingsResult => {
     [projects, databases, connections, expanded]
   )
 
+  /* Park the cursor on a row that was just created, once the tree contains it. */
+  useEffect(() => {
+    const pending = pendingRevealRef.current
+    if (!pending) return
+    const index = items.findIndex(
+      item => item.kind === "database" && item.label === pending.name && item.parentId === pending.projectId
+    )
+    if (index < 0) return
+    pendingRevealRef.current = null
+    setCursor(index)
+  }, [items])
+
   const clamp = (next: number): number => Math.max(0, Math.min(Math.max(items.length - 1, 0), next))
 
   /** Field order for the credentials form: an explicit name first, then the
@@ -247,6 +288,21 @@ export const useSettings = (): UseSettingsResult => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form, draft, engine])
 
+  /**
+   * Make a freshly created row visible. A database is only listed under an
+   * *expanded* project, so creating one under a collapsed project reported
+   * "added" while showing nothing at all. Expanding the parent and moving the
+   * cursor onto the new row is what makes the result confirm itself.
+   */
+  const revealDatabase = (projectId: ProjectId, name: string): void => {
+    setExpanded(current => (current.has(projectId) ? current : new Set(current).add(projectId)))
+    /* The tree is rebuilt from the next refresh, so land on the row by id once
+       it exists rather than guessing an index. */
+    pendingRevealRef.current = { kind: "database", projectId, name }
+    /* Tell the explorer sidebar to expand this project too. */
+    configRevision.bump(projectId)
+  }
+
   const openForm = (next: SettingsForm | null): void => {
     formRef.current = next
     let buffer = ""
@@ -261,6 +317,36 @@ export const useSettings = (): UseSettingsResult => {
   /** Open the single-line prompt for creating a new project. */
   const addProject = (): void => {
     openForm({ kind: "project" })
+  }
+
+  /** Add a database to `projectId` by pasting a connection string. */
+  const addByUri = (projectId: ProjectId): void => {
+    openForm({ kind: "connect", projectId, mode: "uri", fieldIndex: 0, values: {}, engine: "postgres" })
+  }
+
+  /** Add a database to `projectId` by filling in host / user / password, the
+      way every other DB client does it. */
+  const addByFields = (projectId: ProjectId): void => {
+    openForm({ kind: "connect", projectId, mode: "fields", fieldIndex: 0, values: {}, engine: "postgres" })
+  }
+
+  /** The two add-database choices, in render order. Keeping them in one place
+      means the menu, its keys, and Enter cannot drift apart. */
+  const moveAddChoice = (delta: number): void => {
+    const current = formRef.current
+    if (current?.kind !== "addChoice") return
+    openForm({
+      ...current,
+      cursor: Math.max(0, Math.min(ADD_CHOICES.length - 1, current.cursor + delta)),
+    })
+  }
+
+  /** Enter on the add-database menu opens the highlighted choice. */
+  const submitAddChoice = (): void => {
+    const current = formRef.current
+    if (current?.kind !== "addChoice") return
+    if (current.cursor === 0) addByUri(current.projectId)
+    else addByFields(current.projectId)
   }
 
   const typeChar = (char: string): void => {
@@ -308,7 +394,10 @@ export const useSettings = (): UseSettingsResult => {
         const database = yield* configStore.createDatabase({ projectId, name, engine })
         yield* configStore.createConnection({ databaseId: database.id, ...params })
       })
-    )
+    ).then(() => {
+      /* Every create path funnels through here, so reveal once, here. */
+      revealDatabase(projectId, name)
+    })
 
   const nameTaken = (projectId: ProjectId, name: string): Promise<boolean> =>
     Effect.runPromise(configStore.listDatabases(projectId)).then(rows => rows.some(row => row.name === name))
@@ -485,8 +574,10 @@ export const useSettings = (): UseSettingsResult => {
 
   return {
     items,
+    projects,
     cursor,
     form,
+    formNow: () => formRef.current,
     draft,
     engine,
     field,
@@ -564,9 +655,13 @@ export const useSettings = (): UseSettingsResult => {
         addProject()
         return
       }
-      openForm({ kind: "connect", projectId, mode: "uri", fieldIndex: 0, values: {}, engine: "postgres" })
+      openForm({ kind: "addChoice", projectId, cursor: 0 })
     },
     addProject,
+    addByUri,
+    addByFields,
+    addChoiceMove: moveAddChoice,
+    addChoiceSubmit: submitAddChoice,
     remove: () => {
       const item = items[Math.min(cursor, items.length - 1)]
       if (!item) return

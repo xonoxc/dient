@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import type { ScrollBoxRenderable } from "@opentui/core"
 import { useTheme } from "@/theme-context"
-import { useRouter, useCommandLine, useSessionStatus, useToasts, useServices } from "@/app-context"
+import { useRouter, useCommandLine, useSessionStatus, useToasts, useServices, useTextInput, type RoutedKey } from "@/app-context"
 import { Sidebar } from "@/sidebar/sidebar"
 import { DataTable } from "@/table/data-table"
 import { useVimMode } from "@/vim"
@@ -20,6 +20,7 @@ import { useCommand } from "@/app-context"
 import { buildFinderIndex, type FinderEntry } from "@/finder/finder"
 import { FinderOverlay } from "@/finder/finder-overlay"
 import { fuzzyMatch } from "@/finder/fuzzy"
+import { resolveTypedChar } from "@/ui/text-entry"
 
 const TABLE_MOVE_KEYS = new Set(["j", "k", "g", "G"])
 
@@ -58,20 +59,121 @@ export function ExplorerScreen() {
      padding, the 28-wide sidebar, the leading cursor glyph, and row padding. */
   const dataWidth = Math.max(0, width - 2 - 26 - 3)
 
+  /* Never leave the keyboard claimed if the screen goes away mid-edit. */
+  useEffect(() => releaseText, [])
+
   /* `/` search: a ref-backed buffer so a whole chord can be typed and entered
      inside one frame without dropping keys (mirrors the command line). */
   const searchOpenRef = useRef(false)
   const searchBuffer = useRef("")
   const [, bumpSearch] = useState(0)
 
-  const openSearch = () => {
+  /* Search, the finder, and the cell editor are all text surfaces, so each one
+     claims the keyboard while open: `:` and `?` are otherwise app-level
+     shortcuts, and both are ordinary characters in a search or a cell value.
+     Claims are taken on open and released on close (rather than in an effect)
+     because the open/close state lives in refs, not render state. */
+  const textInput = useTextInput()
+
+  /* INSERT mode: the finder, `/` search, and the cell editor each own the
+     keyboard while open. The app dispatcher routes every key to the registered
+     owner and never reaches a NORMAL binding, so a filter or a cell value can
+     contain `:` `?` `/` `j` `k` — anything. */
+  const handleTextKey = (e: RoutedKey): boolean => {
+    const key = e.name
+
+    if (finderOpenRef.current) {
+      if (key === "\u001b" || key === "Escape" || key === "escape") {
+        closeFinder()
+        return true
+      }
+      if (key === "return" || key === "enter" || key === "\r") {
+        jumpFinder()
+        return true
+      }
+      if (key === "backspace") {
+        finderBackspace()
+        return true
+      }
+      if (key === "down" || (e.ctrl === true && key === "n")) {
+        finderMove(1)
+        return true
+      }
+      if (key === "up" || (e.ctrl === true && key === "p")) {
+        finderMove(-1)
+        return true
+      }
+      const char = resolveTypedChar(e)
+      if (char !== null) finderType(char)
+      return true
+    }
+
+    if (searchOpenRef.current) {
+      if (key === "return" || key === "enter" || key === "\r") {
+        closeSearch(true)
+        return true
+      }
+      if (key === "\u001b" || key === "Escape" || key === "escape") {
+        closeSearch(false)
+        return true
+      }
+      if (key === "backspace") {
+        searchBackspace()
+        return true
+      }
+      const char = resolveTypedChar(e)
+      if (char !== null) searchType(char)
+      return true
+    }
+
+    if (editor.isEditing()) {
+      if (key === "return" || key === "enter" || key === "\r") {
+        commitEdit()
+        return true
+      }
+      if (key === "\u001b" || key === "Escape" || key === "escape" || (e.ctrl === true && key === "c")) {
+        editor.cancel()
+        return true
+      }
+      if (key === "backspace") {
+        editor.backspace()
+        return true
+      }
+      const char = resolveTypedChar(e)
+      if (char !== null) editor.type(char)
+      return true
+    }
+
+    return false
+  }
+
+  /* A single claim for whichever surface is open; released as each one closes.
+     The claim installs a trampoline rather than `handleTextKey` itself: a
+     claim outlives the render that created it, and jumping the finder needs the
+     *current* match list. Reading the newest closure through a ref gives the
+     same always-latest semantics the runtime's useEffectEvent provides. */
+  const releaseTextRef = useRef<(() => void) | null>(null)
+  const liveTextKeyRef = useRef(handleTextKey)
+  liveTextKeyRef.current = handleTextKey
+  const claimText = (cause?: RoutedKey) => {
+    releaseTextRef.current?.()
+    releaseTextRef.current = textInput.claim(e => liveTextKeyRef.current(e), cause)
+  }
+  const releaseText = () => {
+    releaseTextRef.current?.()
+    releaseTextRef.current = null
+  }
+
+  const openSearch = (cause?: RoutedKey) => {
     searchOpenRef.current = true
     searchBuffer.current = ""
+    claimText(cause)
     explorer.setSearch("")
     bumpSearch(v => v + 1)
   }
   const closeSearch = (commit: boolean) => {
     searchOpenRef.current = false
+    releaseText()
     explorer.setSearch(commit ? searchBuffer.current : "")
     bumpSearch(v => v + 1)
   }
@@ -97,8 +199,9 @@ export function ExplorerScreen() {
   const [finderCursor, setFinderCursor] = useState(0)
   const [finderEntries, setFinderEntries] = useState<ReadonlyArray<FinderEntry>>([])
 
-  const openFinder = () => {
+  const openFinder = (cause?: RoutedKey) => {
     finderOpenRef.current = true
+    claimText(cause)
     setFinderOpen(true)
     finderQueryRef.current = ""
     setFinderQuery("")
@@ -110,6 +213,7 @@ export function ExplorerScreen() {
   }
   const closeFinder = () => {
     finderOpenRef.current = false
+    releaseText()
     setFinderOpen(false)
     finderQueryRef.current = ""
     setFinderQuery("")
@@ -222,6 +326,7 @@ export function ExplorerScreen() {
       return
     }
     editor.cancel()
+    releaseText()
     void explorer.saveCell(target.rowIndex, target.column, result.value)
   }
 
@@ -273,7 +378,10 @@ export function ExplorerScreen() {
   const { setStatus } = session
   useEffect(() => {
     setStatus({
-      mode: vimMode,
+      /* Finder, `/` search, and the cell editor are text fields: while one is
+         open the session is in INSERT mode regardless of the vim mode behind
+         it. */
+      mode: textInput.active ? "insert" : vimMode,
       engine: active?.database.engine,
       database: active?.database.name,
       table: tableName ?? undefined,
@@ -284,42 +392,12 @@ export function ExplorerScreen() {
   }, [setStatus, vimMode, active, tableName, explorer.table.sortedRows.length, explorer.total, hints])
 
   useKeyboard(e => {
+    /* NORMAL mode only. `route` hands the key to the INSERT-mode owner when
+       one exists (finder, `/` search, cell editor) and says so; there is
+       nothing to bind in that case. */
+    if (textInput.route(e)) return
     if (router.helpOpen || commandLine.open) return
     const key = e.name
-
-    /* The finder consumes everything while open: type to filter, j/k or the
-       arrow keys to move, Enter to jump, Esc to close. */
-    if (finderOpenRef.current) {
-      if (key === "\u001b" || key === "Escape" || key === "escape") {
-        closeFinder()
-        return
-      }
-      if (key === "return" || key === "enter" || key === "\r") {
-        jumpFinder()
-        return
-      }
-      if (key === "backspace") {
-        finderBackspace()
-        return
-      }
-      if (key === " " || key === "space") {
-        finderType(" ")
-        return
-      }
-      if (key === "j" || key === "down" || (e.ctrl === true && key === "n")) {
-        finderMove(1)
-        return
-      }
-      if (key === "k" || key === "up" || (e.ctrl === true && key === "p")) {
-        finderMove(-1)
-        return
-      }
-      if (key && key.length === 1) {
-        finderType(key)
-        return
-      }
-      return
-    }
 
     if (focus === "sidebar") {
       switch (key) {
@@ -358,56 +436,8 @@ export function ExplorerScreen() {
         return
       }
     } else {
-      /* `/` search consumes all text until Enter commits or Escape clears. */
-      if (searchOpenRef.current) {
-        if (key === "return" || key === "enter" || key === "\r") {
-          closeSearch(true)
-          return
-        }
-        if (key === "\u001b" || key === "Escape" || key === "escape") {
-          closeSearch(false)
-          return
-        }
-        if (key === "backspace") {
-          searchBackspace()
-          return
-        }
-        if (key === " " || key === "space") {
-          searchType(" ")
-          return
-        }
-        if (key && key.length === 1) {
-          searchType(key)
-          return
-        }
-        return
-      }
-      /* While a cell is being edited, everything but commit/cancel is text. */
-      if (editor.isEditing()) {
-        if (key === "return" || key === "enter" || key === "\r") {
-          commitEdit()
-          return
-        }
-        if (key === "\u001b" || key === "Escape" || key === "escape" || (e.ctrl === true && key === "c")) {
-          editor.cancel()
-          return
-        }
-        if (key === "backspace") {
-          editor.backspace()
-          return
-        }
-        if (key === " " || key === "space") {
-          editor.type(" ")
-          return
-        }
-        if (key && key.length === 1) {
-          editor.type(key)
-          return
-        }
-        return
-      }
       if (key === " " || key === "space") {
-        openFinder()
+        openFinder(e)
         return
       }
       if (key === "h" || key === "left") {
@@ -419,7 +449,7 @@ export function ExplorerScreen() {
         return
       }
       if (key === "/") {
-        openSearch()
+        openSearch(e)
         return
       }
       /* arrow keys move the column cursor within the focused row */
@@ -464,6 +494,7 @@ export function ExplorerScreen() {
               column,
               original: current === null || current === undefined ? "" : formatCell(current),
             })
+            claimText(e)
           }
         }
         return

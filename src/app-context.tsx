@@ -287,6 +287,154 @@ export function useCommandLine(): CommandLineState {
   return commandLine
 }
 
+/* ---------------------------------------------------------- text input */
+
+/** A key event as the router sees it (structurally a subset of the runtime's). */
+export interface RoutedKey {
+  readonly name: string
+  readonly ctrl?: boolean
+  readonly meta?: boolean
+  readonly shift?: boolean
+  readonly option?: boolean
+}
+
+/** Handles a key while it owns INSERT mode. Return true when consumed. */
+export type TextKeyHandler = (key: RoutedKey) => boolean
+
+/**
+ * INSERT-mode keyboard ownership.
+ *
+ * The runtime fires *every* `useKeyboard` subscriber for every keypress and
+ * ignores `stopPropagation`, so "who gets this key" cannot be left to each
+ * handler guessing. Instead it is decided once, here:
+ *
+ *   - A text surface (a settings form, the finder, `/` search, a cell editor)
+ *     registers a handler when it opens and releases it when it closes.
+ *   - The single app-level dispatcher sends the key to that handler and stops.
+ *   - NORMAL-mode bindings are only consulted when nothing owns input.
+ *
+ * So "in INSERT mode you can type anything" is structural: a NORMAL binding can
+ * never see the key, which is what lets `:` `?` `u` `/` and every other
+ * character be ordinary text inside a connection string.
+ */
+export interface TextInputState {
+  /**
+   * Reactive: a field currently owns the keyboard. This is what makes the mode
+   * indicator truthful — ownership lives in a ref for dispatch, but the status
+   * bar has to re-render when a field opens or closes.
+   */
+  readonly active: boolean
+  /** The current owner's handler, or null. */
+  readonly owner: () => TextKeyHandler | null
+  /**
+   * Route this key to the owner. Returns true when the caller must stop — the
+   * key was either delivered to the owner or already delivered.
+   *
+   * Every `useKeyboard` subscriber sees every key and the runtime ignores
+   * `stopPropagation`, so "route it once" has to be enforced here. The event
+   * object is the identity that makes it exactly-once: the first subscriber to
+   * route a given event delivers it, the rest see it as already handled. A
+   * handler that opens a field mid-event passes that same event to `claim`, so
+   * the keystroke that opened the field is never also typed into it.
+   */
+  readonly route: (key: RoutedKey) => boolean
+  /** Register the INSERT-mode handler; returns a release function. */
+  readonly claim: (handler: TextKeyHandler, cause?: RoutedKey) => () => void
+}
+
+const TextInputContext = createContext<TextInputState | null>(null)
+
+export function TextInputProvider({ children }: { children?: ReactNode }) {
+  /* A stack, not a single slot: a field can open over another (the cell editor
+     opened from a search), and closing it must restore the one beneath. */
+  const stackRef = useRef<TextKeyHandler[]>([])
+  /* Events already delivered to an owner, keyed by identity so the guarantee
+     holds no matter which subscriber runs first. */
+  const routedRef = useRef<WeakSet<object>>(new WeakSet<object>())
+  /* Reactive mirror of the stack depth. Ownership itself must stay in a ref
+     (routes are read during key dispatch, before any render), but the status
+     bar needs to *re-render* when a field opens or closes — that is what
+     "insert mode" is. */
+  const [depth, setDepth] = useState(0)
+
+  const value = useMemo<TextInputState>(
+    () => ({
+      active: stackRef.current.length > 0,
+      owner: () => stackRef.current[stackRef.current.length - 1] ?? null,
+      route: key => {
+        const event = key as unknown as object
+        if (routedRef.current.has(event)) return true
+        const handler = stackRef.current[stackRef.current.length - 1]
+        if (!handler) return false
+        routedRef.current.add(event)
+        handler(key)
+        return true
+      },
+      claim: (handler, cause) => {
+        /* The keystroke that opened this field belongs to NORMAL mode. */
+        if (cause !== undefined) routedRef.current.add(cause as unknown as object)
+        const entry = { handler, released: false }
+        stackRef.current.push(entry.handler)
+        setDepth(stackRef.current.length)
+        return () => {
+          if (entry.released) return
+          entry.released = true
+          const index = stackRef.current.lastIndexOf(entry.handler)
+          if (index >= 0) stackRef.current.splice(index, 1)
+          setDepth(stackRef.current.length)
+        }
+      },
+    }),
+    [depth]
+  )
+
+  return <TextInputContext.Provider value={value}>{children}</TextInputContext.Provider>
+}
+
+export function useTextInput(): TextInputState {
+  const textInput = useContext(TextInputContext)
+  if (!textInput) throw new Error("useTextInput() used outside of a <TextInputProvider>")
+  return textInput
+}
+
+/* ------------------------------------------------------- config revision */
+
+export interface ConfigRevisionState {
+  /** Bumped whenever the config store is mutated. */
+  readonly revision: number
+  /** The project a caller wants revealed, if any. */
+  readonly reveal: string | null
+  /**
+   * Announce that config data changed. `revealProjectId` asks listeners to
+   * expand that project, so a database created in settings is actually visible
+   * in the explorer sidebar instead of hiding under a collapsed project.
+   */
+  readonly bump: (revealProjectId?: string) => void
+}
+
+const ConfigRevisionContext = createContext<ConfigRevisionState | null>(null)
+
+export function ConfigRevisionProvider({ children }: { children?: ReactNode }) {
+  const [state, setState] = useState<{ revision: number; reveal: string | null }>({ revision: 0, reveal: null })
+
+  const value = useMemo<ConfigRevisionState>(
+    () => ({
+      revision: state.revision,
+      reveal: state.reveal,
+      bump: revealProjectId => setState(current => ({ revision: current.revision + 1, reveal: revealProjectId ?? null })),
+    }),
+    [state]
+  )
+
+  return <ConfigRevisionContext.Provider value={value}>{children}</ConfigRevisionContext.Provider>
+}
+
+export function useConfigRevision(): ConfigRevisionState {
+  const value = useContext(ConfigRevisionContext)
+  if (!value) throw new Error("useConfigRevision() used outside of a <ConfigRevisionProvider>")
+  return value
+}
+
 /* ---------------------------------------------------------- command bus */
 
 /** One `:` command. `match` decides if a typed line applies, `run` executes it
