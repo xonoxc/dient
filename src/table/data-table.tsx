@@ -88,7 +88,7 @@ export function DataTable({
 
   const widthOf = useColumnWidths(columns, table.widthOf, availableWidth)
   const window = rowsWindow(sortedRows, cursor, viewportRows)
-  const tableWidth = 3 + columns.reduce((total, column) => total + widthOf(column.name), 0)
+  const tableWidth = Math.max(0, 2 + columns.reduce((total, column) => total + widthOf(column.name), 0))
 
   const scrollRef = useRef<ScrollBoxRenderable | null>(null)
 
@@ -116,7 +116,6 @@ export function DataTable({
       >
         <box flexDirection="column">
           <HeaderRow columns={columns} sort={sort} widthOf={widthOf} tableWidth={tableWidth} activeColumn={columnFocus ? activeColumn : undefined} />
-          <GridRule columns={columns} widthOf={widthOf} tableWidth={tableWidth} junction="┼" />
           {window.rows.map((row, windowIndex) => {
             const rowIndex = window.offset + windowIndex
             const selected = rowIndex === cursor
@@ -139,30 +138,6 @@ export function DataTable({
         </box>
       </scrollbox>
       <HorizontalScrollIndicator box={scrollRef.current} />
-    </box>
-  )
-}
-
-function GridRule({
-  columns,
-  widthOf,
-  tableWidth,
-  junction,
-}: {
-  columns: DataTableProps["table"]["columns"]
-  widthOf: (column: string) => number
-  tableWidth: number
-  junction: "┼" | "┴"
-}) {
-  const { colors: c } = useTheme()
-  return (
-    <box width={tableWidth} height={1} flexDirection="row" paddingX={1}>
-      <text fg={c.grid} width={1}>─</text>
-      {columns.map(column => {
-        const width = widthOf(column.name)
-        const rule = `${"─".repeat(Math.max(0, width - 2))}${junction} `
-        return <text key={column.name} fg={c.grid} width={width} truncate>{rule}</text>
-      })}
     </box>
   )
 }
@@ -203,18 +178,19 @@ function HeaderRow({
   const theme = useTheme()
   const c = theme.colors
   return (
-    <box width={tableWidth} flexDirection="row" paddingX={1} backgroundColor={c.bgSurface}>
+    <box width={tableWidth} flexDirection="row" paddingLeft={1} backgroundColor={c.bgSurface}>
       <text fg={c.text} width={1}>
         {" "}
       </text>
-      {columns.map(column => {
+      {columns.map((column, index) => {
         const marker = sort?.column === column.name ? (sort.dir === "asc" ? " ▲" : " ▼") : ""
+        const last = index === columns.length - 1
         return (
-          <box key={column.name} width={widthOf(column.name)} flexDirection="row" overflow="hidden">
+          <box key={column.name} width={widthOf(column.name) - (last ? 1 : 0)} flexDirection="row" overflow="hidden">
             <text fg={activeColumn === column.name ? c.textBright : c.accent} width={Math.max(1, widthOf(column.name) - 2)} truncate>
               {column.name.toUpperCase()}{marker}
             </text>
-            <text fg={c.grid}>│ </text>
+            <text fg={c.grid}>{last ? "│" : "│ "}</text>
           </box>
         )
       })}
@@ -251,11 +227,11 @@ function RowLine({
     highlight !== undefined && highlight.length > 0 && formatted.toLowerCase().includes(highlight.toLowerCase())
 
   return (
-    <box width={tableWidth} flexDirection="row" paddingX={1} backgroundColor={selected ? c.bgHighlight : undefined}>
+    <box width={tableWidth} flexDirection="row" paddingLeft={1} backgroundColor={selected ? c.bgHighlight : undefined}>
       <text fg={selected ? c.accent : c.textMuted} width={1}>
         {selected ? "▶" : " "}
       </text>
-      {columns.map(column => {
+      {columns.map((column, index) => {
         const editingThis = editing && editing.column === column.name
         const activeCell = selected && columnFocus && activeColumn === column.name
         /* Only the focused row's cells carry scroll ids, unique per row, so
@@ -264,8 +240,9 @@ function RowLine({
         const formatted = editingThis ? editing.draft : formatCell(row[column.name])
         const fg = selected ? c.textBright : editingThis ? c.success : c.text
         const parts = matches(formatted) && !editingThis ? splitHighlighted(formatted, highlight!) : null
+        const last = index === columns.length - 1
         return (
-          <box key={column.name} id={cellId} width={widthOf(column.name)} flexDirection="row" overflow="hidden" backgroundColor={activeCell ? c.bgSurface : undefined}>
+          <box key={column.name} id={cellId} width={widthOf(column.name) - (last ? 1 : 0)} flexDirection="row" overflow="hidden" backgroundColor={activeCell ? c.bgSurface : undefined}>
             <box width={Math.max(1, widthOf(column.name) - 2)} overflow="hidden">
             {parts ? (
               <box flexDirection="row">
@@ -281,7 +258,7 @@ function RowLine({
               </text>
             )}
             </box>
-            <text fg={c.grid}>│ </text>
+            <text fg={c.grid}>{last ? "│" : "│ "}</text>
           </box>
         )
       })}

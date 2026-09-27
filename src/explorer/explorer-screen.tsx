@@ -644,7 +644,9 @@ export function ExplorerScreen() {
           </box>
         )}
       </box>
-      {finderOpen ? <FinderOverlay query={finderQuery} entries={finderMatches} cursor={finderCursor} loading={finderLoading} /> : null}
+      {finderOpen ? (
+        <FinderOverlay query={finderQuery} entries={finderMatches} cursor={finderCursor} loading={finderLoading} />
+      ) : null}
     </box>
   )
 }
@@ -727,7 +729,7 @@ function TableStrip({
           </text>
           {!compact ? (
             <>
-              <text fg={c.textMuted}>  </text>
+              <text fg={c.textMuted}> </text>
               <PageTrack offset={offset} pageSize={pageSize} total={total} />
             </>
           ) : null}

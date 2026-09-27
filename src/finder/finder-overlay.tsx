@@ -38,9 +38,7 @@ export function FinderOverlay({ query, entries, cursor, loading = false }: Finde
           <text fg={c.textBright}>{query}</text>
           <text fg={c.accent}>▍</text>
           <box flexGrow={1} />
-          <text fg={c.textMuted}>
-            {loading ? "indexing…" : `${entries.length} ${entries.length === 1 ? "match" : "matches"}`}
-          </text>
+          <text fg={c.textMuted}>{loading ? "indexing…" : `${entries.length} matches`}</text>
         </box>
         <box height={1} />
         {loading ? (
@@ -52,7 +50,9 @@ export function FinderOverlay({ query, entries, cursor, loading = false }: Finde
             <text fg={c.textMuted}>no matches for "{query}"</text>
           </box>
         ) : (
-          entries.map((entry, index) => <FinderRow key={entry.id} entry={entry} selected={index === cursor} query={query} />)
+          entries.map((entry, index) => (
+            <FinderRow key={entry.id} entry={entry} selected={index === cursor} query={query} />
+          ))
         )}
         <text fg={c.textMuted}> type to filter · ↑/↓ move · Enter jump · Esc close </text>
       </ModalSurface>
@@ -60,15 +60,7 @@ export function FinderOverlay({ query, entries, cursor, loading = false }: Finde
   )
 }
 
-function FinderRow({
-  entry,
-  selected,
-  query,
-}: {
-  entry: FinderEntry
-  selected: boolean
-  query: string
-}) {
+function FinderRow({ entry, selected, query }: { entry: FinderEntry; selected: boolean; query: string }) {
   const theme = useTheme()
   const c = theme.colors
   const match = fuzzyMatch(query, entry.label) as FuzzyMatch | null
