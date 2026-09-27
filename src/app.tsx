@@ -208,6 +208,7 @@ function Shell() {
           {screen}
         </box>
         <CommandBar commands={allCommands} />
+        <ToastView />
         <StatusBar
           mode={status.mode}
           engine={status.engine}
@@ -220,8 +221,6 @@ function Shell() {
           hints={status.hints}
         />
       </box>
-      {/* Overlays stay flush to the terminal edge, not inset by the app padding. */}
-      <ToastView />
       <ModalView />
       <HelpScreen />
     </box>

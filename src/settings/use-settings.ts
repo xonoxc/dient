@@ -558,7 +558,6 @@ export const useSettings = (): UseSettingsResult => {
     const label = database.name
     testingRef.current = label
     setTesting(label)
-    toasts.push("info", `testing ${label}…`)
     void runService(connectionManager.pingConnection(database, connection))
       .then(ok => {
         testingRef.current = null

@@ -16,8 +16,9 @@
  * visible). Selected rows read via bright text on the theme's lighter
  * `bgHighlight` band, which follows the terminal colorscheme.
  */
-import { useEffect, useMemo, useRef } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useTheme } from "@/theme-context"
+import { HorizontalScrollIndicator } from "@/table/horizontal-scroll-indicator"
 import type { ScrollBoxRenderable } from "@opentui/core"
 import { formatCell, MAX_COL_WIDTH, MIN_COL_WIDTH, type UseTableResult } from "@/table/use-table"
 
@@ -96,34 +97,43 @@ export function DataTable({
   }, [activeColumn, cursor, columns, sortedRows.length])
 
   return (
-    <scrollbox
-      ref={scrollRef}
-      scrollX
-      scrollY={false}
-      flexGrow={1}
-      horizontalScrollbarOptions={{ showArrows: false }}
-    >
-      <box flexDirection="column">
-        <HeaderRow columns={columns} sort={sort} widthOf={widthOf} />
-        {window.rows.map((row, windowIndex) => {
-          const rowIndex = window.offset + windowIndex
-          const selected = rowIndex === cursor
-          return (
-            <RowLine
-              key={rowIndex}
-              row={row}
-              columns={columns}
-              selected={selected}
-              widthOf={widthOf}
-              editing={editing}
-              activeColumn={activeColumn}
-              rowIndex={rowIndex}
-              highlight={highlight}
-            />
-          )
-        })}
-      </box>
-    </scrollbox>
+    <box flexGrow={1} flexDirection="column">
+      <scrollbox
+        ref={scrollRef}
+        scrollX
+        scrollY={false}
+        flexGrow={1}
+        /* OpenTUI's own bar is switched off rather than restyled. Its slider
+         hard-codes the thumb glyph (`█`, with `▌`/`▐` half-cells at the ends)
+         and fills the entire track with a background, so it always occupies a
+         full row and always looks like a solid bar sitting on top of the
+         status bar. A row is the finest unit a character cell has, so the only
+         way to get something thinner is to draw it ourselves. */
+        horizontalScrollbarOptions={{ visible: false }}
+      >
+        <box flexDirection="column">
+          <HeaderRow columns={columns} sort={sort} widthOf={widthOf} />
+          {window.rows.map((row, windowIndex) => {
+            const rowIndex = window.offset + windowIndex
+            const selected = rowIndex === cursor
+            return (
+              <RowLine
+                key={rowIndex}
+                row={row}
+                columns={columns}
+                selected={selected}
+                widthOf={widthOf}
+                editing={editing}
+                activeColumn={activeColumn}
+                rowIndex={rowIndex}
+                highlight={highlight}
+              />
+            )
+          })}
+        </box>
+      </scrollbox>
+      <HorizontalScrollIndicator box={scrollRef.current} />
+    </box>
   )
 }
 
@@ -200,9 +210,7 @@ function RowLine({
   const theme = useTheme()
   const c = theme.colors
   const matches = (formatted: string): boolean =>
-    highlight !== undefined &&
-    highlight.length > 0 &&
-    formatted.toLowerCase().includes(highlight.toLowerCase())
+    highlight !== undefined && highlight.length > 0 && formatted.toLowerCase().includes(highlight.toLowerCase())
 
   return (
     <box flexDirection="row" paddingX={1} backgroundColor={selected ? c.bgHighlight : undefined}>
@@ -216,8 +224,7 @@ function RowLine({
         const cellId = selected && activeColumn === column.name ? `dient-col-${rowIndex}-${column.name}` : undefined
         const formatted = editingThis ? editing.draft : formatCell(row[column.name])
         const fg = selected ? c.textBright : editingThis ? c.success : c.text
-        const parts =
-          matches(formatted) && !editingThis ? splitHighlighted(formatted, highlight!) : null
+        const parts = matches(formatted) && !editingThis ? splitHighlighted(formatted, highlight!) : null
         return (
           <box key={column.name} id={cellId} width={widthOf(column.name)}>
             {parts ? (

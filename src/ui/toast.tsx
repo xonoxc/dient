@@ -1,7 +1,7 @@
 /**
- * Toast stack, rendered fixed at the bottom of the viewport (just above the
- * status bar). Auto-dismiss timeouts are owned by `ToastProvider`, so this
- * component only draws whatever toasts are currently pending.
+ * Inline transient notice. Auto-dismiss timeouts are owned by `ToastProvider`;
+ * the newest notice shares one row with the app chrome instead of floating
+ * over and obscuring the workspace.
  */
 import { useTheme } from "@/theme-context"
 import { useToasts, type ToastKind } from "@/app-context"
@@ -16,18 +16,13 @@ const TOAST_COLOR: Record<ToastKind, "error" | "warning" | "success" | "info"> =
 export function ToastView() {
   const theme = useTheme()
   const { toasts } = useToasts()
-  if (toasts.length === 0) return null
+  const toast = toasts[toasts.length - 1]
+  if (!toast) return null
 
   return (
-    <box position="absolute" bottom={1} right={0} flexDirection="column" alignItems="flex-end" paddingRight={2}>
-      {toasts.map(toast => (
-        <box key={toast.id} backgroundColor={theme.colors.bgSurface} paddingX={1} marginBottom={0}>
-          <text fg={theme.colors[TOAST_COLOR[toast.kind]]}>
-            {"● "}
-            {toast.text}
-          </text>
-        </box>
-      ))}
+    <box height={1} flexDirection="row" alignItems="center" paddingX={1} overflow="hidden">
+      <text fg={theme.colors[TOAST_COLOR[toast.kind]]}>● </text>
+      <text fg={theme.colors.text} truncate>{toast.text}</text>
     </box>
   )
 }

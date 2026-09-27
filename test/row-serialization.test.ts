@@ -24,14 +24,17 @@ const HDR_2 = "# Use NULL explicitly for SQL NULL."
 const HDR_3 = "# Missing columns are left unchanged."
 
 describe("serializeRowToKeyValue", () => {
-  test("writes the comment header then one column: value line per schema column", () => {
+  test("writes the comment header and spaced column: value lines in schema order", () => {
     const text = serializeRowToKeyValue(USERS, ALICE)
     expect(text.split("\n")).toEqual([
       HDR_1,
       HDR_2,
       HDR_3,
+      "",
       "id: 1",
+      "",
       "name: alice",
+      "",
       "email: alice@example.com",
       "",
     ])

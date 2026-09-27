@@ -1,61 +1,57 @@
-/**
- * Help overlay. A full viewport panel listing every keybinding, mode, and
- * command. `?` or Esc closes it. The panel is laid out in two columns so the
- * whole content fits a 24-row viewport without overflowing the top border.
- */
-import { useKeyboard } from "@opentui/react"
+/** Compact, truthful key reference for the current screen. */
+import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useTheme } from "@/theme-context"
 import { useRouter } from "@/app-context"
 
-const BINDINGS: ReadonlyArray<[string, string, string]> = [
-  ["NORMAL", "s", "open settings"],
-  ["NORMAL", "e", "back to explorer (settings)"],
-  ["NORMAL", "j / k", "move up / down"],
-  ["NORMAL", "h / l", "focus sidebar / table"],
-  ["NORMAL", "gg / G", "first / last row"],
-  ["NORMAL", "i", "insert mode · edit cell / new row"],
-  ["NORMAL", "v", "visual mode · select rows"],
-  ["NORMAL", "Enter", "expand node · open table"],
-  ["NORMAL", "dd", "delete row"],
-  ["NORMAL", "Tab / Space", "next connection · jump to table / db / project"],
-  ["NORMAL", ":", "command mode"],
-  ["NORMAL", "/", "search"],
-  ["NORMAL", "?", "help"],
-  ["INSERT", "Esc", "back to normal"],
-  ["INSERT", "Enter", "confirm edit"],
-  ["INSERT", "Ctrl-c", "cancel edit"],
+type Binding = readonly [string, string]
+
+const EXPLORER: ReadonlyArray<Binding> = [
+  ["j / k (↓ / ↑)", "move down / up"],
+  ["gg / G", "first / last"],
+  ["h / l", "focus sidebar / table"],
+  ["← / →", "previous / next col"],
+  ["Enter", "open / edit cell"],
+  ["i", "edit row in $EDITOR"],
+  ["Space", "open quick finder"],
+  ["/", "filter current page"],
+  ["n / N", "next / prev match"],
+  ["Ctrl+f / Ctrl+b", "next / prev page"],
+  ["Tab", "next connection"],
+  ["s", "settings"],
 ]
 
-const COMMANDS: ReadonlyArray<[string, string]> = [
+const SETTINGS: ReadonlyArray<Binding> = [
+  ["j / ↓", "move down"],
+  ["k / ↑", "move up"],
+  ["gg / G", "first / last"],
+  ["Enter", "expand / select"],
+  ["a", "add database"],
+  ["p", "add project"],
+  ["r", "rename"],
+  ["t", "test connection"],
+  ["d", "delete"],
+  ["e", "return to explorer"],
+]
+
+const COMMANDS: ReadonlyArray<Binding> = [
   [":e <table>", "open a table"],
-  [":connect <name>", "switch connection"],
-  [":refresh", "reload tables + data"],
+  [":connect <name>", "switch database"],
+  [":refresh", "reload current table"],
   [":settings", "open settings"],
-  [":help", "open help"],
-  [":w", "save changes"],
-  [":q", "quit"],
+  [":help", "show this reference"],
+  [":w", "flush pending changes"],
+  [":q", "quit / back"],
 ]
 
-const pad = (text: string, width: number): string => text.padEnd(width).slice(0, width)
-
-const half = <T,>(items: ReadonlyArray<T>): readonly [ReadonlyArray<T>, ReadonlyArray<T>] => {
-  const split = Math.ceil(items.length / 2)
-  return [items.slice(0, split), items.slice(split)]
-}
-
-function BindingCell({ entry }: { entry: readonly [string, string, string] }) {
-  const [mode, key, action] = entry
-  return <text truncate>{`${pad(mode, 9)}${pad(key, 14)}${action}`}</text>
-}
-
-function CommandCell({ entry }: { entry: readonly [string, string] }) {
-  const [cmd, hint] = entry
-  return <text truncate>{`${pad(cmd, 20)}${hint}`}</text>
+const halves = <T,>(values: ReadonlyArray<T>): readonly [ReadonlyArray<T>, ReadonlyArray<T>] => {
+  const split = Math.ceil(values.length / 2)
+  return [values.slice(0, split), values.slice(split)]
 }
 
 export function HelpScreen() {
   const theme = useTheme()
   const router = useRouter()
+  const { width, height } = useTerminalDimensions()
   const c = theme.colors
 
   useKeyboard(e => {
@@ -66,8 +62,13 @@ export function HelpScreen() {
 
   if (!router.helpOpen) return null
 
-  const [bindingLeft, bindingRight] = half(BINDINGS)
-  const [commandsLeft, commandsRight] = half(COMMANDS)
+  const isSettings = router.screen === "settings"
+  const bindings = isSettings ? SETTINGS : EXPLORER
+  const [left, right] = halves(bindings)
+  const panelWidth = Math.max(36, Math.min(76, width - 4))
+  const columnWidth = Math.floor((panelWidth - 4) / 2)
+  const keyWidth = Math.min(18, Math.max(11, columnWidth - 12))
+  const [commandLeft, commandRight] = halves(COMMANDS)
 
   return (
     <box
@@ -80,43 +81,51 @@ export function HelpScreen() {
     >
       <box
         borderStyle="rounded"
-        borderColor={c.border}
-        width={70}
+        borderColor={c.borderFocused}
+        backgroundColor={c.bgSurface}
+        width={panelWidth}
+        maxHeight={Math.max(10, height - 2)}
         flexDirection="column"
         paddingX={1}
         paddingY={1}
       >
-        <text fg={c.accent}> dient · keybindings </text>
-        <text fg={c.textMuted}>vim-inspired browsing — press ? or Esc to close</text>
-
+        <box flexDirection="row" alignItems="center">
+          <text fg={c.accent}>dient · keybindings</text>
+          <box flexGrow={1} />
+          <text fg={c.textMuted}>?</text>
+        </box>
+        <text fg={c.textMuted}>{isSettings ? "settings" : "explorer"} · Vim keys and arrows · Esc closes</text>
         <box height={1} />
+        <text fg={c.accent}>NAVIGATION & ACTIONS</text>
         <box flexDirection="row">
-          <box flexDirection="column" width={33}>
-            {bindingLeft.map((entry, i) => (
-              <BindingCell key={i} entry={entry} />
-            ))}
+          <box width={columnWidth} flexDirection="column">
+            {left.map(([key, action]) => <BindingRow key={key} keyName={key} action={action} keyWidth={keyWidth} />)}
           </box>
-          <box flexDirection="column" width={33}>
-            {bindingRight.map((entry, i) => (
-              <BindingCell key={i} entry={entry} />
-            ))}
+          <box width={columnWidth} flexDirection="column">
+            {right.map(([key, action]) => <BindingRow key={key} keyName={key} action={action} keyWidth={keyWidth} />)}
           </box>
         </box>
-
         <box height={1} />
+        <text fg={c.accent}>COMMANDS</text>
         <box flexDirection="row">
-          <box flexDirection="column" width={33}>
-            {commandsLeft.map((entry, i) => (
-              <CommandCell key={i} entry={entry} />
-            ))}
+          <box width={columnWidth} flexDirection="column">
+            {commandLeft.map(([key, action]) => <BindingRow key={key} keyName={key} action={action} keyWidth={keyWidth} />)}
           </box>
-          <box flexDirection="column" width={33}>
-            {commandsRight.map((entry, i) => (
-              <CommandCell key={i} entry={entry} />
-            ))}
+          <box width={columnWidth} flexDirection="column">
+            {commandRight.map(([key, action]) => <BindingRow key={key} keyName={key} action={action} keyWidth={keyWidth} />)}
           </box>
         </box>
       </box>
+    </box>
+  )
+}
+
+function BindingRow({ keyName, action, keyWidth }: { keyName: string; action: string; keyWidth: number }) {
+  const { colors: c } = useTheme()
+  return (
+    <box height={1} flexDirection="row" overflow="hidden">
+      <text fg={c.textBright} width={keyWidth} truncate>{keyName}</text>
+      <text fg={c.textMuted} truncate>{action}</text>
     </box>
   )
 }

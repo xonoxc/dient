@@ -47,7 +47,7 @@ const FORMAT_HEADER: ReadonlyArray<string> = [
   "# Missing columns are left unchanged.",
 ]
 
-/** Serialize a row as schema-ordered `column: value` lines with a comment header. */
+/** Serialize schema-ordered fields with a blank spacer between values. */
 export const serializeRowToKeyValue = (
   columns: ReadonlyArray<TableColumn>,
   row: Readonly<Record<string, unknown>>
@@ -60,7 +60,7 @@ export const serializeRowToKeyValue = (
        which the parser rightly rejects as an empty value. */
     return `${column.name}: ${text === "" ? EMPTY_LITERAL : text}`
   })
-  return [...FORMAT_HEADER, ...lines].join("\n") + "\n"
+  return [...FORMAT_HEADER, "", lines.join("\n\n"), ""].join("\n")
 }
 
 /** Parse a field's edited text into a query parameter (cell-editor semantics):

@@ -7,8 +7,17 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useTheme } from "@/theme-context"
-import { useRouter, useCommandLine, useSessionStatus, useToasts, useServices, useTextInput, type RoutedKey } from "@/app-context"
+import {
+  useRouter,
+  useCommandLine,
+  useSessionStatus,
+  useToasts,
+  useServices,
+  useTextInput,
+  type RoutedKey,
+} from "@/app-context"
 import { Sidebar } from "@/sidebar/sidebar"
+import { SIDEBAR_WIDTH } from "@/sidebar/fit-label"
 import { DataTable } from "@/table/data-table"
 import { useVimMode } from "@/vim"
 import { useExplorer } from "@/explorer/use-explorer"
@@ -20,6 +29,7 @@ import { buildFinderIndex, type FinderEntry } from "@/finder/finder"
 import { FinderOverlay } from "@/finder/finder-overlay"
 import { fuzzyMatch } from "@/finder/fuzzy"
 import { resolveTypedChar } from "@/ui/text-entry"
+import { LoadingIndicator } from "@/ui/loading-indicator"
 
 const TABLE_MOVE_KEYS = new Set(["j", "k", "g", "G"])
 
@@ -55,8 +65,12 @@ export function ExplorerScreen() {
   const { height, width } = useTerminalDimensions()
   const viewportRows = Math.max(1, height - 2)
   /* The area the grid gets for its columns: terminal width less the app page
-     padding, the 28-wide sidebar, the leading cursor glyph, and row padding. */
-  const dataWidth = Math.max(0, width - 2 - 26 - 3)
+     padding, the sidebar, the leading cursor glyph, and row padding.
+     The sidebar width is read from the sidebar rather than repeated here — the
+     literal was stale (it said 26 while the sidebar is 32), and every cell of
+     the difference became permanent horizontal overflow: the rightmost column
+     was always cut off and a scrollbar was always on screen. */
+  const dataWidth = Math.max(0, width - 2 - SIDEBAR_WIDTH - 3)
 
   /* Never leave the keyboard claimed if the screen goes away mid-edit. */
   useEffect(() => releaseText, [])
@@ -197,8 +211,11 @@ export function ExplorerScreen() {
   const finderQueryRef = useRef("")
   const [finderCursor, setFinderCursor] = useState(0)
   const [finderEntries, setFinderEntries] = useState<ReadonlyArray<FinderEntry>>([])
+  const [finderLoading, setFinderLoading] = useState(false)
+  const finderRequest = useRef(0)
 
   const openFinder = (cause?: RoutedKey) => {
+    const request = ++finderRequest.current
     finderOpenRef.current = true
     claimText(cause)
     setFinderOpen(true)
@@ -206,11 +223,20 @@ export function ExplorerScreen() {
     setFinderQuery("")
     setFinderCursor(0)
     setFinderEntries([])
+    setFinderLoading(true)
     void buildFinderIndex(configStore, active ? active.database : null, explorer.tables)
-      .then(entries => setFinderEntries(entries))
-      .catch(() => setFinderEntries([]))
+      .then(entries => {
+        if (finderRequest.current === request) setFinderEntries(entries)
+      })
+      .catch(() => {
+        if (finderRequest.current === request) setFinderEntries([])
+      })
+      .finally(() => {
+        if (finderRequest.current === request) setFinderLoading(false)
+      })
   }
   const closeFinder = () => {
+    finderRequest.current++
     finderOpenRef.current = false
     releaseText()
     setFinderOpen(false)
@@ -218,6 +244,7 @@ export function ExplorerScreen() {
     setFinderQuery("")
     setFinderCursor(0)
     setFinderEntries([])
+    setFinderLoading(false)
   }
   const finderType = (character: string) => {
     finderQueryRef.current += character
@@ -245,9 +272,7 @@ export function ExplorerScreen() {
     }
     scored.sort(
       (a, b) =>
-        b.score - a.score ||
-        rank[b.entry.kind] - rank[a.entry.kind] ||
-        a.entry.label.localeCompare(b.entry.label)
+        b.score - a.score || rank[b.entry.kind] - rank[a.entry.kind] || a.entry.label.localeCompare(b.entry.label)
     )
     return scored.slice(0, 10).map(result => result.entry)
   }, [finderEntries, finderQuery])
@@ -449,6 +474,12 @@ export function ExplorerScreen() {
         case "k":
           sidebar.move(-1)
           return
+        case "down":
+          sidebar.move(1)
+          return
+        case "up":
+          sidebar.move(-1)
+          return
         case "g":
         case "G":
           sidebar.jump(key === "G" ? "last" : "first")
@@ -482,8 +513,12 @@ export function ExplorerScreen() {
         openFinder(e)
         return
       }
-      if (key === "h" || key === "left") {
+      if (key === "h") {
         setFocus("sidebar")
+        return
+      }
+      if (key === "l") {
+        setFocus("table")
         return
       }
       if (key === "s") {
@@ -525,8 +560,8 @@ export function ExplorerScreen() {
         vim.pressKey(key)
         return
       }
-      if (TABLE_MOVE_KEYS.has(key)) {
-        vim.pressKey(key)
+      if (TABLE_MOVE_KEYS.has(key) || key === "up" || key === "down") {
+        vim.pressKey(key === "up" ? "k" : key === "down" ? "j" : key)
         return
       }
       /* n/N hop between matches inside an active filter (the row window only
@@ -579,7 +614,7 @@ export function ExplorerScreen() {
           </box>
         ) : loading ? (
           <box flexGrow={1} alignItems="center" justifyContent="center">
-            <text fg={c.textMuted}>connecting…</text>
+            <LoadingIndicator label={tableName ? `loading ${tableName}…` : "connecting…"} />
           </box>
         ) : active ? (
           <DataTable
@@ -597,7 +632,7 @@ export function ExplorerScreen() {
           </box>
         )}
       </box>
-      {finderOpen ? <FinderOverlay query={finderQuery} entries={finderMatches} cursor={finderCursor} /> : null}
+      {finderOpen ? <FinderOverlay query={finderQuery} entries={finderMatches} cursor={finderCursor} loading={finderLoading} /> : null}
     </box>
   )
 }
@@ -606,13 +641,7 @@ function SearchBar({ query, matches }: { query: string; matches: number }) {
   const theme = useTheme()
   const c = theme.colors
   return (
-    <box
-      height={1}
-      paddingX={1}
-      flexDirection="row"
-      alignItems="center"
-      overflow="hidden"
-    >
+    <box height={1} paddingX={1} flexDirection="row" alignItems="center" overflow="hidden">
       <text fg={c.accent}>/</text>
       <text fg={c.textBright}>{query}</text>
       <text fg={c.accent}>▍</text>

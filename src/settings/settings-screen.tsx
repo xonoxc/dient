@@ -9,12 +9,13 @@
  * Focus lives entirely here while this screen is active.
  */
 import { useEffect, useRef } from "react"
-import { useKeyboard } from "@opentui/react"
+import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useTheme } from "@/theme-context"
 import { useRouter, useCommandLine, useSessionStatus, useTextInput, type RoutedKey } from "@/app-context"
 import { useSettings, type SettingsForm, type SettingsListItem } from "@/settings/use-settings"
 import { FIELD_LABEL, CONNECTION_FIELDS, ADD_CHOICES } from "@/settings/use-settings"
 import { resolveTypedChar } from "@/ui/text-entry"
+import { LoadingIndicator } from "@/ui/loading-indicator"
 
 export function SettingsScreen() {
   const theme = useTheme()
@@ -23,6 +24,7 @@ export function SettingsScreen() {
   const commandLine = useCommandLine()
   const session = useSessionStatus()
   const settings = useSettings()
+  const { width, height } = useTerminalDimensions()
 
   const {
     items,
@@ -56,6 +58,9 @@ export function SettingsScreen() {
   } = settings
 
   const textInput = useTextInput()
+  const selectedItem = items[cursor]
+  const showDetails = width >= 100
+  const listWidth = Math.min(48, Math.floor(width * 0.38))
 
   const fieldLabel = field ? (field === "uri" ? "connection string" : (FIELD_LABEL[field as keyof typeof FIELD_LABEL] ?? "value")) : ""
 
@@ -64,9 +69,7 @@ export function SettingsScreen() {
       /* Ownership decides the mode, not the local `form` value. */
       mode: textInput.active ? "insert" : "normal",
       table: "settings",
-      hints: testing
-        ? [`testing ${testing}…`]
-        : form
+      hints: form
           ? form.kind === "addChoice"
             ? ["j/k move", "Enter open", "Esc cancel"]
             : form.kind === "connect" && form.mode === "uri"
@@ -160,9 +163,11 @@ export function SettingsScreen() {
         router.setScreen("explorer")
         return
       case "j":
+      case "down":
         move(1)
         return
       case "k":
+      case "up":
         move(-1)
         return
       case "g":
@@ -193,20 +198,50 @@ export function SettingsScreen() {
   })
 
   return (
-    <box flexGrow={1} flexDirection="column" borderStyle="rounded" borderColor={c.border} marginX={1}>
-      <box paddingX={1}>
-        <text fg={c.textBright}>SETTINGS</text>
-        <text fg={c.textMuted}> · projects / databases</text>
+    <box flexGrow={1} flexDirection="column" overflow="hidden">
+      <box height={3} flexDirection="row" alignItems="center" paddingX={1}>
+        <box flexDirection="column">
+          <text fg={c.accent}>SETTINGS</text>
+          <text fg={c.textMuted}>Projects and database connections</text>
+        </box>
+        <box flexGrow={1} />
+        <text fg={c.textMuted}>{projects.length} project{projects.length === 1 ? "" : "s"}</text>
       </box>
 
-      <box flexGrow={1} flexDirection="column" paddingX={1} overflow="hidden">
-        {items.length === 0 ? (
-          <text fg={c.textMuted}>no projects yet — press a to add one</text>
-        ) : (
-          items.map((item, index) => (
-            <SettingsRow key={item.id} item={item} index={index} cursor={cursor} testing={testing} />
-          ))
-        )}
+      <box flexGrow={1} flexDirection="row" overflow="hidden">
+        <box width={showDetails ? listWidth : "100%"} flexDirection="column" overflow="hidden">
+          <box height={1} paddingX={1}>
+            <text fg={c.textMuted}>WORKSPACES</text>
+          </box>
+          <box flexGrow={1} flexDirection="column" paddingX={1} paddingTop={1} overflow="hidden">
+            {items.length === 0 ? (
+              <box flexDirection="column">
+                <text fg={c.textBright}>No workspaces yet</text>
+                <text fg={c.textMuted}>Press p to create a project, then add a database.</text>
+              </box>
+            ) : (
+              items.map((item, index) => (
+                <SettingsRow
+                  key={item.id}
+                  item={item}
+                  index={index}
+                  cursor={cursor}
+                  testing={testing}
+                  showSummary={!showDetails}
+                />
+              ))
+            )}
+          </box>
+        </box>
+
+        {showDetails ? (
+          <>
+            <box width={1} height="100%">
+              <text fg={c.border}>{"│\n".repeat(Math.max(1, height))}</text>
+            </box>
+            <SettingsDetails item={selectedItem} projectCount={projects.length} />
+          </>
+        ) : null}
       </box>
 
       <FormStatus
@@ -220,16 +255,60 @@ export function SettingsScreen() {
         projectName={form?.kind === "addChoice" ? (projects.find(p => p.id === form.projectId)?.name ?? "project") : ""}
       />
 
-      {/* Filesystem matches for a SQLite path, on their own row so they never
-          crowd the form's status line. */}
       {form?.kind === "connect" && draft.length > 0 && completions.length > 0 ? (
         <box height={1} paddingX={1} overflow="hidden">
-          <text fg={c.textMuted} truncate>
-            {completions.slice(0, 8).join("  ")}
-            {completions.length > 8 ? "  …" : ""}
-          </text>
+          <text fg={c.textMuted} truncate>{completions.slice(0, 8).join("  ")}{completions.length > 8 ? "  …" : ""}</text>
         </box>
       ) : null}
+    </box>
+  )
+}
+
+function SettingsDetails({ item, projectCount }: { item?: SettingsListItem; projectCount: number }) {
+  const { colors: c } = useTheme()
+  const connection = item?.connection
+  const location = connection?.filename
+    ? connection.filename
+    : connection
+      ? `${connection.user ? `${connection.user}@` : ""}${connection.host ?? "localhost"}${connection.port ? `:${connection.port}` : ""}`
+      : null
+
+  return (
+    <box flexGrow={1} flexDirection="column" paddingX={3} paddingY={1} overflow="hidden">
+      <text fg={c.textMuted}>SELECTION</text>
+      {item ? (
+        <>
+          <box height={1} />
+          <text fg={c.textBright}>{item.label}</text>
+          <text fg={item.kind === "database" ? c.accent : c.textMuted}>
+            {item.kind === "database" ? (item.meta ?? "database").toUpperCase() : "PROJECT"}
+          </text>
+          <box height={1} />
+          {item.kind === "project" ? (
+            <>
+              <text fg={c.textMuted}>Project workspace</text>
+              <text fg={c.textMuted}>Press Enter to view its databases.</text>
+            </>
+          ) : (
+            <>
+              <text fg={c.textMuted}>{connection ? "CONNECTION" : "CONNECTION MISSING"}</text>
+              <text fg={connection ? c.text : c.warning}>{location ?? "Add connection details with a."}</text>
+              {connection?.defaultDatabase ? <text fg={c.textMuted}>default database · {connection.defaultDatabase}</text> : null}
+            </>
+          )}
+          <box height={2} />
+          <text fg={c.textMuted}>{item.kind === "project" ? "p  create project" : "r  rename   d  remove"}</text>
+          <text fg={c.textMuted}>{item.kind === "project" ? "a  add database" : "t  test connection"}</text>
+        </>
+      ) : (
+        <>
+          <box height={1} />
+          <text fg={c.textBright}>Your database workspaces</text>
+          <box height={1} />
+          <text fg={c.textMuted}>{projectCount === 0 ? "Create a project to get started." : "Select a project or database to see details."}</text>
+          <text fg={c.textMuted}>Press ? for all keyboard shortcuts.</text>
+        </>
+      )}
     </box>
   )
 }
@@ -259,21 +338,13 @@ function FormStatus({
   if (testing) {
     return (
       <box height={1} flexDirection="row" paddingX={1} overflow="hidden">
-        <text fg={c.info}>testing connection {testing} …</text>
-        <box flexGrow={1} />
-        <text fg={c.textMuted}>retrying up to 3x · t again to re-test</text>
+        <LoadingIndicator label={`testing connection ${testing}…`} />
       </box>
     )
   }
 
   if (!form) {
-    return (
-      <box height={1} flexDirection="row" paddingX={1} overflow="hidden">
-        <text fg={c.textMuted}>
-          e explorer  j/k move  Enter  a db  p project  r rename  t test  d delete  ? help
-        </text>
-      </box>
-    )
+    return null
   }
 
   if (form.kind === "addChoice") {
@@ -343,11 +414,13 @@ function SettingsRow({
   index,
   cursor,
   testing,
+  showSummary,
 }: {
   item: SettingsListItem
   index: number
   cursor: number
   testing: string | null
+  showSummary: boolean
 }) {
   const theme = useTheme()
   const c = theme.colors
@@ -374,7 +447,7 @@ function SettingsRow({
         {item.meta ? ` <${item.meta}>` : ""}
       </text>
       <box flexGrow={1} />
-      <text fg={conn ? c.textMuted : c.warning}>{summary}</text>
+      {showSummary ? <text fg={conn ? c.textMuted : c.warning}>{summary}</text> : null}
       {testing && selected ? <text fg={c.info}> … testing</text> : null}
     </box>
   )

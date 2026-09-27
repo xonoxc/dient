@@ -4,15 +4,18 @@
  * absolute strip near the top of the explorer; the explorer owns the keyboard
  * and state, this is the pure view.
  */
+import { useTerminalDimensions } from "@opentui/react"
 import { useTheme } from "@/theme-context"
 import type { ThemeColors } from "@/theme"
 import { fuzzyMatch, splitByPositions, type FuzzyMatch } from "@/finder/fuzzy"
 import type { FinderEntry, FinderKind } from "@/finder/finder"
+import { LoadingIndicator } from "@/ui/loading-indicator"
 
 export interface FinderOverlayProps {
   readonly query: string
   readonly entries: ReadonlyArray<FinderEntry>
   readonly cursor: number
+  readonly loading?: boolean
 }
 
 const KIND_TAG: Record<FinderKind, string> = { table: "tbl", db: "db ", project: "prj" }
@@ -20,15 +23,17 @@ const KIND_TAG: Record<FinderKind, string> = { table: "tbl", db: "db ", project:
 const kindColor = (kind: FinderKind, c: ThemeColors) =>
   kind === "table" ? c.info : kind === "db" ? c.warning : c.accentMuted
 
-export function FinderOverlay({ query, entries, cursor }: FinderOverlayProps) {
+export function FinderOverlay({ query, entries, cursor, loading = false }: FinderOverlayProps) {
   const theme = useTheme()
+  const { width } = useTerminalDimensions()
   const c = theme.colors
+  const panelWidth = Math.max(32, Math.min(70, width - 4))
 
   return (
     <box position="absolute" width="100%" alignItems="center" flexDirection="column">
       <box
         marginTop={1}
-        width={70}
+        width={panelWidth}
         borderStyle="rounded"
         borderColor={c.border}
         backgroundColor={c.bg}
@@ -42,11 +47,15 @@ export function FinderOverlay({ query, entries, cursor }: FinderOverlayProps) {
           <text fg={c.accent}>▍</text>
           <box flexGrow={1} />
           <text fg={c.textMuted}>
-            {entries.length} {entries.length === 1 ? "match" : "matches"}
+            {loading ? "indexing…" : `${entries.length} ${entries.length === 1 ? "match" : "matches"}`}
           </text>
         </box>
         <box height={1} />
-        {entries.length === 0 ? (
+        {loading ? (
+          <box height={1}>
+            <LoadingIndicator label="searching your connections…" />
+          </box>
+        ) : entries.length === 0 ? (
           <box height={1}>
             <text fg={c.textMuted}>no matches for "{query}"</text>
           </box>
