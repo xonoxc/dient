@@ -100,6 +100,7 @@ export interface UseSettingsResult {
   readonly typeChar: (char: string) => void
   readonly backspace: () => void
   readonly setDraft: (draft: string) => void
+  readonly pasteText: (text: string) => void
   readonly tab: () => void
   /** In the connect form: `uri` ⇄ `fields`, then cycle the engine. */
   readonly cycleEngine: () => void
@@ -589,6 +590,24 @@ export const useSettings = (): UseSettingsResult => {
     setDraft: (text: string) => {
       draftRef.current = text
       setDraftState(text)
+    },
+    pasteText: (text: string) => {
+      const current = formRef.current
+      const pasted = text.replace(/\0/g, "").replace(/[\r\n]+/g, "").trim()
+      if (!pasted || !current || current.kind === "addChoice") return
+      if (current?.kind === "connect") {
+        const key = current.mode === "uri" ? "uri" : fieldsOf(current)[current.fieldIndex]
+        if (!key) return
+        const nextValue = (current.values[key] ?? "") + pasted
+        const next: SettingsForm = { ...current, values: { ...current.values, [key]: nextValue } }
+        formRef.current = next
+        draftRef.current = nextValue
+        setFormState(next)
+        setDraftState(nextValue)
+        return
+      }
+      draftRef.current += pasted
+      setDraftState(draftRef.current)
     },
     cycleEngine: () => {
       const current = formRef.current

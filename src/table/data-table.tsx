@@ -28,6 +28,7 @@ export interface DataTableProps {
   readonly availableWidth?: number
   readonly editing?: { readonly column: string; readonly draft: string } | null
   readonly activeColumn?: string
+  readonly columnFocus?: boolean
   readonly highlight?: string
   readonly empty?: string
 }
@@ -69,6 +70,7 @@ export function DataTable({
   availableWidth,
   editing = null,
   activeColumn,
+  columnFocus = false,
   highlight,
   empty,
 }: DataTableProps) {
@@ -86,6 +88,7 @@ export function DataTable({
 
   const widthOf = useColumnWidths(columns, table.widthOf, availableWidth)
   const window = rowsWindow(sortedRows, cursor, viewportRows)
+  const tableWidth = 3 + columns.reduce((total, column) => total + widthOf(column.name), 0)
 
   const scrollRef = useRef<ScrollBoxRenderable | null>(null)
 
@@ -112,7 +115,8 @@ export function DataTable({
         horizontalScrollbarOptions={{ visible: false }}
       >
         <box flexDirection="column">
-          <HeaderRow columns={columns} sort={sort} widthOf={widthOf} />
+          <HeaderRow columns={columns} sort={sort} widthOf={widthOf} tableWidth={tableWidth} activeColumn={columnFocus ? activeColumn : undefined} />
+          <GridRule columns={columns} widthOf={widthOf} tableWidth={tableWidth} junction="┼" />
           {window.rows.map((row, windowIndex) => {
             const rowIndex = window.offset + windowIndex
             const selected = rowIndex === cursor
@@ -125,14 +129,40 @@ export function DataTable({
                 widthOf={widthOf}
                 editing={editing}
                 activeColumn={activeColumn}
+                columnFocus={columnFocus}
                 rowIndex={rowIndex}
                 highlight={highlight}
+                tableWidth={tableWidth}
               />
             )
           })}
         </box>
       </scrollbox>
       <HorizontalScrollIndicator box={scrollRef.current} />
+    </box>
+  )
+}
+
+function GridRule({
+  columns,
+  widthOf,
+  tableWidth,
+  junction,
+}: {
+  columns: DataTableProps["table"]["columns"]
+  widthOf: (column: string) => number
+  tableWidth: number
+  junction: "┼" | "┴"
+}) {
+  const { colors: c } = useTheme()
+  return (
+    <box width={tableWidth} height={1} flexDirection="row" paddingX={1}>
+      <text fg={c.grid} width={1}>─</text>
+      {columns.map(column => {
+        const width = widthOf(column.name)
+        const rule = `${"─".repeat(Math.max(0, width - 2))}${junction} `
+        return <text key={column.name} fg={c.grid} width={width} truncate>{rule}</text>
+      })}
     </box>
   )
 }
@@ -161,26 +191,30 @@ function HeaderRow({
   columns,
   sort,
   widthOf,
+  tableWidth,
+  activeColumn,
 }: {
   columns: DataTableProps["table"]["columns"]
   sort: UseTableResult["sort"]
   widthOf: (column: string) => number
+  tableWidth: number
+  activeColumn?: string
 }) {
   const theme = useTheme()
   const c = theme.colors
   return (
-    <box flexDirection="row" paddingX={1}>
+    <box width={tableWidth} flexDirection="row" paddingX={1} backgroundColor={c.bgSurface}>
       <text fg={c.text} width={1}>
         {" "}
       </text>
       {columns.map(column => {
         const marker = sort?.column === column.name ? (sort.dir === "asc" ? " ▲" : " ▼") : ""
         return (
-          <box key={column.name} width={widthOf(column.name)} overflow="hidden">
-            <text fg={c.accent} truncate>
-              {column.name.toUpperCase()}
-              {marker}
+          <box key={column.name} width={widthOf(column.name)} flexDirection="row" overflow="hidden">
+            <text fg={activeColumn === column.name ? c.textBright : c.accent} width={Math.max(1, widthOf(column.name) - 2)} truncate>
+              {column.name.toUpperCase()}{marker}
             </text>
+            <text fg={c.grid}>│ </text>
           </box>
         )
       })}
@@ -194,8 +228,10 @@ function RowLine({
   selected,
   rowIndex,
   widthOf,
+  tableWidth,
   editing,
   activeColumn,
+  columnFocus,
   highlight,
 }: {
   row: Record<string, unknown>
@@ -203,8 +239,10 @@ function RowLine({
   selected: boolean
   rowIndex: number
   widthOf: (column: string) => number
+  tableWidth: number
   editing?: DataTableProps["editing"]
   activeColumn?: string
+  columnFocus: boolean
   highlight?: string
 }) {
   const theme = useTheme()
@@ -213,12 +251,13 @@ function RowLine({
     highlight !== undefined && highlight.length > 0 && formatted.toLowerCase().includes(highlight.toLowerCase())
 
   return (
-    <box flexDirection="row" paddingX={1} backgroundColor={selected ? c.bgHighlight : undefined}>
+    <box width={tableWidth} flexDirection="row" paddingX={1} backgroundColor={selected ? c.bgHighlight : undefined}>
       <text fg={selected ? c.accent : c.textMuted} width={1}>
         {selected ? "▶" : " "}
       </text>
       {columns.map(column => {
         const editingThis = editing && editing.column === column.name
+        const activeCell = selected && columnFocus && activeColumn === column.name
         /* Only the focused row's cells carry scroll ids, unique per row, so
            `scrollChildIntoView` has exactly one child to reveal. */
         const cellId = selected && activeColumn === column.name ? `dient-col-${rowIndex}-${column.name}` : undefined
@@ -226,7 +265,8 @@ function RowLine({
         const fg = selected ? c.textBright : editingThis ? c.success : c.text
         const parts = matches(formatted) && !editingThis ? splitHighlighted(formatted, highlight!) : null
         return (
-          <box key={column.name} id={cellId} width={widthOf(column.name)}>
+          <box key={column.name} id={cellId} width={widthOf(column.name)} flexDirection="row" overflow="hidden" backgroundColor={activeCell ? c.bgSurface : undefined}>
+            <box width={Math.max(1, widthOf(column.name) - 2)} overflow="hidden">
             {parts ? (
               <box flexDirection="row">
                 {parts.map((part, index) => (
@@ -240,6 +280,8 @@ function RowLine({
                 {formatted}
               </text>
             )}
+            </box>
+            <text fg={c.grid}>│ </text>
           </box>
         )
       })}

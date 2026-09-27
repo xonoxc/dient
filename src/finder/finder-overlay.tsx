@@ -10,6 +10,7 @@ import type { ThemeColors } from "@/theme"
 import { fuzzyMatch, splitByPositions, type FuzzyMatch } from "@/finder/fuzzy"
 import type { FinderEntry, FinderKind } from "@/finder/finder"
 import { LoadingIndicator } from "@/ui/loading-indicator"
+import { ModalSurface } from "@/ui/modal-surface"
 
 export interface FinderOverlayProps {
   readonly query: string
@@ -31,16 +32,7 @@ export function FinderOverlay({ query, entries, cursor, loading = false }: Finde
 
   return (
     <box position="absolute" width="100%" alignItems="center" flexDirection="column">
-      <box
-        marginTop={1}
-        width={panelWidth}
-        borderStyle="rounded"
-        borderColor={c.border}
-        backgroundColor={c.bg}
-        flexDirection="column"
-        paddingX={1}
-        paddingY={0}
-      >
+      <ModalSurface width={panelWidth} paddingY={1} marginTop={1}>
         <box height={1} flexDirection="row" alignItems="center">
           <text fg={c.accent}>&gt; </text>
           <text fg={c.textBright}>{query}</text>
@@ -63,7 +55,7 @@ export function FinderOverlay({ query, entries, cursor, loading = false }: Finde
           entries.map((entry, index) => <FinderRow key={entry.id} entry={entry} selected={index === cursor} query={query} />)
         )}
         <text fg={c.textMuted}> type to filter · ↑/↓ move · Enter jump · Esc close </text>
-      </box>
+      </ModalSurface>
     </box>
   )
 }

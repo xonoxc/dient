@@ -64,11 +64,11 @@ describe("data table", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       const frame = await openTable(setup, "alice")
-      /* columns are padded to their (gutter + shared) widths, so headers and
-         values line up with at least two spaces of separation */
-      expect(frame).toMatch(/ID\s{2,}NAME\s{2,}EMAIL/)
-      expect(frame).toMatch(/1\s{2,}alice/)
-      expect(frame).toMatch(/3\s{2,}carol/)
+      /* vertical cell rules make the table boundaries visible while keeping
+         each header aligned with its values */
+      expect(frame).toMatch(/ID│\s+NAME│\s+EMAIL/)
+      expect(frame).toMatch(/1│\s+alice/)
+      expect(frame).toMatch(/3│\s+carol/)
     } finally {
       setup.renderer.destroy()
     }
@@ -89,15 +89,15 @@ describe("data table", () => {
 
       await pressKeys(setup, ["j"])
       await setup.waitForFrame(f => f.includes("▶2"))
-      expect(setup.captureCharFrame()).toMatch(/▶2\s+bob/)
+      expect(setup.captureCharFrame()).toMatch(/▶2│\s+bob/)
 
       await pressKeys(setup, ["j"])
       await setup.waitForFrame(f => f.includes("▶3"))
-      expect(setup.captureCharFrame()).toMatch(/▶3\s+carol/)
+      expect(setup.captureCharFrame()).toMatch(/▶3│\s+carol/)
 
       await pressKeys(setup, ["k", "k"])
       await setup.waitForFrame(f => f.includes("▶1"))
-      expect(setup.captureCharFrame()).toMatch(/▶1\s+alice/)
+      expect(setup.captureCharFrame()).toMatch(/▶1│\s+alice/)
     } finally {
       setup.renderer.destroy()
     }
@@ -128,7 +128,7 @@ describe("data table", () => {
       await pressKeys(setup, ["g", "g"])
       await setup.waitForFrame(f => f.includes("▶1"))
       const first = setup.captureCharFrame()
-      expect(first).toMatch(/▶1\s+user_0/)
+      expect(first).toMatch(/▶1│\s+user_0/)
       expect(first).not.toContain("user_199")
     } finally {
       setup.renderer.destroy()
@@ -151,7 +151,7 @@ describe("data table", () => {
       await pressKeys(setup, ["j", "j", "j", "j"])
       await setup.waitForFrame(f => f.includes("▶5"))
       const nearTop = setup.captureCharFrame()
-      expect(nearTop).toMatch(/▶5\s+user_4/)
+      expect(nearTop).toMatch(/▶5│\s+user_4/)
       expect(nearTop).toContain("user_0")
 
       /* 13 more j → cursor 18 is past the viewport half (the pane fills the
@@ -159,7 +159,7 @@ describe("data table", () => {
       await pressKeys(setup, ["j", "j", "j", "j", "j", "j", "j", "j", "j", "j", "j", "j", "j"])
       await setup.waitForFrame(f => f.includes("▶18"))
       const centered = setup.captureCharFrame()
-      expect(centered).toMatch(/▶18\s+user_17/)
+      expect(centered).toMatch(/▶18│\s+user_17/)
       expect(centered).not.toContain("user_0")
     } finally {
       setup.renderer.destroy()

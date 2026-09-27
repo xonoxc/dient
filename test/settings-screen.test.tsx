@@ -163,7 +163,7 @@ describe("settings screen", () => {
     }
   })
 
-  test("p opens the new-project prompt and creates a second project", async () => {
+  test("P opens the new-project prompt and creates a second project", async () => {
     const services = await resolveTestServices(freshConfigFile())
     await seedProject(services.store, {
       name: "demo",
@@ -176,7 +176,7 @@ describe("settings screen", () => {
       await openSettings(setup)
       await expandProject(setup)
 
-      await pressKeys(setup, ["p"])
+      await pressKeys(setup, ["P"])
       await setup.waitForFrame(f => f.includes("new project"))
       await pressKeys(setup, ["w", "o", "r", "k"])
       await setup.waitForFrame(f => f.includes("work"))

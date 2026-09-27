@@ -43,7 +43,9 @@ export interface ThemeColors {
   readonly textBright: RGBA
   readonly bg: RGBA
   readonly bgSurface: RGBA
+  readonly bgShadow: RGBA
   readonly bgHighlight: RGBA
+  readonly grid: RGBA
   readonly border: RGBA
   readonly borderFocused: RGBA
   readonly error: RGBA
@@ -155,7 +157,9 @@ export const makeTheme = (mode: ThemeMode, palette?: TerminalPalette): ThemeServ
     textBright: slot(15),
     bg,
     bgSurface: blend(bg, surfaceTint, SURFACE_TINT_AMOUNT),
+    bgShadow: blend(bg, slot(0), 0.08),
     bgHighlight: highlight,
+    grid: blend(bg, slot(8), 0.22),
     border: slot(8),
     borderFocused: slot(8),
     error: slot(1),

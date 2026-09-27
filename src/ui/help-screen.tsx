@@ -2,6 +2,7 @@
 import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useTheme } from "@/theme-context"
 import { useRouter } from "@/app-context"
+import { ModalSurface } from "@/ui/modal-surface"
 
 type Binding = readonly [string, string]
 
@@ -26,7 +27,8 @@ const SETTINGS: ReadonlyArray<Binding> = [
   ["gg / G", "first / last"],
   ["Enter", "expand / select"],
   ["a", "add database"],
-  ["p", "add project"],
+  ["p", "paste connection URI"],
+  ["Shift+P", "add project"],
   ["r", "rename"],
   ["t", "test connection"],
   ["d", "delete"],
@@ -79,16 +81,7 @@ export function HelpScreen() {
       justifyContent="center"
       backgroundColor={c.bg}
     >
-      <box
-        borderStyle="rounded"
-        borderColor={c.borderFocused}
-        backgroundColor={c.bgSurface}
-        width={panelWidth}
-        maxHeight={Math.max(10, height - 2)}
-        flexDirection="column"
-        paddingX={1}
-        paddingY={1}
-      >
+      <ModalSurface width={panelWidth} maxHeight={Math.max(10, height - 2)}>
         <box flexDirection="row" alignItems="center">
           <text fg={c.accent}>dient · keybindings</text>
           <box flexGrow={1} />
@@ -115,7 +108,7 @@ export function HelpScreen() {
             {commandRight.map(([key, action]) => <BindingRow key={key} keyName={key} action={action} keyWidth={keyWidth} />)}
           </box>
         </box>
-      </box>
+      </ModalSurface>
     </box>
   )
 }

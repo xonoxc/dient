@@ -606,7 +606,18 @@ export function ExplorerScreen() {
       />
 
       <box flexGrow={1} flexDirection="column">
-        <TableStrip tableName={tableName} loading={loading} focus={focus === "table"} />
+        <TableStrip
+          tableName={tableName}
+          loading={loading}
+          focus={focus === "table"}
+          compact={width < 120}
+          offset={explorer.offset}
+          rows={explorer.table.sortedRows.length}
+          total={explorer.total}
+          pageSize={explorer.pageSize}
+          hasPrevPage={explorer.hasPrevPage}
+          hasNextPage={explorer.hasNextPage}
+        />
         {searchOpenRef.current ? <SearchBar query={searchBuffer.current} matches={explorer.searchCount} /> : null}
         {error ? (
           <box flexGrow={1} alignItems="center" justifyContent="center">
@@ -624,6 +635,7 @@ export function ExplorerScreen() {
             empty="no rows"
             editing={editor.preview}
             activeColumn={explorer.table.columns[editColumn]?.name ?? explorer.table.columns[0]?.name}
+            columnFocus={focus === "table"}
             highlight={explorer.search.trim() || undefined}
           />
         ) : (
@@ -666,25 +678,77 @@ function SearchBar({ query, matches }: { query: string; matches: number }) {
  * exactly one tab, so there is no row to lay out and nothing to scroll. The full
  * table list already lives in the sidebar, where it is navigable.
  */
-function TableStrip({ tableName, loading, focus }: { tableName: string | null; loading: boolean; focus: boolean }) {
+function TableStrip({
+  tableName,
+  loading,
+  focus,
+  compact,
+  offset,
+  rows,
+  total,
+  pageSize,
+  hasPrevPage,
+  hasNextPage,
+}: {
+  tableName: string | null
+  loading: boolean
+  focus: boolean
+  compact: boolean
+  offset: number
+  rows: number
+  total: number | null
+  pageSize: number
+  hasPrevPage: boolean
+  hasNextPage: boolean
+}) {
   const theme = useTheme()
   const c = theme.colors
 
   if (!tableName) {
     return (
       <box height={1} paddingX={1}>
-        <text fg={c.textMuted}>{loading ? "loading tables…" : "no table open"}</text>
+        <text fg={c.textMuted}>{loading ? "connecting" : "no table open"}</text>
       </box>
     )
   }
 
   return (
-    <box height={1} flexDirection="row">
+    <box height={1} flexDirection="row" overflow="hidden">
       <box height={1} paddingX={1} backgroundColor={c.bgHighlight}>
         <text fg={focus ? c.accent : c.textBright} truncate>
           {"\u258c " + tableName.toUpperCase()}
         </text>
       </box>
+      <box flexGrow={1} />
+      {total !== null && total > pageSize ? (
+        <box height={1} flexDirection="row" alignItems="center" paddingX={1}>
+          <text fg={c.textMuted}>
+            {compact ? `${offset + 1}–${offset + rows}/${total}` : `ROWS ${offset + 1}–${offset + rows} / ${total}`}
+          </text>
+          {!compact ? (
+            <>
+              <text fg={c.textMuted}>  </text>
+              <PageTrack offset={offset} pageSize={pageSize} total={total} />
+            </>
+          ) : null}
+          <text fg={hasPrevPage ? c.accent : c.textMuted}>{compact ? " ‹" : "  ‹ ^b"}</text>
+          <text fg={hasNextPage ? c.accent : c.textMuted}>{compact ? "  ›" : "   ^f ›"}</text>
+        </box>
+      ) : null}
+    </box>
+  )
+}
+
+function PageTrack({ offset, pageSize, total }: { offset: number; pageSize: number; total: number }) {
+  const { colors: c } = useTheme()
+  const pages = Math.max(1, Math.ceil(total / pageSize))
+  const ticks = Math.min(10, pages)
+  const current = Math.min(ticks - 1, Math.floor((offset / pageSize / pages) * ticks))
+  return (
+    <box flexDirection="row">
+      <text fg={c.accentMuted}>{"━".repeat(current)}</text>
+      <text fg={c.accent}>●</text>
+      <text fg={c.border}>{"─".repeat(Math.max(0, ticks - current - 1))}</text>
     </box>
   )
 }

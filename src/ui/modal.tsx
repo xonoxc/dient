@@ -6,6 +6,7 @@
 import { useKeyboard } from "@opentui/react"
 import { useTheme } from "@/theme-context"
 import { useDialog } from "@/app-context"
+import { ModalSurface } from "@/ui/modal-surface"
 
 /** A body taller than this is a bug in the message, not a layout to honour. */
 const BODY_MAX_LINES = 6
@@ -54,14 +55,7 @@ export function ModalView() {
       justifyContent="center"
       backgroundColor={c.bg}
     >
-      <box
-        flexDirection="column"
-        borderStyle="single"
-        borderColor={dialog.options.danger ? c.error : c.border}
-        paddingX={1}
-        paddingY={0}
-        width={60}
-      >
+      <ModalSurface width={60} paddingY={1}>
         <text fg={dialog.options.danger ? c.error : c.textBright}>{dialog.options.title}</text>
         {/* Height-capped so a body of any length cannot grow the panel until
            the closing border is pushed off screen. Horizontal wrapping is
@@ -78,7 +72,7 @@ export function ModalView() {
           <text fg={c.textMuted}>[(Y)es / (N)o] </text>
           <text fg={dialog.options.danger ? c.error : c.success}>{dialog.options.okLabel ?? "confirm"}</text>
         </box>
-      </box>
+      </ModalSurface>
     </box>
   )
 }
