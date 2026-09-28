@@ -48,12 +48,7 @@ describe("$EDITOR row editing", () => {
     const services = await resolveTestServices(freshConfigFile())
     await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: dataPath })
     /* The fake editor rewrites the row file: rename alice, clear her email. */
-    setEditor(
-      installEditor(
-        "save.sh",
-        `cat > "$1" <<'DIENTEOF'\nid: 1\nname: amy\nemail: NULL\nDIENTEOF\n`
-      )
-    )
+    setEditor(installEditor("save.sh", `cat > "$1" <<'DIENTEOF'\nid: 1\nname: amy\nemail: NULL\nDIENTEOF\n`))
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openUsers(setup)
@@ -134,7 +129,6 @@ describe("$EDITOR row editing", () => {
     }
   })
 })
-
 
 describe("editing a paged table", () => {
   /** A table spanning several pages, so an edit can be made off page 1. */

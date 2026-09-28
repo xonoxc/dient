@@ -79,7 +79,11 @@ export const parseConnectionString = (input: string): ConnectionString | null =>
   if (kind === "sqlite" || kind === "file") {
     const filename = rest.replace(/^\/\//, "").trim()
     if (!filename) return null
-    return { engine: "sqlite", filename, name: tailName(filename) }
+    return {
+      engine: "sqlite",
+      filename,
+      name: tailName(filename),
+    }
   }
 
   return null

@@ -63,8 +63,16 @@ describe("buildTree", () => {
     const db = database("d1", "p1", "main", "sqlite")
     const data: SidebarData = { projects: [p], databases: databasesOf("p1", [db]), connections: new Map() }
     const nodes = buildTree(data, new Set(["p1"]))
+
     expect(nodes).toHaveLength(2)
-    expect(nodes[1]).toMatchObject({ kind: "database", refId: db.id, label: "main", depth: 1, expanded: false, expandable: false })
+    expect(nodes[1]).toMatchObject({
+      kind: "database",
+      refId: db.id,
+      label: "main",
+      depth: 1,
+      expanded: false,
+      expandable: false,
+    })
   })
 
   test("a database with a connection folds the connection into the database row", () => {
@@ -77,6 +85,7 @@ describe("buildTree", () => {
       connections: connectionsOf("d1", [conn]),
     }
     const nodes = buildTree(data, new Set(["p1"]))
+
     expect(nodes).toHaveLength(2)
     expect(nodes[1]).toMatchObject({
       kind: "connection",
@@ -99,6 +108,7 @@ describe("buildTree", () => {
     const nodes = buildTree(data, new Set(["p1", "c1"]), {
       [conn.id as ConnectionId]: ["users", "orders"],
     })
+
     expect(nodes.map(n => ({ kind: n.kind, label: n.label, depth: n.depth }))).toEqual([
       { kind: "project", label: "demo", depth: 0 },
       { kind: "connection", label: "main", depth: 1 },
@@ -111,7 +121,12 @@ describe("buildTree", () => {
   test("collapsing a node hides its children", () => {
     const p = project("p1", "demo")
     const db = database("d1", "p1", "main", "sqlite")
-    const data: SidebarData = { projects: [p], databases: databasesOf("p1", [db]), connections: new Map() }
+    const data: SidebarData = {
+      projects: [p],
+      databases: databasesOf("p1", [db]),
+      connections: new Map(),
+    }
+
     expect(buildTree(data, new Set(["p1", "d1"]))).toHaveLength(2)
     expect(buildTree(data, new Set([]))).toHaveLength(1)
   })
@@ -126,6 +141,7 @@ describe("buildTree", () => {
       connections: connectionsOf("d1", [connection("c1", "d1", { filename: "x.db" })]),
     }
     const nodes = buildTree(data, new Set(["p1", "d1", "p2", "d2"]))
+
     expect(nodes.map(n => n.label)).toEqual(["alpha", "a-db", "beta", "b-db"])
   })
 
@@ -136,6 +152,7 @@ describe("buildTree", () => {
       connections: connectionsOf("d1", [connection("c1", "d1", { filename: "/deep/path/data.db" })]),
     }
     const nodes = buildTree(data, new Set(["p1"]))
+
     expect(nodes[1]!.label).toBe("main")
     expect(nodes[1]!.connection?.filename).toBe("/deep/path/data.db")
   })
@@ -144,6 +161,7 @@ describe("buildTree", () => {
     const p = project("p1", "demo")
     const data: SidebarData = { projects: [p], databases: new Map(), connections: new Map() }
     const nodes = buildTree(data, new Set(["not-a-real-id"]))
+
     expect(nodes[0]!.expanded).toBe(false)
     expect(buildTree(data, new Set([p.id]))[0]!.expanded).toBe(true)
   })
@@ -155,6 +173,7 @@ describe("selectedConnection", () => {
       { projects: [project("p1", "demo")], databases: new Map(), connections: new Map() },
       new Set()
     )
+
     expect(selectedConnection(nodes, 0)).toBeNull()
   })
 
@@ -166,6 +185,7 @@ describe("selectedConnection", () => {
     }
     const nodes = buildTree(data, new Set(["p1"]))
     const selected = selectedConnection(nodes, 1)
+
     expect(selected).not.toBeNull()
     expect(selected!.kind).toBe("connection")
     expect(selected!.connection).toMatchObject({ id: S.decodeSync(ConnectionId)("c1") })
@@ -176,6 +196,7 @@ describe("selectedConnection", () => {
       { projects: [project("p1", "demo")], databases: new Map(), connections: new Map() },
       new Set()
     )
+
     expect(selectedConnection(nodes, 9)).toBeNull()
   })
 })

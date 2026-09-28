@@ -4,7 +4,7 @@
  * state for table navigation and feeds the shell's status bar through
  * `SessionProvider`.
  */
-import { Fragment, useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useTheme } from "@/theme-context"
 import {
@@ -235,6 +235,7 @@ export function ExplorerScreen() {
         if (finderRequest.current === request) setFinderLoading(false)
       })
   }
+
   const closeFinder = () => {
     finderRequest.current++
     finderOpenRef.current = false

@@ -8,7 +8,10 @@ export async function readSystemClipboard(): Promise<string | null> {
     const result = await clipboard.read({ preferredTypes: ["text/plain"] })
     if (result.status !== "read") return null
     const text = new TextDecoder().decode(result.representation.bytes)
-    const singleLine = text.replace(/\0/g, "").replace(/[\r\n]+/g, "").trim()
+    const singleLine = text
+      .replace(/\0/g, "")
+      .replace(/[\r\n]+/g, "")
+      .trim()
     return singleLine.length > 0 ? singleLine : null
   } finally {
     await clipboard.dispose()
