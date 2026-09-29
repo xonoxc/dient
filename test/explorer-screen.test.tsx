@@ -11,7 +11,7 @@ import { Database as SqliteDatabase } from "bun:sqlite"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { pressKeys, renderApp } from "@test/support/render-ui"
+import { pressKeys, renderApp, waitForFrameDriven } from "@test/support/render-ui"
 import { freshConfigFile, freshSqliteDataFile, resolveTestServices, seedProject } from "@test/support/services-fixture"
 
 async function expandToConnection(setup: Awaited<ReturnType<typeof renderApp>>) {
@@ -66,6 +66,45 @@ describe("explorer screen", () => {
       expect(frame).toContain("▌ USERS")
       expect(frame).toContain("alice")
       expect(frame).toContain("main · sqlite")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  /* `V` opens a linewise row selection (the table's line is a row); `j`/`k`
+     extend it and `y` copies every row it spans. The count in the confirmation
+     is the user's own selection, so this pins both the span and the yank. */
+  test("V selects rows, j extends, y copies the selection to the clipboard", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile(),
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await expandToConnection(setup)
+      /* Focus must land on the table before the selection keys are read, so this
+         is two dispatches: the handler in one batch still sees the old focus. */
+      await pressKeys(setup, ["l"])
+      await pressKeys(setup, ["SHIFT+v"])
+      await setup.waitForFrame(f => f.includes("VISUAL"))
+
+      /* Two more rows join the anchor, and the status counts them live. */
+      await pressKeys(setup, ["j", "j"])
+      await setup.waitForFrame(f => f.includes("3 selected"))
+
+      await pressKeys(setup, ["y"])
+      /* The clipboard write resolves after the keypress, off the frame loop, so
+         the toast needs frames driven to arrive — same as an $EDITOR resume. It
+         names the selection on success, or reports the host failure on a
+         machine with no clipboard; either way the yank path ran. The exact
+         payload and the writer's lifetime are asserted in the clipboard tests. */
+      const frame = await waitForFrameDriven(setup, f => f.includes("clipboard"))
+      expect(frame).toMatch(/copied 3 rows to the clipboard|could not write to the clipboard/)
+      /* Yanking closes the selection, back in NORMAL. */
+      await setup.waitForFrame(f => f.includes("NORMAL"))
     } finally {
       setup.renderer.destroy()
     }

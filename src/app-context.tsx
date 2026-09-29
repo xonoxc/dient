@@ -189,6 +189,8 @@ export interface SessionStatus {
   readonly table?: string
   readonly rows?: number
   readonly total?: number
+  /** Rows in the current visual-mode selection, when one is open. */
+  readonly selected?: number
   /** 1-based first row on screen, when rows are paged in the database. */
   readonly rowStart?: number
   readonly hints: ReadonlyArray<string>

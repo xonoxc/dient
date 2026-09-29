@@ -2,12 +2,20 @@
  * Pure Vim-mode state machine. Every transition is a function of the current
  * state plus a single key (or an explicit `VimAction`), so the whole thing can
  * be unit-tested without rendering anything.
+ *
+ * Visual mode is linewise over rows: `V` anchors a selection on the cursor, and
+ * every move while it is open carries the head with it, so the selection is
+ * always the inclusive span between where it started and where it is now.
  */
 import { Option } from "effect"
 import type { Selection, SelectionRange, VimAction, VimState } from "@/vim/types"
 
 export const MODE_INSERT = "i" as const
 export const MODE_VISUAL = "v" as const
+/* Vim's linewise visual. In a table the row *is* the line, so `V` and `v` open
+   the same row selection — the distinction only means something once selection
+   can be narrower than a row. */
+export const VISUAL_LINE = "V" as const
 export const MOVE_DOWN = "j" as const
 export const MOVE_UP = "k" as const
 export const JUMP_FIRST = "g" as const
@@ -155,6 +163,8 @@ export const pressKey = (state: VimState, key: string): VimState => {
     case MODE_INSERT:
       return applyAction(state, enterInsert)
     case MODE_VISUAL:
+      return applyAction(state, toggleVisual)
+    case VISUAL_LINE:
       return applyAction(state, toggleVisual)
     case MOVE_DOWN:
       return applyAction(state, moveDown)

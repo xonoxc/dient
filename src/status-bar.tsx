@@ -25,6 +25,8 @@ export interface StatusBarProps {
   readonly table?: string
   readonly rows?: number
   readonly total?: number
+  /** Row count of the open visual-mode selection, shown while it is open. */
+  readonly selected?: number
   /** 1-based index of the first row on screen. Set when rows are paged in the
       database, so the count reads as a range rather than a total. */
   readonly rowStart?: number
@@ -62,8 +64,13 @@ export function StatusBar(props: StatusBarProps) {
           : ` ${props.rows} row${props.rows === 1 ? "" : "s"}`
       : ""
 
+  /* A visual selection is a count the user is actively changing, so it leads —
+     placing it after the row figure would push it off an 80-col terminal. */
+  const selectionInfo =
+    props.selected !== undefined && props.selected > 1 ? ` ${props.selected} selected` : ""
+
   /* Keep table/rows (rightmost) whole; drop location only if it does not fit. */
-  const rightBits = `${tableInfo}${rowInfo}`
+  const rightBits = `${tableInfo}${selectionInfo}${rowInfo}`
   const leftBits = locationText.slice(0, Math.max(0, MID_MAX - rightBits.length)).trimEnd()
   const mid = `${leftBits}${rightBits}`
 

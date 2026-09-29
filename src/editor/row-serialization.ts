@@ -23,6 +23,9 @@
  * The primary key is written (for orientation) but never updated — it keys the
  * UPDATE. Only columns whose value differs from the original row are reported,
  * and each is validated against its column type before being parsed.
+ *
+ * The clipboard form (`serializeRowsToClipboard`) is the same pairs with the
+ * comment header stripped, so a yanked row pastes back as data.
  */
 import type { TableColumn } from "@/inspector/types"
 import { formatCell } from "@/table/use-table"
@@ -47,12 +50,13 @@ const FORMAT_HEADER: ReadonlyArray<string> = [
   "# Missing columns are left unchanged.",
 ]
 
-/** Serialize schema-ordered fields with a blank spacer between values. */
-export const serializeRowToKeyValue = (
+/** One `column: value` line per field, schema order, no comment header. Shared
+    by the editor file and the clipboard so a yank pastes back as the same rows. */
+export const rowToKeyValueLines = (
   columns: ReadonlyArray<TableColumn>,
   row: Readonly<Record<string, unknown>>
-): string => {
-  const lines = columns.map(column => {
+): ReadonlyArray<string> =>
+  columns.map(column => {
     const value = row[column.name]
     if (value === null || value === undefined) return `${column.name}: ${NULL_LITERAL}`
     const text = formatCell(value)
@@ -60,8 +64,24 @@ export const serializeRowToKeyValue = (
        which the parser rightly rejects as an empty value. */
     return `${column.name}: ${text === "" ? EMPTY_LITERAL : text}`
   })
-  return [...FORMAT_HEADER, "", lines.join("\n\n"), ""].join("\n")
-}
+
+/** Serialize schema-ordered fields with a blank spacer between values. */
+export const serializeRowToKeyValue = (
+  columns: ReadonlyArray<TableColumn>,
+  row: Readonly<Record<string, unknown>>
+): string => [...FORMAT_HEADER, "", rowToKeyValueLines(columns, row).join("\n\n"), ""].join("\n")
+
+/**
+ * Rows as clipboard text: the editor's `column: value` pairs with the comment
+ * header dropped, so a yank is paste-ready data rather than instructions. Fields
+ * of one row sit on consecutive lines and rows are separated by a blank line,
+ * which keeps a multi-row yank unambiguous (the editor file only ever holds one
+ * row, so its in-row spacing is a readability choice, not part of the format).
+ */
+export const serializeRowsToClipboard = (
+  columns: ReadonlyArray<TableColumn>,
+  rows: ReadonlyArray<Readonly<Record<string, unknown>>>
+): string => rows.map(row => rowToKeyValueLines(columns, row).join("\n")).join("\n\n") + "\n"
 
 /** Parse a field's edited text into a query parameter (cell-editor semantics):
     numerics become numbers, an empty draft on a nullable column becomes NULL,

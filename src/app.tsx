@@ -218,6 +218,7 @@ function Shell() {
           table={status.table}
           rows={status.rows}
           total={status.total}
+          selected={status.selected}
           rowStart={status.rowStart}
           hints={status.hints}
         />

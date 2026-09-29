@@ -14,12 +14,14 @@
  * (`dient-col-<row>-<column>`), and after the cursor or column moves we ask
  * the scrollbox to reveal that cell (nearest-edge, no-op when already
  * visible). Selected rows read via bright text on the theme's lighter
- * `bgHighlight` band, which follows the terminal colorscheme.
+ * `bgHighlight` band, which follows the terminal colorscheme. The visual-mode
+ * span reuses that same band, so a selection reads as the cursor widened.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useTheme } from "@/theme-context"
 import { HorizontalScrollIndicator } from "@/table/horizontal-scroll-indicator"
 import type { ScrollBoxRenderable } from "@opentui/core"
+import type { SelectionRange } from "@/vim/types"
 import { formatCell, MAX_COL_WIDTH, MIN_COL_WIDTH, type UseTableResult } from "@/table/use-table"
 
 export interface DataTableProps {
@@ -30,6 +32,9 @@ export interface DataTableProps {
   readonly activeColumn?: string
   readonly columnFocus?: boolean
   readonly highlight?: string
+  /** Visual-mode row span (inclusive). Rows in it wear the cursor's band; the
+      cursor row itself keeps the `▶` marker so the head stays findable. */
+  readonly selection?: SelectionRange | null
   readonly empty?: string
 }
 
@@ -72,6 +77,7 @@ export function DataTable({
   activeColumn,
   columnFocus = false,
   highlight,
+  selection = null,
   empty,
 }: DataTableProps) {
   const theme = useTheme()
@@ -119,12 +125,14 @@ export function DataTable({
           {window.rows.map((row, windowIndex) => {
             const rowIndex = window.offset + windowIndex
             const selected = rowIndex === cursor
+            const inSelection = selection !== null && rowIndex >= selection.start && rowIndex <= selection.end
             return (
               <RowLine
                 key={rowIndex}
                 row={row}
                 columns={columns}
                 selected={selected}
+                inSelection={inSelection}
                 widthOf={widthOf}
                 editing={editing}
                 activeColumn={activeColumn}
@@ -202,6 +210,7 @@ function RowLine({
   row,
   columns,
   selected,
+  inSelection,
   rowIndex,
   widthOf,
   tableWidth,
@@ -213,6 +222,7 @@ function RowLine({
   row: Record<string, unknown>
   columns: DataTableProps["table"]["columns"]
   selected: boolean
+  inSelection: boolean
   rowIndex: number
   widthOf: (column: string) => number
   tableWidth: number
@@ -225,9 +235,12 @@ function RowLine({
   const c = theme.colors
   const matches = (formatted: string): boolean =>
     highlight !== undefined && highlight.length > 0 && formatted.toLowerCase().includes(highlight.toLowerCase())
+  /* The cursor row and the selected rows share the band; the cursor is the one
+     that reads as "where the head is", so it alone gets the arrow. */
+  const banded = selected || inSelection
 
   return (
-    <box width={tableWidth} flexDirection="row" paddingLeft={1} backgroundColor={selected ? c.bgHighlight : undefined}>
+    <box width={tableWidth} flexDirection="row" paddingLeft={1} backgroundColor={banded ? c.bgHighlight : undefined}>
       <text fg={selected ? c.accent : c.textMuted} width={1}>
         {selected ? "▶" : " "}
       </text>
@@ -238,7 +251,7 @@ function RowLine({
            `scrollChildIntoView` has exactly one child to reveal. */
         const cellId = selected && activeColumn === column.name ? `dient-col-${rowIndex}-${column.name}` : undefined
         const formatted = editingThis ? editing.draft : formatCell(row[column.name])
-        const fg = selected ? c.textBright : editingThis ? c.success : c.text
+        const fg = banded ? c.textBright : editingThis ? c.success : c.text
         const parts = matches(formatted) && !editingThis ? splitHighlighted(formatted, highlight!) : null
         const last = index === columns.length - 1
         return (

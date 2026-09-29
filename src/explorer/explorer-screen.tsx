@@ -5,6 +5,7 @@
  * `SessionProvider`.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
+import { Option } from "effect"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useTheme } from "@/theme-context"
 import {
@@ -19,10 +20,12 @@ import {
 import { Sidebar } from "@/sidebar/sidebar"
 import { SIDEBAR_WIDTH } from "@/sidebar/fit-label"
 import { DataTable } from "@/table/data-table"
-import { useVimMode } from "@/vim"
+import { selectionRange, useVimMode } from "@/vim"
 import { useExplorer } from "@/explorer/use-explorer"
 import { useCellEditor } from "@/editor/use-cell-editor"
 import { editRowInEditor } from "@/editor/edit-row-in-editor"
+import { yankRows } from "@/editor/row-clipboard"
+import { writeSystemClipboard } from "@/ui/clipboard"
 import { formatCell } from "@/table/use-table"
 import { useCommand } from "@/app-context"
 import { buildFinderIndex, type FinderEntry } from "@/finder/finder"
@@ -389,7 +392,50 @@ export function ExplorerScreen() {
     })
   }
 
+  /* `V` opens a linewise row selection anchored on the cursor; a table with no
+     rows has nothing to select, which is said out loud rather than looking like
+     a dead key. */
+  const enterVisualMode = () => {
+    if (!active || explorer.table.sortedRows.length === 0) {
+      toasts.push("info", "no rows to select")
+      return
+    }
+    vim.pressKey("V")
+  }
+
+  /* Vim yank: every row the open visual selection spans. The text is the row
+     editor's `column: value` pairs with the comment header dropped, so it
+     pastes back as data rather than as instructions. */
+  const copyRows = () => {
+    if (!tableName || !active) {
+      toasts.push("error", "no table open to copy from")
+      return
+    }
+    const columns = tableInfo?.columns ?? []
+    const yank = yankRows(columns, explorer.table.sortedRows, vim.cursor, vim.selection)
+    if (!yank) {
+      toasts.push(
+        "error",
+        columns.length > 0 ? "no rows to copy" : `table ${tableName} has no columns to copy`
+      )
+      return
+    }
+    const { text, count } = yank
+    void writeSystemClipboard(text, renderer).then(result => {
+      if (result.ok) {
+        toasts.push("info", `copied ${count} row${count === 1 ? "" : "s"} to the clipboard`)
+      } else {
+        toasts.push("error", "could not write to the clipboard")
+      }
+    })
+  }
+
   const hints = useMemo(() => {
+    /* While a selection is open those are the only live keys, so the hints name
+       them and nothing else — the normal bindings are inert until it closes. */
+    if (vimMode === "visual")
+      return ["y copy", "j/k extend", "gg/G ends", "Esc cancel"]
+
     /* Paging leads the hint list. The budget is 30 characters, so a hint buried
        at the end of eight others is never seen — and paging is the one action a
        user cannot discover from the data on screen. */
@@ -405,6 +451,7 @@ export function ExplorerScreen() {
       ...paging,
       "s settings",
       "i edit row",
+      "V select rows",
       "Enter cell",
       "j/k move",
       "space jump",
@@ -413,7 +460,14 @@ export function ExplorerScreen() {
       "h/l panels",
       "? help",
     ]
-  }, [focus, explorer.search, explorer.searchCount, explorer.hasNextPage, explorer.hasPrevPage])
+  }, [focus, explorer.search, explorer.searchCount, explorer.hasNextPage, explorer.hasPrevPage, vimMode])
+
+  /* The open visual-mode span, normalized, for both the highlighted band and
+     the status count. Recomputed from the cursor's selection on every render,
+     so it can never drift from the row window it indexes. */
+  const selection = Option.getOrNull(vim.selection)
+  const selectedRange = selection ? selectionRange(selection) : null
+  const selectedCount = selectedRange ? selectedRange.end - selectedRange.start + 1 : undefined
 
   /* Push the story to the shell's status bar. The database is the connection:
      one name, its engine alongside. */
@@ -429,6 +483,7 @@ export function ExplorerScreen() {
       table: tableName ?? undefined,
       rows: explorer.table.sortedRows.length,
       total: explorer.total ?? undefined,
+      selected: selectedCount,
       /* Only meaningful when the table is actually paged; a single page of rows
          should just say "200 rows" as before. */
       rowStart: explorer.total !== null && explorer.total > explorer.pageSize ? explorer.offset + 1 : undefined,
@@ -437,6 +492,7 @@ export function ExplorerScreen() {
   }, [
     setStatus,
     vimMode,
+    selectedCount,
     active,
     tableName,
     explorer.table.sortedRows.length,
@@ -511,6 +567,24 @@ export function ExplorerScreen() {
         return
       }
     } else {
+      /* VISUAL mode owns the keyboard: movement extends the linewise selection,
+         `y` yanks it and closes, and every other key is swallowed rather than
+         acting on one row while a span is highlighted. */
+      if (vimMode === "visual") {
+        if (key === "y" || key === "Y") {
+          copyRows()
+          vim.pressKey("escape")
+          return
+        }
+        if (key === "v" || key === "V" || key === "\u001b" || key === "Escape" || key === "escape") {
+          vim.pressKey("escape")
+          return
+        }
+        if (TABLE_MOVE_KEYS.has(key) || key === "up" || key === "down") {
+          vim.pressKey(key === "up" ? "k" : key === "down" ? "j" : key)
+        }
+        return
+      }
       if (key === " " || key === "space") {
         openFinder(e)
         return
@@ -554,8 +628,10 @@ export function ExplorerScreen() {
         explorer.prevPage()
         return
       }
-      if (key === "v") {
-        toasts.push("info", "visual mode lands in a later phase")
+      /* `V` (and `v`, since a table row is the line) opens a linewise row
+         selection anchored here; `j`/`k`/`gg`/`G` extend it and `y` copies it. */
+      if (key === "V" || key === "v") {
+        enterVisualMode()
         return
       }
       if (key === "\u001b" || key === "Escape" || key === "escape") {
@@ -641,6 +717,7 @@ export function ExplorerScreen() {
             activeColumn={explorer.table.columns[editColumn]?.name ?? explorer.table.columns[0]?.name}
             columnFocus={focus === "table"}
             highlight={explorer.search.trim() || undefined}
+            selection={selectedRange}
           />
         ) : (
           <box flexGrow={1} alignItems="center" justifyContent="center">

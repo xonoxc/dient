@@ -9,7 +9,7 @@
  */
 import { describe, expect, test } from "bun:test"
 import type { TableColumn } from "@/inspector/types"
-import { parseFieldValue, parseRowKeyValue, serializeRowToKeyValue } from "@/editor/row-serialization"
+import { parseFieldValue, parseRowKeyValue, serializeRowToKeyValue, serializeRowsToClipboard } from "@/editor/row-serialization"
 
 const USERS: ReadonlyArray<TableColumn> = [
   { name: "id", type: "INTEGER", nullable: false },
@@ -58,6 +58,37 @@ describe("serializeRowToKeyValue", () => {
     expect(serializeRowToKeyValue(ORDERS, { id: 3, placed_at: "2000-04-10" })).toContain(
       "placed_at: 2000-04-10"
     )
+  })
+})
+
+describe("serializeRowsToClipboard", () => {
+  test("yanks the editor's key/value pairs with no comment header", () => {
+    const text = serializeRowsToClipboard(USERS, [ALICE])
+    expect(text).toBe("id: 1\nname: alice\nemail: alice@example.com\n")
+    expect(text).not.toContain("#")
+    expect(text).not.toContain(HDR_1)
+  })
+
+  test("separates rows with a blank line instead of in-row spacing", () => {
+    const text = serializeRowsToClipboard(USERS, [
+      ALICE,
+      { id: 2, name: "bob", email: "bob@example.com" },
+    ])
+    expect(text).toBe(
+      "id: 1\nname: alice\nemail: alice@example.com\n" +
+        "\n" +
+        "id: 2\nname: bob\nemail: bob@example.com\n"
+    )
+  })
+
+  test("keeps the editor's NULL and empty-string literals so a yank round-trips", () => {
+    const text = serializeRowsToClipboard(USERS, [{ id: 1, name: "", email: null }])
+    expect(text).toBe("id: 1\nname: \"\"\nemail: NULL\n")
+  })
+
+  test("a yank is indistinguishable from the editor file for the parser", () => {
+    const yanked = serializeRowsToClipboard(USERS, [ALICE])
+    expect(parseRowKeyValue(yanked, USERS, ["id"], ALICE)).toEqual({ ok: true, updates: [] })
   })
 })
 

@@ -14,6 +14,8 @@ const EXPLORER: ReadonlyArray<Binding> = [
   ["← / →", "previous / next col"],
   ["Enter", "open / edit cell"],
   ["i", "edit row in $EDITOR"],
+  ["V", "start row selection"],
+  ["y", "copy the selection"],
   ["Space", "open quick finder"],
   ["/", "filter current page"],
   ["n / N", "next / prev match"],

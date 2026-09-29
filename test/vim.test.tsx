@@ -139,6 +139,12 @@ describe("vim visual selection", () => {
     expect(Option.getOrNull(state.selection)).toEqual({ anchor: 0, head: 9 })
   })
 
+  test("V opens the same linewise row selection as v, anchored on the cursor", () => {
+    const state = pressKey(pressKey(initialState(10), "V"), "j")
+    expect(state.mode).toBe("visual")
+    expect(Option.getOrNull(state.selection)).toEqual({ anchor: 0, head: 1 })
+  })
+
   test("editing keys restore NORMAL and drop the selection", () => {
     const after = pressKey(pressKey(initialState(10), "v"), "i")
     expect(after.mode).toBe("normal")
