@@ -248,11 +248,11 @@ describe("row paging", () => {
 
 describe("failed connection dialog", () => {
   /* The real report: `String(cause)` on an Effect rejection produced a
-     `FiberFailure` dump whose stack spilled out of the 60-column modal and
-     mangled its border, under a title reading
-     `Connection "game_service · game_service" failed`. Both halves came from
-     the same mistake — treating a rejection as something to print. */
-  test("shows one short line inside the border, with the name stated once", async () => {
+     `FiberFailure` dump whose stack spilled out of the 60-column modal, under
+     a title reading `Connection "game_service · game_service" failed`. Both
+     halves came from the same mistake — treating a rejection as something to
+     print. */
+  test("shows one short line that fits the panel, with the name stated once", async () => {
     const services = await resolveTestServices(freshConfigFile())
     await seedProject(services.store, {
       name: "demo",
@@ -286,19 +286,77 @@ describe("failed connection dialog", () => {
       /* The body is a single logical line, so nothing can overrun the panel. */
       expect(frame).toContain("retry")
 
+      /* The panel is borderless, so containment is a width check: the body is
+         one logical line that fits the 56-column content area and is not
+         wrapped onto a second row. */
       const rows = frame.split("\n")
-      expect(rows.filter(row => row.includes("Failed to connect"))).toHaveLength(1)
-      /* Everything on the rendered body row sits inside the border. */
-      const bodyLine = rows.find(row => row.includes("Failed to connect")) ?? ""
-      const left = bodyLine.indexOf("│")
-      const right = bodyLine.lastIndexOf("│")
-      expect(left).toBeGreaterThanOrEqual(0)
-      expect(right).toBeGreaterThan(left)
-      const text = bodyLine.slice(left + 1, right)
-      expect(text.trim().length).toBeGreaterThan(0)
-      expect(text.length).toBeLessThanOrEqual(right - left - 1)
+      const bodyRows = rows.filter(row => row.includes("Failed to connect"))
+      expect(bodyRows).toHaveLength(1)
+      const body = bodyRows[0]!.trim()
+      expect(body.startsWith("Failed to connect:")).toBe(true)
+      expect(body.length).toBeLessThanOrEqual(56)
     } finally {
       setup.renderer.destroy()
     }
   }, 30000)
+})
+
+describe("list navigation", () => {
+  /** A short table: every row is on screen, so the cursor marker is visible. */
+  function shortDb(): string {
+    const path = join(mkdtempSync(join(tmpdir(), "dient-g-")), "short.db")
+    const db = new SqliteDatabase(path)
+    db.run("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+    for (const name of ["alpha", "bravo", "charlie", "delta", "echo"]) {
+      db.run("INSERT INTO items (name) VALUES (?)", [name])
+    }
+    db.close()
+    return path
+  }
+
+  const lineWith = (frame: string, value: string): string =>
+    frame.split("\n").find(line => line.includes(value)) ?? ""
+
+  /* Terminals report Shift+G as the unshifted base `g` plus the shift flag, so
+     a NORMAL binding that reads `e.name` saw `g` and started a `gg`. The key is
+     normalized before dispatch, and `G` reaches the table's jump-to-last. */
+  test("Shift+G jumps the table cursor to the last row", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: shortDb() })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
+      await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(f => f.includes("▌ ITEMS") && f.includes("echo"))
+      await pressKeys(setup, ["l"])
+
+      /* The cursor starts on the first row, not the last. */
+      expect(lineWith(setup.captureCharFrame(), "echo")).not.toContain("▶")
+
+      await pressKeys(setup, ["SHIFT+g"])
+      expect(lineWith(setup.captureCharFrame(), "echo")).toContain("▶")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  /* The sidebar has no cursor glyph — the cursor is the selection band — so this
+     proves the jump through its effect: jumping to the last item (the
+     connection) and pressing Enter connects it. A stray `gg` would leave the
+     cursor on the project and collapse it instead. */
+  test("Shift+G jumps the sidebar cursor to the last item", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: freshSqliteDataFile() })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
+
+      await pressKeys(setup, ["SHIFT+g", "RETURN"])
+      await setup.waitForFrame(f => f.includes("▌ USERS"))
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
 })

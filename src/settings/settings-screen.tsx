@@ -15,7 +15,8 @@ import { useTheme } from "@/theme-context"
 import { useRouter, useCommandLine, useSessionStatus, useTextInput, useToasts, type RoutedKey } from "@/app-context"
 import { useSettings, type SettingsForm, type SettingsListItem } from "@/settings/use-settings"
 import { FIELD_LABEL, CONNECTION_FIELDS, ADD_CHOICES } from "@/settings/use-settings"
-import { resolveTypedChar } from "@/ui/text-entry"
+import { normalModeKey, resolveTypedChar } from "@/ui/text-entry"
+import { windowTail } from "@/ui/text-window"
 import { LoadingIndicator } from "@/ui/loading-indicator"
 import { readSystemClipboard } from "@/ui/clipboard"
 import { ModalSurface } from "@/ui/modal-surface"
@@ -198,11 +199,9 @@ export function SettingsScreen() {
        there is nothing to bind in that case. */
     if (textInput.route(e)) return
     if (router.helpOpen || commandLine.open) return
-    const key = e.name
+    const key = normalModeKey(e)
 
-    // OpenTUI backends differ: shifted letters may arrive as `P`, or as
-    // `p` with the modifier set. Normalize the project binding explicitly.
-    if ((key === "P" || (key === "p" && e.shift === true)) && !e.ctrl && !e.meta) {
+    if (key === "P" && !e.ctrl && !e.meta) {
       addProject()
       return
     }
@@ -398,6 +397,12 @@ function SettingsFormDialog({
     : form.kind === "connect" ? `Add database · ${form.mode === "uri" ? "connection string" : form.engine}`
       : form.kind === "connectName" ? "Choose a database name"
         : form.kind === "rename" ? "Rename database" : "New project"
+  /* Content width inside `ModalSurface`: its outer padding (1 per side) plus the
+     inner `paddingX={2}` leave `panelWidth - 4` cells for the form. */
+  const contentWidth = panelWidth - 4
+  const formLabel = form.kind === "connect" ? "new database · connection string: "
+    : form.kind === "connectName" ? "the URL has no database name · name: "
+      : form.kind === "rename" ? "rename to: " : "new project: "
 
   return (
     <box position="absolute" width="100%" height="100%" alignItems="center" justifyContent="center" backgroundColor={c.bg}>
@@ -426,16 +431,12 @@ function SettingsFormDialog({
             <text fg={c.text}>↑/↓ or j/k move   Enter open   Esc cancel</text>
           </>
         ) : form.kind === "connect" && form.mode === "fields" ? (
-          <CredentialsFields form={form} field={field} draft={draft} />
+          <CredentialsFields form={form} field={field} draft={draft} contentWidth={contentWidth} />
         ) : (
           <>
             <box height={1} flexDirection="row" backgroundColor={c.bgHighlight} paddingX={1}>
-              <text fg={c.info}>
-                {form.kind === "connect" ? "new database · connection string: "
-                  : form.kind === "connectName" ? "the URL has no database name · name: "
-                    : form.kind === "rename" ? "rename to: " : "new project: "}
-              </text>
-              <text fg={c.textBright} truncate>{draft || " "}</text>
+              <text fg={c.info}>{formLabel}</text>
+              <text fg={c.textBright}>{windowTail(draft || " ", contentWidth - 2 - formLabel.length - 1)}</text>
               <text fg={c.accent}>▍</text>
             </box>
             {form.kind === "connect" && form.mode === "uri" ? (
@@ -468,10 +469,12 @@ function CredentialsFields({
   form,
   field,
   draft,
+  contentWidth,
 }: {
   form: Extract<SettingsForm, { kind: "connect" }>
   field: string | null
   draft: string
+  contentWidth: number
 }) {
   const { colors: c } = useTheme()
   const fields = ["name", ...CONNECTION_FIELDS[form.engine]]
@@ -485,7 +488,7 @@ function CredentialsFields({
         return (
           <box key={key} height={1} flexDirection="row" backgroundColor={active ? c.bgHighlight : undefined} paddingX={1}>
             <text fg={active ? c.accent : c.textMuted} width={16}>{active ? "› " : "  "}{label}</text>
-            <text fg={active ? c.textBright : c.text} truncate>{display}</text>
+            <text fg={active ? c.textBright : c.text}>{windowTail(display, contentWidth - 2 - 16 - (active ? 1 : 0))}</text>
             {active ? <text fg={c.accent}>▍</text> : null}
           </box>
         )

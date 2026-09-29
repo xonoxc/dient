@@ -28,7 +28,8 @@ import { useCommand } from "@/app-context"
 import { buildFinderIndex, type FinderEntry } from "@/finder/finder"
 import { FinderOverlay } from "@/finder/finder-overlay"
 import { fuzzyMatch } from "@/finder/fuzzy"
-import { resolveTypedChar } from "@/ui/text-entry"
+import { normalModeKey, resolveTypedChar } from "@/ui/text-entry"
+import { windowTail } from "@/ui/text-window"
 import { LoadingIndicator } from "@/ui/loading-indicator"
 
 const TABLE_MOVE_KEYS = new Set(["j", "k", "g", "G"])
@@ -451,7 +452,7 @@ export function ExplorerScreen() {
        nothing to bind in that case. */
     if (textInput.route(e)) return
     if (router.helpOpen || commandLine.open) return
-    const key = e.name
+    const key = normalModeKey(e)
 
     if (focus === "sidebar") {
       switch (key) {
@@ -619,7 +620,9 @@ export function ExplorerScreen() {
           hasPrevPage={explorer.hasPrevPage}
           hasNextPage={explorer.hasNextPage}
         />
-        {searchOpenRef.current ? <SearchBar query={searchBuffer.current} matches={explorer.searchCount} /> : null}
+        {searchOpenRef.current ? (
+          <SearchBar query={searchBuffer.current} matches={explorer.searchCount} availableWidth={dataWidth + 3} />
+        ) : null}
         {error ? (
           <box flexGrow={1} alignItems="center" justifyContent="center">
             <text fg={c.error}>{error}</text>
@@ -652,16 +655,17 @@ export function ExplorerScreen() {
   )
 }
 
-function SearchBar({ query, matches }: { query: string; matches: number }) {
+function SearchBar({ query, matches, availableWidth }: { query: string; matches: number; availableWidth: number }) {
   const theme = useTheme()
   const c = theme.colors
+  const matchesText = `${matches} matches`
   return (
     <box height={1} paddingX={1} flexDirection="row" alignItems="center" overflow="hidden">
       <text fg={c.accent}>/</text>
-      <text fg={c.textBright}>{query}</text>
+      <text fg={c.textBright}>{windowTail(query, availableWidth - 2 - 1 - 1 - matchesText.length - 1)}</text>
       <text fg={c.accent}>▍</text>
       <box flexGrow={1} />
-      <text fg={c.textMuted}>{matches} matches</text>
+      <text fg={c.textMuted}>{matchesText}</text>
     </box>
   )
 }

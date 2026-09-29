@@ -5,7 +5,7 @@
  * overlay. Global keys that belong to the shell (`:` opens a command, `?`
  * opens help) live here; screen-specific keys live in the screens.
  */
-import { useKeyboard } from "@opentui/react"
+import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useTheme } from "@/theme-context"
 import type { ThemeService } from "@/theme"
 import { ThemeProvider } from "@/theme-context"
@@ -36,7 +36,8 @@ import { StatusBar } from "@/status-bar"
 import { ToastView } from "@/ui/toast"
 import { ModalView } from "@/ui/modal"
 import { HelpScreen } from "@/ui/help-screen"
-import { resolveTypedChar } from "@/ui/text-entry"
+import { normalModeKey, resolveTypedChar } from "@/ui/text-entry"
+import { windowTail } from "@/ui/text-window"
 
 export default function App({ theme, services }: { theme: ThemeService; services: AppServices }) {
   return (
@@ -135,7 +136,7 @@ function Shell() {
      an always-mounted hook. A per-line component could only register after `:`
      mounts it, silently dropping the rest of the typed chord. */
   useKeyboard(e => {
-    const key = e.name
+    const key = normalModeKey(e)
 
     /* INSERT mode is resolved first, before any NORMAL binding is consulted.
        `route` is exactly-once per key event, so whichever subscriber runs first
@@ -231,6 +232,7 @@ function CommandBar({ commands }: { commands: ReadonlyArray<ShellCommand> }) {
   const theme = useTheme()
   const c = theme.colors
   const commandLine = useCommandLine()
+  const { width } = useTerminalDimensions()
 
   if (!commandLine.open) return null
 
@@ -241,6 +243,13 @@ function CommandBar({ commands }: { commands: ReadonlyArray<ShellCommand> }) {
     .map(x => x.help)
     .join("  ")
     .slice(0, 64)
+
+  /* App `paddingX={1}` plus this bar's own `paddingX={1}` leave `width - 4`
+     cells. The palette yields at most half of them so a long command can still
+     show its tail next to the cursor. */
+  const contentWidth = Math.max(1, width - 4)
+  const paletteReserve = Math.min(paletteText.length, Math.floor(contentWidth / 2))
+  const commandBudget = Math.max(1, contentWidth - 1 - 1 - paletteReserve - 1)
 
   return (
     <box
@@ -253,7 +262,7 @@ function CommandBar({ commands }: { commands: ReadonlyArray<ShellCommand> }) {
     >
       <text fg={c.success}>:</text>
       <box flexDirection="row">
-        <text fg={c.textBright}>{commandLine.text}</text>
+        <text fg={c.textBright}>{windowTail(commandLine.text, commandBudget)}</text>
         <text fg={c.accent}>▍</text>
       </box>
       <box flexGrow={1} />

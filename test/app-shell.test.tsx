@@ -45,7 +45,7 @@ describe("App shell", () => {
       /* The hint budget is 30 chars, so the leading settings bindings are
          what the bar actually shows. */
       expect(lastTextRow(frame)).toContain("a db")
-      expect(lastTextRow(frame)).toContain("p project")
+      expect(lastTextRow(frame)).toContain("p paste URI")
     } finally {
       setup.renderer.destroy()
     }
@@ -62,7 +62,7 @@ describe("screen router", () => {
       await pressKeys(setup, [":", ..."settings", "RETURN"])
       await setup.waitForFrame(f => f.includes("SETTINGS"))
       expect(setup.captureCharFrame()).toContain("SETTINGS")
-      expect(setup.captureCharFrame()).toContain("projects / databases")
+      expect(setup.captureCharFrame()).toContain("Projects and database connections")
 
       await pressKeys(setup, [":", ..."explorer", "RETURN"])
       await setup.waitForFrame(f => f.includes("select a connection"))

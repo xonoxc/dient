@@ -106,14 +106,14 @@ function SidebarRow({
     const dot = status === "connected" ? "●" : status === "error" ? "◉" : "○"
     const dotFg = status === "connected" ? c.success : status === "error" ? c.error : c.textMuted
     const glyph = node.expanded ? "▾" : "▸"
-    /* indent + glyph + space + active marker, then dot, space and engine badge. */
+    /* indent + glyph + space + padded active marker, then dot, space and engine badge. */
     const badge = ENGINE_BADGE[node.database?.engine ?? ""] ?? ""
-    const prefix = node.depth * INDENT_STEP.length + 2 + 1 + (active ? 1 : 1) + 1
+    const prefix = node.depth * INDENT_STEP.length + 2 + 1 + 3 + 1
     return (
       <box height={1} flexDirection="row" paddingX={1} backgroundColor={rowBg}>
         <text fg={rowFg} truncate>
           {indent}
-          {glyph} {active ? "▶" : " "}
+          {glyph} {active ? " ▶ " : "   "}
         </text>
         <text fg={dotFg}>{dot}</text>
         <text fg={rowFg} truncate>

@@ -5,7 +5,7 @@
  * connection string comes out mangled.
  */
 import { describe, expect, test } from "bun:test"
-import { resolveTypedChar, isCommandKey } from "@/ui/text-entry"
+import { resolveTypedChar, isCommandKey, normalModeKey } from "@/ui/text-entry"
 
 describe("resolveTypedChar", () => {
   test("an unshifted printable key is itself", () => {
@@ -90,5 +90,43 @@ describe("resolveTypedChar", () => {
   test("isCommandKey agrees with a null character", () => {
     expect(isCommandKey({ name: "return" })).toBe(true)
     expect(isCommandKey({ name: "q" })).toBe(false)
+  })
+})
+
+describe("normalModeKey", () => {
+  test("Shift+G reaches a NORMAL binding as G on every protocol", () => {
+    /* Kitkat/legacy report the unshifted base plus the shift flag. */
+    expect(normalModeKey({ name: "g", shift: true })).toBe("G")
+    /* A terminal that reports the shifted byte directly. */
+    expect(normalModeKey({ name: "G", shift: true })).toBe("G")
+  })
+
+  test("an unshifted letter stays lower case", () => {
+    expect(normalModeKey({ name: "g" })).toBe("g")
+    expect(normalModeKey({ name: "p" })).toBe("p")
+  })
+
+  test("Shift+P and the shifted `?` help key are reconstructed", () => {
+    expect(normalModeKey({ name: "p", shift: true })).toBe("P")
+    expect(normalModeKey({ name: "/", shift: true })).toBe("?")
+  })
+
+  test("command keys pass through so Enter, Escape, and arrows still match", () => {
+    expect(normalModeKey({ name: "return" })).toBe("return")
+    expect(normalModeKey({ name: "escape" })).toBe("escape")
+    expect(normalModeKey({ name: "up" })).toBe("up")
+    expect(normalModeKey({ name: "down" })).toBe("down")
+  })
+
+  test("a ctrl chord falls back to its name with the modifier intact", () => {
+    const event = { name: "f", ctrl: true as const }
+    expect(normalModeKey(event)).toBe("f")
+    expect(event.ctrl).toBe(true)
+  })
+
+  test("space and digits keep the bindings menus expect", () => {
+    expect(normalModeKey({ name: "space" })).toBe(" ")
+    expect(normalModeKey({ name: "1" })).toBe("1")
+    expect(normalModeKey({ name: "2" })).toBe("2")
   })
 })

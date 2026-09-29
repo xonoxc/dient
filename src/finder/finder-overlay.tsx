@@ -11,6 +11,7 @@ import { fuzzyMatch, splitByPositions, type FuzzyMatch } from "@/finder/fuzzy"
 import type { FinderEntry, FinderKind } from "@/finder/finder"
 import { LoadingIndicator } from "@/ui/loading-indicator"
 import { ModalSurface } from "@/ui/modal-surface"
+import { windowTail } from "@/ui/text-window"
 
 export interface FinderOverlayProps {
   readonly query: string
@@ -29,16 +30,21 @@ export function FinderOverlay({ query, entries, cursor, loading = false }: Finde
   const { width } = useTerminalDimensions()
   const c = theme.colors
   const panelWidth = Math.max(32, Math.min(70, width - 4))
+  /* `ModalSurface`'s outer padding plus inner `paddingX={2}` leave this much;
+     reserve the prompt, the cursor, and the right-aligned match count so the
+     typed tail stays visible. */
+  const contentWidth = panelWidth - 4
+  const matchesText = loading ? "indexing…" : `${entries.length} matches`
 
   return (
     <box position="absolute" width="100%" alignItems="center" flexDirection="column">
       <ModalSurface width={panelWidth} paddingY={1} marginTop={1}>
         <box height={1} flexDirection="row" alignItems="center">
           <text fg={c.accent}>&gt; </text>
-          <text fg={c.textBright}>{query}</text>
+          <text fg={c.textBright}>{windowTail(query, contentWidth - 2 - 1 - matchesText.length - 1)}</text>
           <text fg={c.accent}>▍</text>
           <box flexGrow={1} />
-          <text fg={c.textMuted}>{loading ? "indexing…" : `${entries.length} matches`}</text>
+          <text fg={c.textMuted}>{matchesText}</text>
         </box>
         <box height={1} />
         {loading ? (

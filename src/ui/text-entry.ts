@@ -108,3 +108,14 @@ export const resolveTypedChar = (e: TypedKeyEvent): string | null => {
 
 /** Whether a key event should act as a command rather than be typed. */
 export const isCommandKey = (e: TypedKeyEvent): boolean => resolveTypedChar(e) === null
+
+/**
+ * The key name a NORMAL-mode binding should match. NORMAL bindings read the
+ * event's `name`, but the parser reports a shifted letter as its unshifted base
+ * plus a `shift` flag (kitty) or in lower case (legacy), so `Shift+G` reaches a
+ * binding as `g` and starts a `gg` instead of jumping to the bottom. Reusing the
+ * text-entry resolution makes `Shift+G`, `Shift+P`, and the `?` help key arrive
+ * as the user typed them on every protocol. Command keys and modifier chords
+ * fall back to `name` unchanged, so `Ctrl+F`, arrows, and Enter still match.
+ */
+export const normalModeKey = (e: TypedKeyEvent): string => resolveTypedChar(e) ?? e.name

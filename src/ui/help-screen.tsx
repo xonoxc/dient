@@ -3,6 +3,7 @@ import { useKeyboard, useTerminalDimensions } from "@opentui/react"
 import { useTheme } from "@/theme-context"
 import { useRouter } from "@/app-context"
 import { ModalSurface } from "@/ui/modal-surface"
+import { normalModeKey } from "@/ui/text-entry"
 
 type Binding = readonly [string, string]
 
@@ -57,7 +58,8 @@ export function HelpScreen() {
   const c = theme.colors
 
   useKeyboard(e => {
-    if (router.helpOpen && (e.name === "?" || e.name === "escape" || e.name === "Escape" || e.name === "\u001b")) {
+    const key = normalModeKey(e)
+    if (router.helpOpen && (key === "?" || key === "escape" || key === "Escape" || key === "\u001b")) {
       router.closeHelp()
     }
   })

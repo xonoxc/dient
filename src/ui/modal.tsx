@@ -7,6 +7,7 @@ import { useKeyboard } from "@opentui/react"
 import { useTheme } from "@/theme-context"
 import { useDialog } from "@/app-context"
 import { ModalSurface } from "@/ui/modal-surface"
+import { normalModeKey } from "@/ui/text-entry"
 
 /** A body taller than this is a bug in the message, not a layout to honour. */
 const BODY_MAX_LINES = 6
@@ -34,7 +35,7 @@ export function ModalView() {
 
   useKeyboard(e => {
     if (!dialog) return
-    const key = e.name
+    const key = normalModeKey(e)
     if (key === "enter" || key === "y" || key === "Y") {
       dialog.resolve(true)
     } else if (key === "escape" || key === "Escape" || key === "\u001b" || key === "n" || key === "N") {

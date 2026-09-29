@@ -7,7 +7,8 @@
     "dev": "bun run --watch src/index.tsx",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "build": "bun build --compile --outfile dient src/index.tsx"
   },
   "devDependencies": {
     "@effect/vitest": "^0.30.0",

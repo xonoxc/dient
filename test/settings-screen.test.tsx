@@ -283,10 +283,12 @@ describe("settings screen", () => {
 
       await typeString(setup, "mysql://root:gameroot@localhost:3309/game_service")
       /* A kitty-mode terminal reports `@` as `2` and `_` as `-`; if the form
-         typed the raw key name, the visible prefix would read `2gameroot`.
-         The prompt line clips at the frame width, so assert on the head. */
-      await setup.waitForFrame(f => f.includes("mysql://root:gameroot"))
-      expect(setup.captureCharFrame()).not.toContain("2gameroot")
+         typed the raw key name, `@localhost` would read `2localhost`. The
+         prompt line windows its tail (the cursor sits at the end), so assert on
+         the newest characters that are actually visible. */
+      await setup.waitForFrame(f => f.includes("@localhost") && f.includes("game_service"))
+      expect(setup.captureCharFrame()).not.toContain("2localhost")
+      expect(setup.captureCharFrame()).not.toContain("game-service")
       /* The engine toggle must not have fired on any `u` in the string. */
       expect(setup.captureCharFrame()).toContain("connection string")
 
@@ -382,7 +384,7 @@ describe("settings screen", () => {
       await pressKeys(setup, ["a"])
       await setup.waitForFrame(f => f.includes("host / user / password"))
       await pressKeys(setup, ["2"])
-      await setup.waitForFrame(f => f.includes("name:"))
+      await setup.waitForFrame(f => f.includes("Tab next field"))
 
       for (const value of ["shop", "db.internal", "5432", "admin", "s3cret", "orders"]) {
         await typeString(setup, value)
@@ -422,7 +424,7 @@ describe("settings screen", () => {
       await pressKeys(setup, ["a"])
       await setup.waitForFrame(f => f.includes("host / user / password"))
       await pressKeys(setup, ["2"])
-      await setup.waitForFrame(f => f.includes("name:"))
+      await setup.waitForFrame(f => f.includes("Tab next field"))
 
       await typeString(setup, "S3cret!Pass")
       await setup.waitForFrame(f => f.includes("S3cret!Pass"))
@@ -468,16 +470,16 @@ describe("adding a connection reveals it", () => {
       await openSettings(setup)
       await pressKeys(setup, ["a"])
       await setup.waitForFrame(f => f.includes("Enter open"))
-      expect(frameText(setup)).toContain("▸ paste connection string")
+      expect(frameText(setup)).toContain("paste connection string")
 
       /* j moves the highlight to the details form... */
       await pressKeys(setup, ["j"])
-      await setup.waitForFrame(f => f.includes("▸ host / user / password"))
+      await setup.waitForFrame(f => f.includes("host / user / password"))
       /* ...j clamps at the end, and Enter opens the highlighted choice. */
       await pressKeys(setup, ["j"])
-      await setup.waitForFrame(f => f.includes("▸ host / user / password"))
+      await setup.waitForFrame(f => f.includes("host / user / password"))
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("name: "))
+      await setup.waitForFrame(f => f.includes("Tab next field"))
     } finally {
       setup.renderer.destroy()
     }
