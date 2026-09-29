@@ -4,6 +4,7 @@
  * typing fuzzy-filters the list, and Enter jumps to the highlighted hit.
  */
 import { describe, expect, test } from "bun:test"
+import { Effect } from "effect"
 import { Database as SqliteDatabase } from "bun:sqlite"
 import App from "@/app"
 import { makeTheme } from "@/theme"
@@ -92,6 +93,54 @@ describe("finder", () => {
       const closed = setup.captureCharFrame()
       expect(closed).toContain("ITEM")
       expect(closed).not.toContain("alice")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test("jumping to a database from a collapsed project connects and expands it", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    const seeded = await seedProject(services.store, {
+      name: "demo",
+      database: "sample",
+      engine: "sqlite",
+      filename: twoTableDataFile(),
+    })
+    /* A second database in the *same* project: the jump should reveal the
+       siblings but select only the hit. */
+    const other = await Effect.runPromise(
+      services.store.createDatabase({ projectId: seeded.project.id, name: "other", engine: "sqlite" })
+    )
+    await Effect.runPromise(
+      services.store.createConnection({ databaseId: other.id, filename: twoTableDataFile() })
+    )
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      /* the project starts collapsed: no database rows exist yet */
+      await setup.waitForFrame(f => f.includes("▸ demo"))
+      expect(setup.captureCharFrame()).not.toContain("sample")
+
+      await pressKeys(setup, [" "])
+      await setup.waitForFrame(f => f.includes("matches"))
+      await pressKeys(setup, ["s", "a", "m"])
+      await setup.waitForFrame(f => f.includes("1 match"))
+      await pressKeys(setup, ["RETURN"])
+
+      /* The database connects and expands: the active marker and its tables
+         appear, while the sibling is listed but not selected. */
+      await setup.waitForFrame(f => f.includes("▶") && f.includes("users") && f.includes("orders"))
+      const landed = setup.captureCharFrame()
+      /* The sidebar is the pane left of the divider; the data pane shares each
+         terminal row, so isolate the left column before scanning. */
+      const sidebarLines = landed.split("\n").map(line => line.split("│")[0] ?? "")
+      const sampleLine = sidebarLines.find(line => line.includes("sample") && line.includes("SQLite"))
+      const otherLine = sidebarLines.find(line => line.includes("other") && line.includes("SQLite"))
+      expect(sampleLine).toBeDefined()
+      expect(otherLine).toBeDefined()
+      expect(sampleLine!).toContain("▶")
+      expect(otherLine!).not.toContain("▶")
+      expect(landed).toContain("users")
+      expect(landed).toContain("orders")
     } finally {
       setup.renderer.destroy()
     }

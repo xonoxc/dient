@@ -292,8 +292,14 @@ export function ExplorerScreen() {
       return
     }
     if (entry.kind === "db") {
-      if (entry.projectId && entry.connectionId) explorer.jumpToConnection(entry.projectId, entry.connectionId)
-      else toasts.push("info", `database "${entry.label}" has no connection — add one from settings`)
+      if (entry.projectId && entry.connectionId) {
+        explorer.jumpToConnection(entry.projectId, entry.connectionId)
+        /* Land on the database row: the cursor highlights it and the `▶`
+           active marker appears once the connect it kicks off resolves. */
+        setFocus("sidebar")
+      } else {
+        toasts.push("info", `database "${entry.label}" has no connection — add one from settings`)
+      }
       return
     }
     /* project: reveal it in the sidebar and park the cursor on it */

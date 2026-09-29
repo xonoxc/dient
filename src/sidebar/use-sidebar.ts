@@ -151,6 +151,11 @@ export const useSidebar = (
   const dataRef = useRef<SidebarData>(EMPTY)
   const expandedRef = useRef<ReadonlySet<string>>(new Set())
   const cursorRef = useRef(0)
+  /* Kept in lockstep with `items`, but updated the instant the tree changes
+     (not on the next render). External callers chain off async loads — the
+     finder awaits `expandProject` and then indexes this ref — so a stale
+     mirror would make them miss nodes the load just added. */
+  const itemsRef = useRef<ReadonlyArray<SidebarNode>>(buildTree(EMPTY, new Set()))
 
   /* In-flight database loads, so `expandProject` fans out requests and the
      caller can await the same promise a chained keyboard press already fired. */
@@ -164,6 +169,7 @@ export const useSidebar = (
 
   const recompute = (): void => {
     const nextItems = buildTree(dataRef.current, expandedRef.current, tablesByConnection)
+    itemsRef.current = nextItems
     setItems(nextItems)
     setCursor(Math.max(0, Math.min(cursorRef.current, nextItems.length - 1)))
     setExpanded(new Set(expandedRef.current))
@@ -171,6 +177,7 @@ export const useSidebar = (
   const recomputeRef = useRef<(tables: TablesByConnection) => void>(() => undefined)
   recomputeRef.current = tables => {
     const nextItems = buildTree(dataRef.current, expandedRef.current, tables)
+    itemsRef.current = nextItems
     setItems(nextItems)
     setCursor(Math.max(0, Math.min(cursorRef.current, nextItems.length - 1)))
   }
@@ -181,7 +188,8 @@ export const useSidebar = (
     recomputeRef.current(tablesByConnection)
   }, [tablesByConnection])
 
-  const itemsRef = useRef<ReadonlyArray<SidebarNode>>(items)
+  /* A committed render is the source of truth for `items`; keep the live mirror
+     aligned with it too (the handlers above may have moved it ahead already). */
   itemsRef.current = items
 
   useEffect(() => {
