@@ -450,7 +450,7 @@ export function ExplorerScreen() {
     if (explorer.hasPrevPage) paging.push("^b prev page")
 
     if (focus === "sidebar") {
-      return [...paging, "s settings", "j/k move", "Enter open", "space jump", "h/l panels", "Tab next conn", "? help"]
+      return [...paging, "s settings", "j/k move", "Enter open", "space jump", "h/l panels", "q quit", "? help"]
     }
     if (explorer.search.trim()) return [...paging, `${explorer.searchCount} matches`, "n/N jump", "Esc clear"]
     return [
@@ -464,6 +464,7 @@ export function ExplorerScreen() {
       "gg/G jump",
       "/ search",
       "h/l panels",
+      "q quit",
       "? help",
     ]
   }, [focus, explorer.search, explorer.searchCount, explorer.hasNextPage, explorer.hasPrevPage, vimMode])
@@ -493,6 +494,7 @@ export function ExplorerScreen() {
       /* Only meaningful when the table is actually paged; a single page of rows
          should just say "200 rows" as before. */
       rowStart: explorer.total !== null && explorer.total > explorer.pageSize ? explorer.offset + 1 : undefined,
+      lastQueryMs: explorer.lastQueryMs ?? undefined,
       hints,
     })
   }, [
@@ -505,6 +507,7 @@ export function ExplorerScreen() {
     explorer.total,
     explorer.offset,
     explorer.pageSize,
+    explorer.lastQueryMs,
     hints,
   ])
 
@@ -515,6 +518,15 @@ export function ExplorerScreen() {
     if (textInput.route(e)) return
     if (router.helpOpen || commandLine.open) return
     const key = normalModeKey(e)
+
+    /* `q` quits, but only from NORMAL with nothing modal open — the guards
+       above already returned for a text field, the help overlay, and the
+       command line. Without a VISUAL check `q` would quit out from under an
+       open selection, so it is refused there and the selection keeps it. */
+    if (key === "q" && vimMode !== "visual") {
+      router.exit(0)
+      return
+    }
 
     if (focus === "sidebar") {
       switch (key) {

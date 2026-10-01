@@ -46,11 +46,19 @@ export interface RouterState {
   readonly helpOpen: boolean
   readonly openHelp: () => void
   readonly closeHelp: () => void
+  /** Leave the app. Shared by `q` and `:q` so both end the same way. */
+  readonly exit: (code: number) => void
 }
 
 const RouterContext = createContext<RouterState | null>(null)
 
-export function RouterProvider({ children }: { children?: ReactNode }) {
+export function RouterProvider({
+  children,
+  exit,
+}: {
+  children?: ReactNode
+  readonly exit: (code: number) => void
+}) {
   const [screen, setScreen] = useState<AppScreen>("explorer")
   const [helpOpen, setHelpOpen] = useState(false)
   const value = useMemo<RouterState>(
@@ -60,8 +68,9 @@ export function RouterProvider({ children }: { children?: ReactNode }) {
       helpOpen,
       openHelp: () => setHelpOpen(true),
       closeHelp: () => setHelpOpen(false),
+      exit,
     }),
-    [screen, helpOpen]
+    [screen, helpOpen, exit]
   )
   return <RouterContext.Provider value={value}>{children}</RouterContext.Provider>
 }
@@ -193,6 +202,8 @@ export interface SessionStatus {
   readonly selected?: number
   /** 1-based first row on screen, when rows are paged in the database. */
   readonly rowStart?: number
+  /** Milliseconds the last page fetch took, once one has landed. */
+  readonly lastQueryMs?: number
   readonly hints: ReadonlyArray<string>
 }
 

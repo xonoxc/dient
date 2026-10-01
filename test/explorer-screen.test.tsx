@@ -398,4 +398,68 @@ describe("list navigation", () => {
       setup.renderer.destroy()
     }
   })
+  /* `q` is vim's quit, but it is only safe where nothing is mid-edit: the
+     guards ahead of it hand the key to a text field first, and VISUAL mode
+     holds it so a selection cannot vanish along with the process. */
+  describe("q quits the app", () => {
+    test("NORMAL mode exits", async () => {
+      const services = await resolveTestServices(freshConfigFile())
+      const exits: number[] = []
+      const setup = await renderApp(
+        <App theme={makeTheme("dark")} services={services.services} exit={c => exits.push(c)} />
+      )
+      try {
+        await pressKeys(setup, ["q"])
+        expect(exits).toEqual([0])
+      } finally {
+        setup.renderer.destroy()
+      }
+    })
+
+    test("a VISUAL selection refuses it", async () => {
+      const services = await resolveTestServices(freshConfigFile())
+      await seedProject(services.store, {
+        name: "demo",
+        database: "main",
+        engine: "sqlite",
+        filename: freshSqliteDataFile(),
+      })
+      const exits: number[] = []
+      const setup = await renderApp(
+        <App theme={makeTheme("dark")} services={services.services} exit={c => exits.push(c)} />
+      )
+      try {
+        await expandToConnection(setup)
+        await pressKeys(setup, ["l"])
+        await pressKeys(setup, ["SHIFT+v"])
+        await setup.waitForFrame(f => f.includes("VISUAL"))
+
+        await pressKeys(setup, ["q"])
+        expect(exits).toEqual([])
+        /* The selection is still open, so nothing was silently discarded. */
+        await setup.waitForFrame(f => f.includes("VISUAL"))
+      } finally {
+        setup.renderer.destroy()
+      }
+    })
+
+    test("the finder types it instead of quitting", async () => {
+      const services = await resolveTestServices(freshConfigFile())
+      const exits: number[] = []
+      const setup = await renderApp(
+        <App theme={makeTheme("dark")} services={services.services} exit={c => exits.push(c)} />
+      )
+      try {
+        await pressKeys(setup, [" "])
+        await setup.waitForFrame(f => f.includes("type to filter"))
+        await pressKeys(setup, ["q"])
+
+        expect(exits).toEqual([])
+        /* `q` reached the query, which is the whole point of the guard order. */
+        expect(setup.captureCharFrame()).toContain("q")
+      } finally {
+        setup.renderer.destroy()
+      }
+    })
+  })
 })

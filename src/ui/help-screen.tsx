@@ -39,6 +39,7 @@ const SETTINGS: ReadonlyArray<Binding> = [
 ]
 
 const COMMANDS: ReadonlyArray<Binding> = [
+  ["q", "quit (normal mode)"],
   [":e <table>", "open a table"],
   [":connect <name>", "switch database"],
   [":refresh", "reload current table"],

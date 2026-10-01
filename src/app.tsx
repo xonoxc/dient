@@ -39,11 +39,21 @@ import { HelpScreen } from "@/ui/help-screen"
 import { normalModeKey, resolveTypedChar } from "@/ui/text-entry"
 import { windowTail } from "@/ui/text-window"
 
-export default function App({ theme, services }: { theme: ThemeService; services: AppServices }) {
+/** `exit` is injected so a test can observe a quit instead of ending the test
+    runner with it; production uses `process.exit`. */
+export default function App({
+  theme,
+  services,
+  exit = code => process.exit(code),
+}: {
+  theme: ThemeService
+  services: AppServices
+  readonly exit?: (code: number) => void
+}) {
   return (
     <ThemeProvider theme={theme}>
       <ServicesProvider services={services}>
-        <RouterProvider>
+        <RouterProvider exit={exit}>
           <ToastProvider>
             <DialogProvider>
               <SessionProvider>
@@ -114,7 +124,7 @@ function Shell() {
       match: text => /^(q|quit)$/.test(text.trim()),
       run: () => {
         if (router.screen === "settings") router.setScreen("explorer")
-        else process.exit(0)
+        else router.exit(0)
       },
     },
   ]
@@ -220,6 +230,7 @@ function Shell() {
           total={status.total}
           selected={status.selected}
           rowStart={status.rowStart}
+          lastQueryMs={status.lastQueryMs}
           hints={status.hints}
         />
       </box>

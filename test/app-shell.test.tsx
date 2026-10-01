@@ -80,6 +80,101 @@ describe("App shell", () => {
       expect(row).toContain("sample · sqlite")
       expect(row).toContain("V select rows")
       expect(row).toContain("users 3 rows")
+      /* The fetch time is the right-end counterpart to the mode badge. */
+      expect(row).toMatch(/<1ms|\d+(\.\d+)?ms|\d+(\.\d+)?s $/)
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test("a bare sidebar still shows the fetch time from connecting", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "sample",
+      engine: "sqlite",
+      filename: freshSqliteDataFile("users"),
+    })
+    /* Connecting is itself a round trip, so the badge must not be reserved for
+       the page load — it read as a missing feature on the sidebar. */
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />, {
+      width: 120,
+      height: 26,
+    })
+    try {
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("▾ demo"))
+      await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(f => f.includes("▸ users"))
+
+      expect(lastTextRow(setup.captureSpans())).toMatch(/<1ms|\d+(\.\d+)?ms|\d+(\.\d+)?s $/)
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test("the bar keeps one column of padding at both edges", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "sample",
+      engine: "sqlite",
+      filename: freshSqliteDataFile("users"),
+    })
+    /* The page supplies `paddingX={1}` and the badge carries its own padding;
+       double-counting the left side pushed the right-hand zones past the edge
+       and clipped the trailing gap. */
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />, {
+      width: 120,
+      height: 26,
+    })
+    try {
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("sample"))
+      await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(f => f.includes("USERS"))
+      await pressKeys(setup, ["l"])
+
+      const row = lastTextRow(setup.captureSpans())
+      /* Symmetric outer columns: the row opens with the page's padding plus the
+         badge's own, and leaves room at the right rather than running flush. */
+      expect(row.startsWith("  NORMAL ")).toBe(true)
+      expect(row.length).toBeLessThanOrEqual(120)
+      expect(row.endsWith(" ")).toBe(true)
+      expect(row.trimEnd().length).toBeLessThan(120)
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test("the fetch-time badge is dropped before the row figure, never the reverse", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "sample",
+      engine: "sqlite",
+      filename: freshSqliteDataFile("users"),
+    })
+    /* A narrow strip has to give something up. The row figure is what the user
+       came for; hints are shed whole, and the location ellipsizes. */
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />, {
+      width: 60,
+      height: 26,
+    })
+    try {
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("NORMAL"))
+      await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(f => f.includes("USERS"))
+      await pressKeys(setup, ["l"])
+
+      const row = lastTextRow(setup.captureSpans())
+      expect(row.length).toBeLessThanOrEqual(60)
+      expect(row).toContain("users 3 rows")
+      /* Hints appear whole or not at all — the old bar printed "V sele". */
+      expect(row).toContain("s settings")
+      expect(row).not.toMatch(/s set(?!tings)/)
+      expect(row).not.toContain("V sele")
     } finally {
       setup.renderer.destroy()
     }

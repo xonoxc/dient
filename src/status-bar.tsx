@@ -35,6 +35,8 @@ export interface StatusBarProps {
   /** 1-based index of the first row on screen. Set when rows are paged in the
       database, so the count reads as a range rather than a total. */
   readonly rowStart?: number
+  /** Milliseconds the last page fetch took, once one has landed. */
+  readonly lastQueryMs?: number
   readonly hints?: ReadonlyArray<string>
 }
 
@@ -45,13 +47,32 @@ const MODE_LABEL: Record<VimMode, string> = {
 }
 
 const BRAND = "dient"
-/** The page wraps the strip in `paddingX={1}`. */
+/** The page wraps the strip in `paddingX={1}`, so the box already has one
+    column of breathing room on each side. */
 const PAGE_PADDING = 2
+/** The right-aligned zones end flush against the page padding otherwise, which
+    reads as clipped even when nothing is. One explicit gap column keeps the
+    right edge from looking cut. */
+const EDGE_GAP = 1
 /** Below this there is no honest way to lay four zones out in a row. */
 const MIN_STRIP = 24
 /** Hints take at most a third of the strip: past that they stop being a
     reminder and start being documentation. */
 const HINT_SHARE = 3
+
+/** Render a fetch time at the precision it is worth reading: a sub-millisecond
+    local read and a 2400ms network round trip should not print the same number
+    of significant digits. */
+const formatQueryMs = (ms: number): string =>
+  ms >= 10_000
+    ? `${(ms / 1000).toFixed(0)}s`
+    : ms >= 1000
+      ? `${(ms / 1000).toFixed(1)}s`
+      : ms >= 10
+        ? `${Math.round(ms)}ms`
+        : ms >= 1
+          ? `${ms.toFixed(1)}ms`
+          : "<1ms"
 
 /** Fit `text` into `room`, marking the cut with an ellipsis. */
 const fit = (text: string, room: number): string => {
@@ -82,7 +103,10 @@ export function StatusBar(props: StatusBarProps) {
   const { width } = useTerminalDimensions()
   const c = theme.colors
   const modeColor = props.mode === "insert" ? c.success : props.mode === "visual" ? c.warning : c.accent
-  const mode = ` ${MODE_LABEL[props.mode]} `
+  /* The page's own padding supplies the outer column, so the badge carries only
+     its inner spacing. Padding it here as well is what pushed the right-hand
+     zones past the edge and clipped the trailing gap. */
+  const mode = MODE_LABEL[props.mode]
 
   const location = [props.connection, props.database].filter(Boolean).join("@")
   const locationText = location ? (props.engine ? `${location} · ${props.engine}` : location) : ""
@@ -106,24 +130,31 @@ export function StatusBar(props: StatusBarProps) {
   /* Keep table/rows (rightmost) whole; drop location only if it does not fit. */
   const rightBits = `${tableInfo}${selectionInfo}${rowInfo}`
   const strip = Math.max(MIN_STRIP, width - PAGE_PADDING)
-  const fixed = mode.length + BRAND.length + rightBits.length
+  /* The fetch time mirrors the mode badge at the other end of the strip: a
+     colored, padded zone you read without looking for it. It is the only place
+     query cost is visible, and on a paged table it is what tells a user whether
+     Ctrl+f will feel instant. */
+  const latency = props.lastQueryMs !== undefined ? ` ${formatQueryMs(props.lastQueryMs)} ` : ""
+  const fixed =
+    mode.length + 1 + BRAND.length + (rightBits ? 1 + rightBits.length : 0) + latency.length + EDGE_GAP
 
   /* Hints yield before the location does, one whole hint at a time. */
   let hints = fitHints(props.hints ?? [], Math.floor(strip / HINT_SHARE))
-  while (hints && fixed + hints.length + 2 > strip) {
+  while (hints && fixed + hints.length + 1 > strip) {
     hints = dropLastHint(hints)
   }
   const hintsWidth = hints ? hints.length + 1 : 0
-  const leftBits = fit(locationText, strip - fixed - hintsWidth - 1 - rightBits.length)
+  const leftBits = rightBits ? fit(locationText, strip - fixed - hintsWidth) : ""
   const mid = `${leftBits}${rightBits}`
 
   return (
     <box height={1} flexDirection="row" alignItems="center">
-      <text fg={modeColor}>{mode}</text>
+      <text fg={modeColor}>{` ${mode} `}</text>
       <text fg={c.textMuted}>{BRAND}</text>
-      {mid ? <text fg={c.text}> {mid}</text> : null}
+      {mid ? <text fg={c.text}>{` ${mid}`}</text> : null}
       <box flexGrow={1} />
-      {hints ? <text fg={c.textMuted}> {hints}</text> : null}
+      {hints ? <text fg={c.textMuted}>{` ${hints}`}</text> : null}
+      {latency ? <text fg={c.accent}>{latency}</text> : null}
     </box>
   )
 }

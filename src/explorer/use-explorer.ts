@@ -42,6 +42,8 @@ export interface UseExplorerResult {
   readonly table: UseTableResult
   readonly tableInfo: TableInfo | null
   readonly total: number | null
+  /** Milliseconds the last page fetch took, or null before the first one. */
+  readonly lastQueryMs: number | null
   /** Row offset of the page currently loaded. */
   readonly offset: number
   /** How many rows a page holds. */
@@ -114,7 +116,16 @@ export const useExplorer = (): UseExplorerResult => {
      double Ctrl+f load page 2 twice and stall. */
   const offsetRef = useRef(0)
   const [loading, setLoading] = useState(false)
+  /* Wall time of the last page fetch, measured from the request to the rows
+     landing. A paged query against a large table can be orders of magnitude
+     slower than one against a local file, and the difference is invisible
+     until you wait for it. */
+  const [lastQueryMs, setLastQueryMs] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  /* Recorded from both the page load and the connect/list-tables path: a user
+     sitting on the sidebar has still made a round trip, and showing nothing
+     there read as a missing feature rather than "no query yet". */
+  const noteQueryMs = (startedAt: number) => setLastQueryMs(performance.now() - startedAt)
   const [search, setSearch] = useState("")
   /* Bumping this re-polls the sidebar status dots. A failed connect neither
      changes the tree nor `active`, so without it the dot would stay ○ forever. */
@@ -175,6 +186,9 @@ export const useExplorer = (): UseExplorerResult => {
     setError(null)
     offsetRef.current = pageOffset
     setOffset(pageOffset)
+    /* Sub-millisecond reads are common against a local file, so a millisecond
+       clock would report every fetch as 0ms and read as a broken gauge. */
+    const startedAt = performance.now()
 
     runService(
       queryExecutor.loadTable(explorer.id, explorer.database, name, {
@@ -188,6 +202,7 @@ export const useExplorer = (): UseExplorerResult => {
         setRows(result.rows)
         setTableName(name)
         setLoading(false)
+        noteQueryMs(startedAt)
         if (!withCount) return
         return runService(queryExecutor.count(explorer.id, explorer.database, name))
       })
@@ -262,6 +277,7 @@ export const useExplorer = (): UseExplorerResult => {
     setLoading(true)
     setError(null)
 
+    const connectStartedAt = performance.now()
     const previous = activeExplorer.current
     if (previous && previous.id !== node.refId) {
       void runService(connectionManager.disconnect(previous.id)).catch(() => undefined)
@@ -280,6 +296,7 @@ export const useExplorer = (): UseExplorerResult => {
           database: node.database!,
         }
         setActive(activeExplorer.current)
+        noteQueryMs(connectStartedAt)
 
         /* Surface the tables under this connection right away. */
         sidebar.expandConnection(node.refId as ConnectionId)
@@ -494,6 +511,7 @@ export const useExplorer = (): UseExplorerResult => {
       table,
       tableInfo,
       total,
+      lastQueryMs,
       offset,
       pageSize: PAGE_SIZE,
       hasNextPage,
@@ -522,6 +540,7 @@ export const useExplorer = (): UseExplorerResult => {
       table,
       tableInfo,
       total,
+      lastQueryMs,
       offset,
       hasNextPage,
       hasPrevPage,
