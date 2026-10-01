@@ -442,8 +442,8 @@ export function ExplorerScreen() {
     if (vimMode === "visual")
       return ["y copy", "j/k extend", "gg/G ends", "Esc cancel"]
 
-    /* Paging leads the hint list. The budget is 30 characters, so a hint buried
-       at the end of eight others is never seen — and paging is the one action a
+    /* Paging leads the hint list. Hints get a third of the strip, so one buried
+       at the end of ten others is never seen — and paging is the one action a
        user cannot discover from the data on screen. */
     const paging: string[] = []
     if (explorer.hasNextPage) paging.push("^f next page")

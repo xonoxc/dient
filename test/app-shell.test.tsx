@@ -42,10 +42,44 @@ describe("App shell", () => {
       await setup.waitForFrame(f => f.includes("SETTINGS"))
 
       const frame = setup.captureSpans()
-      /* The hint budget is 30 chars, so the leading settings bindings are
-         what the bar actually shows. */
+      /* Hints get a third of the strip and are taken whole from the front, so
+         the leading settings bindings are what the bar actually shows. */
       expect(lastTextRow(frame)).toContain("a db")
       expect(lastTextRow(frame)).toContain("p paste URI")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test("the status bar fits the real terminal width, not a fixed 80", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "sample",
+      engine: "sqlite",
+      filename: freshSqliteDataFile("users"),
+    })
+    /* On a wide terminal the bar used to chop its own text ("sample · sqli",
+       "V sele") against an 80-column budget while a void sat between the two
+       halves — the overflow the fixed cap caused. */
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />, {
+      width: 160,
+      height: 26,
+    })
+    try {
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("sample"))
+      await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(f => f.includes("USERS") && f.includes("alice"))
+      /* `l` moves focus to the grid, which is the hint list that used to be
+         cut mid-word. */
+      await pressKeys(setup, ["l"])
+
+      const row = lastTextRow(setup.captureSpans())
+      /* The location reads whole, and hints are taken whole or not at all. */
+      expect(row).toContain("sample · sqlite")
+      expect(row).toContain("V select rows")
+      expect(row).toContain("users 3 rows")
     } finally {
       setup.renderer.destroy()
     }
