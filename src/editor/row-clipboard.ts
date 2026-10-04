@@ -2,9 +2,9 @@
  * Row yank for table rows. A yank covers the visual selection's span, or the
  * cursor row alone when no selection is open (the state machine's default, so
  * the helper stays honest even though the table only binds `y` in visual mode).
- * The text is the row editor's `column: value` pairs with the comment header
- * dropped, so what lands on the clipboard is data a user can paste back, not the
- * instructions the editor file carries.
+ * The text is a padded Markdown table (see `serializeRowsToMarkdown`), so a yank
+ * lands on the clipboard as the table it looks like on screen — readable as raw
+ * text in a terminal or an issue, and still a table once rendered.
  *
  * The row set is the table's own window (the current page, filtered and sorted
  * as displayed), because that is what the selection indexes: a yank can never
@@ -12,12 +12,12 @@
  */
 import { Option } from "effect"
 import type { TableColumn } from "@/inspector/types"
-import { serializeRowsToClipboard } from "@/editor/row-serialization"
+import { serializeRowsToMarkdown } from "@/editor/row-serialization"
 import { selectionRange } from "@/vim/vim"
 import type { Selection } from "@/vim/types"
 
 export interface RowYank {
-  /** Clipboard text: key/value pairs, one row per blank-line-separated block. */
+  /** Clipboard text: a padded Markdown table. */
   readonly text: string
   /** How many rows the yank covered, for the confirmation message. */
   readonly count: number
@@ -51,5 +51,5 @@ export const yankRows = (
   if (columns.length === 0 || rows.length === 0) return null
   const picked = rowsForYank(rows, cursor, selection)
   if (picked.length === 0) return null
-  return { text: serializeRowsToClipboard(columns, picked), count: picked.length }
+  return { text: serializeRowsToMarkdown(columns, picked), count: picked.length }
 }

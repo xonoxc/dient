@@ -1,9 +1,9 @@
 /**
- * Row yank unit tests. `Shift+V` in the table copies the row under the cursor,
- * or every row a visual selection spans, as the row editor's `column: value`
- * pairs minus the comment header. The selection is what makes it a *row* yank,
- * so the span rules (inclusive ends, reversed anchors, window clamping) are
- * pinned here rather than only through the keyboard.
+ * Row yank unit tests. `y` in the table copies the row under the cursor, or
+ * every row a visual selection spans, as TSV with a header line. The selection
+ * is what makes it a *row* yank, so the span rules (inclusive ends, reversed
+ * anchors, window clamping) are pinned here rather than only through the
+ * keyboard.
  */
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
@@ -51,16 +51,19 @@ describe("rowsForYank", () => {
 })
 
 describe("yankRows", () => {
-  test("the clipboard text is key/value pairs with no comment header", () => {
+  test("a single-row yank is a one-row table, header and rule included", () => {
+    /* Sized to the rows actually copied: only `bob` is in this yank, so `name`
+       is four wide (`name` itself) rather than five as it would be over all
+       three rows. The clipboard is a table of what was copied, not of the page. */
     expect(yankRows(USERS, ROWS, 1, NONE)).toEqual({
-      text: "id: 2\nname: bob\n",
+      text: "| id   | name |\n| ---- | ---- |\n| 2    | bob  |\n",
       count: 1,
     })
   })
 
-  test("a selection yields every row as its own block", () => {
+  test("a selection yields one table with every row under a single header", () => {
     expect(yankRows(USERS, ROWS, 0, Option.some({ anchor: 0, head: 1 }))).toEqual({
-      text: "id: 1\nname: alice\n\nid: 2\nname: bob\n",
+      text: "| id   | name  |\n" + "| ---- | ----- |\n" + "| 1    | alice |\n" + "| 2    | bob   |\n",
       count: 2,
     })
   })

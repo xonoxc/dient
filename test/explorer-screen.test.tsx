@@ -110,6 +110,54 @@ describe("explorer screen", () => {
     }
   })
 
+  /* The payload the `y` above hands the clipboard is asserted here rather than
+     in the unit serializer, because the unit cannot see the keys: what matters
+     is that the shortcut and the selection reach the writer and what arrives is
+     a padded Markdown table. `copyToClipboardOSC52` is the writer's last
+     hop and is stubbed to capture the text, which also makes the toast
+     deterministic on a machine with no clipboard. */
+  test("y puts an aligned Markdown table on the clipboard for the whole selection", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile(),
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    const copied: string[] = []
+    Object.defineProperty(setup.renderer, "copyToClipboardOSC52", {
+      value: (text: string) => {
+        copied.push(text)
+        return true
+      },
+      configurable: true,
+      writable: true,
+    })
+    try {
+      await expandToConnection(setup)
+      /* Focus must land on the table before the selection keys are read. */
+      await pressKeys(setup, ["l"])
+      await pressKeys(setup, ["SHIFT+v"])
+      await setup.waitForFrame(f => f.includes("VISUAL"))
+      await pressKeys(setup, ["j"])
+      await setup.waitForFrame(f => f.includes("2 selected"))
+
+      await pressKeys(setup, ["y"])
+      await waitForFrameDriven(setup, f => f.includes("copied 2 rows"))
+
+      expect(copied).toHaveLength(1)
+      expect(copied[0]).toBe(
+        "| id   | name  | email             |\n" +
+          "| ---- | ----- | ----------------- |\n" +
+          "| 1    | alice | alice@example.com |\n" +
+          "| 2    | bob   | bob@example.com   |\n"
+      )
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
   /* The top bar is a single tab for the open table, not a strip of every table
      in the database. A wide schema used to put a hundred tabs in a one-line
      scroller, and because each tab was its own margin-carrying box the layout
@@ -353,8 +401,7 @@ describe("list navigation", () => {
     return path
   }
 
-  const lineWith = (frame: string, value: string): string =>
-    frame.split("\n").find(line => line.includes(value)) ?? ""
+  const lineWith = (frame: string, value: string): string => frame.split("\n").find(line => line.includes(value)) ?? ""
 
   /* Terminals report Shift+G as the unshifted base `g` plus the shift flag, so
      a NORMAL binding that reads `e.name` saw `g` and started a `gg`. The key is
@@ -386,7 +433,12 @@ describe("list navigation", () => {
      cursor on the project and collapse it instead. */
   test("Shift+G jumps the sidebar cursor to the last item", async () => {
     const services = await resolveTestServices(freshConfigFile())
-    await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: freshSqliteDataFile() })
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile(),
+    })
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await pressKeys(setup, ["RETURN"])

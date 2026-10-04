@@ -24,11 +24,12 @@
  * UPDATE. Only columns whose value differs from the original row are reported,
  * and each is validated against its column type before being parsed.
  *
- * The clipboard form (`serializeRowsToClipboard`) is the same pairs with the
- * comment header stripped, so a yanked row pastes back as data.
+ * The clipboard form (`serializeRowsToMarkdown`) is a different format on
+ * purpose — a padded Markdown table — because a yank is headed for a document or
+ * an issue, not back into this parser.
  */
 import type { TableColumn } from "@/inspector/types"
-import { formatCell } from "@/table/use-table"
+import { columnWidth, formatCell } from "@/table/use-table"
 import { validateCellValue } from "@/editor/validate-cell"
 
 export interface RowValueUpdate {
@@ -72,16 +73,68 @@ export const serializeRowToKeyValue = (
 ): string => [...FORMAT_HEADER, "", rowToKeyValueLines(columns, row).join("\n\n"), ""].join("\n")
 
 /**
- * Rows as clipboard text: the editor's `column: value` pairs with the comment
- * header dropped, so a yank is paste-ready data rather than instructions. Fields
- * of one row sit on consecutive lines and rows are separated by a blank line,
- * which keeps a multi-row yank unambiguous (the editor file only ever holds one
- * row, so its in-row spacing is a readability choice, not part of the format).
+ * Markdown has no field delimiter to escape *into*, so the four characters that
+ * would break the table are written as escapes instead: a raw `|` would open a
+ * new column, and a raw tab or newline would push the rest of the line past the
+ * cell it belongs to. A backslash is left alone, so a value containing a literal
+ * `\n` is indistinguishable from an escaped newline — the lesser evil next to
+ * silently splitting one row into two.
  */
-export const serializeRowsToClipboard = (
+const MARKDOWN_ESCAPES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\|/g, "\\|"],
+  [/\t/g, "\\t"],
+  [/\r/g, "\\r"],
+  [/\n/g, "\\n"],
+]
+
+/** One Markdown cell: the value as the grid draws it, with the table-breaking
+    characters escaped out. */
+const markdownField = (value: unknown): string => {
+  let text = formatCell(value)
+  for (const [pattern, escape] of MARKDOWN_ESCAPES) text = text.replace(pattern, escape)
+  return text
+}
+
+/**
+ * Rows as clipboard text: a Markdown table whose columns are padded to their
+ * content, so every `|` lands in the same terminal column and the raw text reads
+ * as a table before it is ever rendered.
+ *
+ * Padding is computed per column from the longest cell that column holds — the
+ * header included — rather than by joining with ` | `. A Markdown renderer will
+ * lay any of this out, but the pasted text is also read in terminals, diffs,
+ * issues and code comments, where an unpadded table is a wall of ragged text.
+ *
+ * Widths come from the table's own `columnWidth` rule, so a column is measured
+ * the same way here as it is drawn on screen. `MAX_COL_WIDTH` deliberately does
+ * not apply: the grid clips an over-wide column because the viewport forces it
+ * to, while a clipboard that truncated its own values would lose data.
+ *
+ * Cells go through `formatCell`, the formatter the grid draws with, so the
+ * clipboard and the screen agree: `∅` for NULL, `true`/`false` for booleans, ISO
+ * timestamps for dates. Rows are the caller's, in the order given, so a yank of a
+ * selection matches what was highlighted.
+ */
+export const serializeRowsToMarkdown = (
   columns: ReadonlyArray<TableColumn>,
   rows: ReadonlyArray<Readonly<Record<string, unknown>>>
-): string => rows.map(row => rowToKeyValueLines(columns, row).join("\n")).join("\n\n") + "\n"
+): string => {
+  const headers = columns.map(column => markdownField(column.name))
+  const body = rows.map(row => columns.map(column => markdownField(row[column.name])))
+
+  /* One pass per column over the cells that column holds, which is the same
+     measure the grid uses — including its floor, so a one-character column is
+     still `MIN_COL_WIDTH` wide and the row reads as a table. */
+  const widths = columns.map((column, index) =>
+    columnWidth(column.name, [headers[index]!, ...body.map(cells => cells[index]!)])
+  )
+
+  const line = (cells: ReadonlyArray<string>): string =>
+    `| ${cells.map((cell, index) => cell.padEnd(widths[index]!)).join(" | ")} |`
+  const rule = `| ${widths.map(width => "-".repeat(width)).join(" | ")} |`
+
+  return [line(headers), rule, ...body.map(line)].join("\n") + "\n"
+}
 
 /** Parse a field's edited text into a query parameter (cell-editor semantics):
     numerics become numbers, an empty draft on a nullable column becomes NULL,

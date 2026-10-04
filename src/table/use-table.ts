@@ -15,6 +15,30 @@ export interface SortState {
 export const MIN_COL_WIDTH = 4
 export const MAX_COL_WIDTH = 28
 
+/**
+ * The width one column needs: the longest of its cell texts, floored at
+ * `MIN_COL_WIDTH`. Shared with the clipboard serializer so a copied table is
+ * padded to the measure the grid draws with — one definition of "how wide is
+ * this column", rather than a second one that drifts.
+ */
+export const columnWidth = (header: string, cells: Iterable<string>): number => {
+  let longest = header.length
+  for (const cell of cells) if (cell.length > longest) longest = cell.length
+  return Math.max(MIN_COL_WIDTH, longest)
+}
+
+/** `columnWidth` per column, in schema order. */
+export const columnWidths = (
+  columns: ReadonlyArray<ColumnInfo>,
+  rows: ReadonlyArray<Readonly<Record<string, unknown>>>
+): ReadonlyArray<number> =>
+  columns.map(column =>
+    columnWidth(
+      column.name,
+      rows.map(row => formatCell(row[column.name]))
+    )
+  )
+
 export const formatCell = (value: unknown): string => {
   if (value === null || value === undefined) return "∅"
   if (typeof value === "bigint") return value.toString()
@@ -72,14 +96,13 @@ export const useTable = (
   const widths = useMemo(() => {
     const sample = sortedRows.slice(0, 100)
     const next: Record<string, number> = {}
-    for (const column of columns) {
-      let longest = column.name.length
-      for (const row of sample) {
-        const len = formatCell(row[column.name]).length
-        if (len > longest) longest = len
-      }
-      next[column.name] = Math.max(MIN_COL_WIDTH, Math.min(MAX_COL_WIDTH, longest))
-    }
+    /* Only the display clamps to MAX_COL_WIDTH: a column wider than the
+       viewport is clipped on screen, but a clipboard payload that clipped its
+       own values would be data loss rather than a layout decision. */
+    columnWidths(columns, sample).forEach((width, index) => {
+      const name = columns[index]!.name
+      next[name] = Math.min(MAX_COL_WIDTH, width)
+    })
     return next
   }, [sortedRows, columns])
 
