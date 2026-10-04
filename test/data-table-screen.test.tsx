@@ -65,10 +65,11 @@ describe("data table", () => {
     try {
       const frame = await openTable(setup, "alice")
       /* vertical cell rules make the table boundaries visible while keeping
-         each header aligned with its values */
-      expect(frame).toMatch(/ID│\s+NAME│\s+EMAIL/)
-      expect(frame).toMatch(/1│\s+alice/)
-      expect(frame).toMatch(/3│\s+carol/)
+         each header aligned with its values. Cells are padded to their column
+         width, so the rule follows the widest value, not the text. */
+      expect(frame).toMatch(/ID\s+│\s+NAME\s+│\s+EMAIL/)
+      expect(frame).toMatch(/1\s+│\s+alice/)
+      expect(frame).toMatch(/3\s+│\s+carol/)
     } finally {
       setup.renderer.destroy()
     }
@@ -89,15 +90,15 @@ describe("data table", () => {
 
       await pressKeys(setup, ["j"])
       await setup.waitForFrame(f => f.includes("▶2"))
-      expect(setup.captureCharFrame()).toMatch(/▶2│\s+bob/)
+      expect(setup.captureCharFrame()).toMatch(/▶2\s+│\s+bob/)
 
       await pressKeys(setup, ["j"])
       await setup.waitForFrame(f => f.includes("▶3"))
-      expect(setup.captureCharFrame()).toMatch(/▶3│\s+carol/)
+      expect(setup.captureCharFrame()).toMatch(/▶3\s+│\s+carol/)
 
       await pressKeys(setup, ["k", "k"])
       await setup.waitForFrame(f => f.includes("▶1"))
-      expect(setup.captureCharFrame()).toMatch(/▶1│\s+alice/)
+      expect(setup.captureCharFrame()).toMatch(/▶1\s+│\s+alice/)
     } finally {
       setup.renderer.destroy()
     }
@@ -114,8 +115,10 @@ describe("data table", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openTable(setup, "user_0")
-      /* the query executor fetches a 200-row page but reports the real total */
-      expect(setup.captureCharFrame()).toContain("200 / 1500 rows")
+      /* the query executor fetches a 200-row page but reports the real total.
+         Paged, the bar names the window rather than a bare count, so Ctrl+f is
+         discoverable from the status line alone. */
+      expect(setup.captureCharFrame()).toContain("1-200 of 1500")
 
       await pressKeys(setup, ["G"])
       await setup.waitForFrame(f => f.includes("▶200"))
@@ -128,7 +131,7 @@ describe("data table", () => {
       await pressKeys(setup, ["g", "g"])
       await setup.waitForFrame(f => f.includes("▶1"))
       const first = setup.captureCharFrame()
-      expect(first).toMatch(/▶1│\s+user_0/)
+      expect(first).toMatch(/▶1\s+│\s+user_0/)
       expect(first).not.toContain("user_199")
     } finally {
       setup.renderer.destroy()
@@ -151,7 +154,7 @@ describe("data table", () => {
       await pressKeys(setup, ["j", "j", "j", "j"])
       await setup.waitForFrame(f => f.includes("▶5"))
       const nearTop = setup.captureCharFrame()
-      expect(nearTop).toMatch(/▶5│\s+user_4/)
+      expect(nearTop).toMatch(/▶5\s+│\s+user_4/)
       expect(nearTop).toContain("user_0")
 
       /* 13 more j → cursor 18 is past the viewport half (the pane fills the
@@ -159,7 +162,7 @@ describe("data table", () => {
       await pressKeys(setup, ["j", "j", "j", "j", "j", "j", "j", "j", "j", "j", "j", "j", "j"])
       await setup.waitForFrame(f => f.includes("▶18"))
       const centered = setup.captureCharFrame()
-      expect(centered).toMatch(/▶18│\s+user_17/)
+      expect(centered).toMatch(/▶18\s+│\s+user_17/)
       expect(centered).not.toContain("user_0")
     } finally {
       setup.renderer.destroy()

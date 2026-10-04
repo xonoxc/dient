@@ -42,6 +42,7 @@ const parseServerUrl = (engine: "postgres" | "mysql", rest: string): ConnectionS
   } catch {
     return null
   }
+
   const name =
     url.pathname && url.pathname !== "/"
       ? decodeURIComponent(
@@ -51,6 +52,7 @@ const parseServerUrl = (engine: "postgres" | "mysql", rest: string): ConnectionS
             .at(-1) ?? ""
         ).trim()
       : undefined
+
   return {
     engine,
     host: url.hostname || "localhost",
@@ -68,7 +70,11 @@ export const parseConnectionString = (input: string): ConnectionString | null =>
   const scheme = raw.match(SCHEME)
   if (!scheme) {
     /* No scheme → treat as a filesystem path for SQLite. */
-    return { engine: "sqlite", filename: raw, name: tailName(raw) }
+    return {
+      engine: "sqlite",
+      filename: raw,
+      name: tailName(raw),
+    }
   }
 
   const kind = scheme[1]!.toLowerCase()
@@ -76,6 +82,7 @@ export const parseConnectionString = (input: string): ConnectionString | null =>
 
   if (kind === "postgres" || kind === "postgresql") return parseServerUrl("postgres", rest)
   if (kind === "mysql") return parseServerUrl("mysql", rest)
+
   if (kind === "sqlite" || kind === "file") {
     const filename = rest.replace(/^\/\//, "").trim()
     if (!filename) return null

@@ -37,6 +37,10 @@ import { LoadingIndicator } from "@/ui/loading-indicator"
 
 const TABLE_MOVE_KEYS = new Set(["j", "k", "g", "G"])
 
+/** Rows the data pane cannot spend on rows: page top padding, table strip,
+    column header, command bar, status bar. */
+const DATA_PANE_CHROME_ROWS = 5
+
 export function ExplorerScreen() {
   const theme = useTheme()
   const c = theme.colors
@@ -64,10 +68,15 @@ export function ExplorerScreen() {
   const editorBusyRef = useRef(false)
 
   /* Fill the data pane: the table is virtualized, so showing as many rows as
-     the terminal affords (minus the status bar and table strip) makes the two
-     panes read the same height, as in a GUI client. */
+     the terminal affords makes the two panes read the same height, as in a GUI
+     client. Over-reserving here stays invisible until a jump lands off screen:
+     the window renders more rows than the pane can show, the scrollbox clips
+     the overflow, and `G` scrolls the cursor past the bottom edge instead of
+     onto it. The five rows are the page's top padding, the table strip, the
+     column header, the command bar, and the status bar; the page's bottom
+     padding is absorbed by the flexible content box and costs no row. */
   const { height, width } = useTerminalDimensions()
-  const viewportRows = Math.max(1, height - 2)
+  const viewportRows = Math.max(1, height - DATA_PANE_CHROME_ROWS)
   /* The area the grid gets for its columns: terminal width less the app page
      padding, the sidebar, the leading cursor glyph, and row padding.
      The sidebar width is read from the sidebar rather than repeated here — the

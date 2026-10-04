@@ -123,6 +123,7 @@ export namespace ConfigStore {
         const path = filepath ?? join(homedir(), ".dient", "config.db")
 
         yield* Effect.sync(() => mkdirSync(dirname(path), { recursive: true }))
+
         const sql = yield* SqliteClient.make({
           filename: path,
           transformQueryNames: camelToSnake,
@@ -135,10 +136,6 @@ export namespace ConfigStore {
       })
     ).pipe(Layer.provide(Reactivity.layer))
 }
-
-/* ---------------------------------------------------------------------------
- * Small helpers shared by the store implementation.
- * ------------------------------------------------------------------------- */
 
 const camelToSnake = (s: string) => s.replace(/[A-Z]/g, match => "_" + match.toLowerCase())
 const snakeToCamel = (s: string) => s.replace(/_([a-z])/g, (_match, c: string) => c.toUpperCase())
@@ -175,7 +172,7 @@ const onError = <A>(effect: Effect.Effect<A, unknown>): Effect.Effect<A, ConfigE
   )
 
 /* --------------------------------------------------------------------------
- * Implementation. Each operation:
+ *   Implementation. Each operation:
  *   1. runs inside a short Effect.gen,
  *   2. decodes whatever came back from SQLite through the matching domain
  *      schema (guaranteeing rows match the domain types), and

@@ -41,6 +41,7 @@ export const validateCellValue = (column: ColumnInfo, value: string): string | n
   const type = (column.type ?? "").toLowerCase()
   if (!type) return null
   if (value === "") return null
+
   if (/int|bigint|smallint|numeric|decimal|real|float|double|serial|money|double_precision/.test(type)) {
     if (!NUMERIC.test(value)) return `"${column.name}" expects a number`
   }
@@ -61,29 +62,39 @@ export const useCellEditor = (): UseCellEditorResult => {
     isEditing: () => targetRef.current !== null,
     editTarget: () => targetRef.current,
     errorValue: () => errorRef.current,
-    preview: targetRef.current ? { column: targetRef.current.column, draft: draftRef.current } : null,
+    preview: targetRef.current
+      ? {
+          column: targetRef.current.column,
+          draft: draftRef.current,
+        }
+      : null,
+
     open: next => {
       targetRef.current = next
       draftRef.current = next.original
       errorRef.current = null
       render()
     },
+
     type: character => {
       if (character.length !== 1) return
       errorRef.current = null
       draftRef.current = draftRef.current + character
       render()
     },
+
     backspace: () => {
       draftRef.current = draftRef.current.slice(0, -1)
       render()
     },
+
     clear: () => {
       targetRef.current = null
       draftRef.current = ""
       errorRef.current = null
       render()
     },
+
     commit: columns => {
       const target = targetRef.current
       if (!target) return null
@@ -98,6 +109,7 @@ export const useCellEditor = (): UseCellEditorResult => {
       }
       return { value: draftRef.current }
     },
+
     cancel: () => {
       targetRef.current = null
       draftRef.current = ""

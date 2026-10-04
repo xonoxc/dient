@@ -41,6 +41,10 @@ export interface DataTableProps {
 /** Trailing gap after every column so cells never butt against the next. */
 export const COLUMN_GUTTER = 2
 
+/** Columns left of the first cell: the row's own left padding and the cursor
+    glyph. Header and body share it, which is what keeps them aligned. */
+const ROW_LEADING = 2
+
 /**
  * Column widths for a frame: the content width from `useTable`, plus a fixed
  * gutter, plus a share of any *remaining* pane width so the grid fills the
@@ -98,11 +102,30 @@ export function DataTable({
 
   const scrollRef = useRef<ScrollBoxRenderable | null>(null)
 
-  /* Keep the focused column in view as the cursor or the cell cursor moves.
-     Only the focused row's cells carry ids, so there is exactly one target. */
+  /* Pan the focused column into view.
+     `scrollChildIntoView` is the wrong tool here: it computes a "nearest
+     delta" and deliberately returns 0 when the target lies *entirely* outside
+     the viewport, so a column that is wholly off-screen never comes into view
+     — pressing `right` moved the cursor but left the frame untouched. The
+     offset is arithmetic instead: cells are laid out left to right at a known
+     width each, so the focused cell's span is exact and needs no render-tree
+     lookup. Vertical movement is not needed — `rowsWindow` already slides the
+     window so the cursor row is on screen. */
   useEffect(() => {
-    if (!activeColumn || !scrollRef.current) return
-    scrollRef.current.scrollChildIntoView(`dient-col-${cursor}-${activeColumn}`)
+    const box = scrollRef.current
+    if (!activeColumn || !box) return
+    const index = columns.findIndex(column => column.name === activeColumn)
+    if (index < 0) return
+
+    const cellLeft = ROW_LEADING + columns.slice(0, index).reduce((sum, column) => sum + widthOf(column.name), 0)
+    const cellRight = cellLeft + widthOf(activeColumn)
+    const viewWidth = box.width
+    const maxScroll = Math.max(0, box.scrollWidth - viewWidth)
+
+    let next = box.scrollLeft
+    if (cellLeft < next) next = cellLeft
+    else if (cellRight > next + viewWidth) next = cellRight - viewWidth
+    box.scrollLeft = Math.max(0, Math.min(next, maxScroll))
   }, [activeColumn, cursor, columns, sortedRows.length])
 
   return (
@@ -121,7 +144,13 @@ export function DataTable({
         horizontalScrollbarOptions={{ visible: false }}
       >
         <box flexDirection="column">
-          <HeaderRow columns={columns} sort={sort} widthOf={widthOf} tableWidth={tableWidth} activeColumn={columnFocus ? activeColumn : undefined} />
+          <HeaderRow
+            columns={columns}
+            sort={sort}
+            widthOf={widthOf}
+            tableWidth={tableWidth}
+            activeColumn={columnFocus ? activeColumn : undefined}
+          />
           {window.rows.map((row, windowIndex) => {
             const rowIndex = window.offset + windowIndex
             const selected = rowIndex === cursor
@@ -195,8 +224,13 @@ function HeaderRow({
         const last = index === columns.length - 1
         return (
           <box key={column.name} width={widthOf(column.name) - (last ? 1 : 0)} flexDirection="row" overflow="hidden">
-            <text fg={activeColumn === column.name ? c.textBright : c.accent} width={Math.max(1, widthOf(column.name) - 2)} truncate>
-              {column.name.toUpperCase()}{marker}
+            <text
+              fg={activeColumn === column.name ? c.textBright : c.accent}
+              width={Math.max(1, widthOf(column.name) - 2)}
+              truncate
+            >
+              {column.name.toUpperCase()}
+              {marker}
             </text>
             <text fg={c.grid}>{last ? "│" : "│ "}</text>
           </box>
@@ -255,21 +289,28 @@ function RowLine({
         const parts = matches(formatted) && !editingThis ? splitHighlighted(formatted, highlight!) : null
         const last = index === columns.length - 1
         return (
-          <box key={column.name} id={cellId} width={widthOf(column.name) - (last ? 1 : 0)} flexDirection="row" overflow="hidden" backgroundColor={activeCell ? c.bgSurface : undefined}>
+          <box
+            key={column.name}
+            id={cellId}
+            width={widthOf(column.name) - (last ? 1 : 0)}
+            flexDirection="row"
+            overflow="hidden"
+            backgroundColor={activeCell ? c.bgSurface : undefined}
+          >
             <box width={Math.max(1, widthOf(column.name) - 2)} overflow="hidden">
-            {parts ? (
-              <box flexDirection="row">
-                {parts.map((part, index) => (
-                  <text key={index} fg={part.matched ? c.accent : fg} truncate>
-                    {part.text}
-                  </text>
-                ))}
-              </box>
-            ) : (
-              <text fg={fg} truncate>
-                {formatted}
-              </text>
-            )}
+              {parts ? (
+                <box flexDirection="row">
+                  {parts.map((part, index) => (
+                    <text key={index} fg={part.matched ? c.accent : fg} truncate>
+                      {part.text}
+                    </text>
+                  ))}
+                </box>
+              ) : (
+                <text fg={fg} truncate>
+                  {formatted}
+                </text>
+              )}
             </box>
             <text fg={c.grid}>{last ? "│" : "│ "}</text>
           </box>

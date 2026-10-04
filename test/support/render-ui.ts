@@ -60,11 +60,22 @@ export async function pressKeys(setup: TestRendererSetup, keys: ReadonlyArray<st
   await setup.waitForVisualIdle()
 }
 
+/** OpenTUI's mock key table names the arrows `ARROW_*`. Passing the friendly
+    `"right"` instead falls through to "emit this string", so the terminal
+    receives the literal text `right` and the app reads `r`, `i`, `g`, `h`, `t` —
+    which is why horizontal panning looked broken when it was only untestable. */
+const ARROW_KEYS: Readonly<Record<string, string>> = {
+  up: "ARROW_UP",
+  down: "ARROW_DOWN",
+  right: "ARROW_RIGHT",
+  left: "ARROW_LEFT",
+}
+
 /** Dispatch one key, honouring a `CTRL+` / `SHIFT+` / `ALT+` prefix. */
 function pressOne(setup: TestRendererSetup, key: string): void {
   const match = /^(CTRL|SHIFT|ALT)\+(.+)$/.exec(key)
   if (!match) {
-    setup.mockInput.pressKey(key)
+    setup.mockInput.pressKey(ARROW_KEYS[key] ?? key)
     return
   }
   const [, modifier, base] = match as unknown as [string, string, string]
@@ -74,7 +85,7 @@ function pressOne(setup: TestRendererSetup, key: string): void {
       : modifier === "SHIFT"
         ? { shift: true as const }
         : { meta: true as const }
-  setup.mockInput.pressKey(base, modifiers)
+  setup.mockInput.pressKey(ARROW_KEYS[base] ?? base, modifiers)
 }
 
 /**

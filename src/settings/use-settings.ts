@@ -23,7 +23,7 @@ import { useConfigRevision, useDialog, useServices, useToasts } from "@/app-cont
 import { completePath, pathCandidates } from "@/fs/path-complete"
 import { parseConnectionString, type ConnectionString } from "@/connection/parse"
 import type { CreateConnectionInput } from "@/config"
-import type { Connection, ConnectionId, Database, DatabaseId, Engine, Project, ProjectId } from "@/domain"
+import type { Connection, Database, DatabaseId, Engine, Project, ProjectId } from "@/domain"
 import { describeError } from "@/errors/describe"
 import { runService } from "@/effect/run"
 
@@ -141,6 +141,7 @@ export const buildSettingsTree = (
   const items: SettingsListItem[] = []
   for (const project of projects) {
     const projectExpanded = expanded.has(project.id)
+
     items.push({
       id: `project:${project.id}`,
       kind: "project",
@@ -151,7 +152,9 @@ export const buildSettingsTree = (
       depth: 0,
       expanded: projectExpanded,
     })
+
     if (!projectExpanded) continue
+
     for (const database of databases.get(project.id) ?? []) {
       const connection = (connections.get(database.id) ?? [])[0] ?? null
       items.push({
@@ -191,9 +194,11 @@ export const useSettings = (): UseSettingsResult => {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [cursor, setCursor] = useState(0)
   /* Set when a create succeeds; the next tree build parks the cursor on it. */
-  const pendingRevealRef = useRef<{ readonly kind: "database"; readonly projectId: ProjectId; readonly name: string } | null>(
-    null
-  )
+  const pendingRevealRef = useRef<{
+    readonly kind: "database"
+    readonly projectId: ProjectId
+    readonly name: string
+  } | null>(null)
   const [form, setFormState] = useState<SettingsForm | null>(null)
   const [draft, setDraftState] = useState("")
   const [engine, setEngineState] = useState<Engine>("postgres")
@@ -208,7 +213,9 @@ export const useSettings = (): UseSettingsResult => {
   const databaseById = (id: DatabaseId): Database | undefined => {
     for (const projectDatabases of databases.values()) {
       const found = projectDatabases.find(database => database.id === id)
-      if (found) return found
+      if (found) {
+        return found
+      }
     }
     return undefined
   }
@@ -220,7 +227,8 @@ export const useSettings = (): UseSettingsResult => {
       setFormState(null)
       setDraftState("")
     }
-    void runService(configStore.listProjects())
+
+    runService(configStore.listProjects())
       .then(async rows => {
         setProjects(rows)
         for (const project of rows) {
@@ -593,7 +601,10 @@ export const useSettings = (): UseSettingsResult => {
     },
     pasteText: (text: string) => {
       const current = formRef.current
-      const pasted = text.replace(/\0/g, "").replace(/[\r\n]+/g, "").trim()
+      const pasted = text
+        .replace(/\0/g, "")
+        .replace(/[\r\n]+/g, "")
+        .trim()
       if (!pasted || !current || current.kind === "addChoice") return
       if (current?.kind === "connect") {
         const key = current.mode === "uri" ? "uri" : fieldsOf(current)[current.fieldIndex]

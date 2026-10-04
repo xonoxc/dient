@@ -23,6 +23,7 @@ await Effect.runPromise(
   Effect.scoped(
     Effect.gen(function* () {
       const services = yield* resolveAppServices()
+
       yield* Effect.sync(() => createRoot(renderer).render(<App services={services} theme={theme} />))
       yield* Effect.never
     })
