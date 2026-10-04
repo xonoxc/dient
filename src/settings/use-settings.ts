@@ -15,7 +15,7 @@
  * Form state is mirrored into refs: keyboard handlers fire between React
  * commits when a user (or a test pressing whole chords) types faster than a
  * frame, so every action reads the live value instead of a stale render
- * closure — the same trick the shell's command line and the cell editor use.
+ * closure — the same trick the shell's command line uses.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Effect } from "effect"

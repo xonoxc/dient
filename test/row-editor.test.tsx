@@ -1,9 +1,9 @@
 /**
- * `$EDITOR`-based row editing end to end. Pressing `i` suspends the renderer,
- * hands a `column: value` file of the cursor row to `$EDITOR`, and on exit
- * parses the file back into typed UPDATE params and persists them. These tests
- * substitute a shell script for the editor: one that rewrites the temp file
- * (save), one that does nothing useful (abort), and one that reproduces the
+ * `$EDITOR`-based row editing end to end. Pressing `i` or `Enter` suspends the
+ * renderer, hands a `column: value` file of the cursor row to `$EDITOR`, and on
+ * exit parses the file back into typed UPDATE params and persists them. These
+ * tests substitute a shell script for the editor: one that rewrites the temp
+ * file (save), one that does nothing useful (abort), and one that reproduces the
  * file (no changes).
  */
 import { afterEach, describe, expect, test } from "bun:test"
@@ -124,6 +124,96 @@ describe("$EDITOR row editing", () => {
       await setup.waitForFrame(f => f.includes("▌ NOTES") && f.includes("hello"))
       await pressKeys(setup, ["i"])
       await setup.waitForFrame(f => f.includes("no primary key"))
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  /* An INSERT-mode surface that fails to release the keyboard claim kills the
+     whole NORMAL layer, not just itself: the dispatcher reports every key as
+     already delivered, so `i` goes silent for the rest of the session. The
+     finder is the surviving surface that can leak, so cancel it with Escape
+     and check `i` is still bound. */
+  test("i still opens the editor after the finder is cancelled with Escape", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile(),
+    })
+    setEditor(installEditor("empty.sh", "exit 0"))
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await openUsers(setup)
+      await pressKeys(setup, ["l"])
+      await pressKeys(setup, ["SPACE", "ESCAPE"])
+      await setup.waitForFrame(f => f.includes("▶1"))
+
+      await pressKeys(setup, ["i"])
+      await waitForFrameDriven(setup, f => f.includes("editing users in"))
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  /* A session that bails out before the child is spawned — here an `$EDITOR`
+     that names no binary at all — must still hand the keyboard back, or the
+     re-entry guard stays set and `i` never opens the editor again. */
+  test("an unusable $EDITOR reports the problem and leaves i working", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile(),
+    })
+    setEditor("")
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await openUsers(setup)
+      await pressKeys(setup, ["l"])
+      await pressKeys(setup, ["i"])
+      await waitForFrameDriven(setup, f => f.includes("set $EDITOR"))
+
+      setEditor(installEditor("empty.sh", "exit 0"))
+      await pressKeys(setup, ["i"])
+      await waitForFrameDriven(setup, f => f.includes("editing users in"))
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  /* VISUAL mode swallowed every key it did not name, `i` included, so a live
+     selection made the one binding the hint strip advertises for "edit this"
+     unreachable — the highlighted rows looked editable and were not. */
+  test("i opens the editor from a live selection and keeps it open", async () => {
+    const dataPath = freshSqliteDataFile()
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: dataPath })
+    setEditor(
+      installEditor("save.sh", `cat > "$1" <<'DIENTEOF'\nid: 3\nname: bobby\nemail: bobby@example.com\nDIENTEOF\n`)
+    )
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await openUsers(setup)
+      await pressKeys(setup, ["l"])
+      /* Select ids 2-3; the cursor ends on the second of them, so `i` edits
+         id 3. */
+      await pressKeys(setup, ["j", "V", "j"])
+      await setup.waitForFrame(f => f.includes("y copy"))
+
+      await pressKeys(setup, ["i"])
+      await waitForFrameDriven(setup, f => f.includes("editing users in"))
+      await waitForFrameDriven(setup, f => f.includes("bobby"))
+
+      const db = new SqliteDatabase(dataPath)
+      const row = db.query<{ name: string }, []>("SELECT name FROM users WHERE id = 3").get()!
+      db.close()
+      expect(row.name).toBe("bobby")
+
+      /* The selection survived the session, so the rows are still editable. */
+      await setup.waitForFrame(f => f.includes("y copy") && f.includes("i edit row"))
     } finally {
       setup.renderer.destroy()
     }

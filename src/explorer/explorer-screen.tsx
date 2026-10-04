@@ -22,7 +22,6 @@ import { SIDEBAR_WIDTH } from "@/sidebar/fit-label"
 import { DataTable } from "@/table/data-table"
 import { selectionRange, useVimMode } from "@/vim"
 import { useExplorer } from "@/explorer/use-explorer"
-import { useCellEditor } from "@/editor/use-cell-editor"
 import { editRowInEditor } from "@/editor/edit-row-in-editor"
 import { yankRows } from "@/editor/row-clipboard"
 import { writeSystemClipboard } from "@/ui/clipboard"
@@ -30,6 +29,7 @@ import { formatCell } from "@/table/use-table"
 import { useCommand } from "@/app-context"
 import { buildFinderIndex, type FinderEntry } from "@/finder/finder"
 import { FinderOverlay } from "@/finder/finder-overlay"
+import { RowPreview } from "@/explorer/row-preview"
 import { fuzzyMatch } from "@/finder/fuzzy"
 import { normalModeKey, resolveTypedChar } from "@/ui/text-entry"
 import { windowTail } from "@/ui/text-window"
@@ -56,10 +56,15 @@ export function ExplorerScreen() {
   const vim = useVimMode(explorer.table.sortedRows.length)
   const vimMode = vim.mode
 
-  /* The cell editor targets one cell: the vim cursor's row and a column cursor
-     (right/left arrows), with the draft validated against the schema. */
+  /* Horizontal column cursor (left/right arrows). Rows are inspected and
+     edited whole, so this only decides which column the grid scrolls into
+     view. */
   const [editColumn, setEditColumn] = useState(0)
-  const editor = useCellEditor()
+
+  /* `Enter` on a row opens the preview. A flag, not a captured row: the panel
+     reads whatever is under the cursor, so j/k inside it walks the table and a
+     save is visible in place without reopening anything. */
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   /* Whole-row editing runs in the user's `$EDITOR` over a `column: value` temp
      file, so nothing in the app can swallow a keystroke or drop an edit. Guard
@@ -94,17 +99,17 @@ export function ExplorerScreen() {
   const searchBuffer = useRef("")
   const [, bumpSearch] = useState(0)
 
-  /* Search, the finder, and the cell editor are all text surfaces, so each one
-     claims the keyboard while open: `:` and `?` are otherwise app-level
-     shortcuts, and both are ordinary characters in a search or a cell value.
-     Claims are taken on open and released on close (rather than in an effect)
-     because the open/close state lives in refs, not render state. */
+  /* Search and the finder are text surfaces, so each claims the keyboard while
+     open: `:` and `?` are otherwise app-level shortcuts, and both are ordinary
+     characters in a query. Claims are taken on open and released on close
+     (rather than in an effect) because the open/close state lives in refs, not
+     render state. */
   const textInput = useTextInput()
 
-  /* INSERT mode: the finder, `/` search, and the cell editor each own the
-     keyboard while open. The app dispatcher routes every key to the registered
-     owner and never reaches a NORMAL binding, so a filter or a cell value can
-     contain `:` `?` `/` `j` `k` — anything. */
+  /* INSERT mode: the finder and `/` search each own the keyboard while open.
+     The app dispatcher routes every key to the registered owner and never
+     reaches a NORMAL binding, so a query can contain `:` `?` `/` `j` `k` —
+     anything. */
   const handleTextKey = (e: RoutedKey): boolean => {
     const key = e.name
 
@@ -149,24 +154,6 @@ export function ExplorerScreen() {
       }
       const char = resolveTypedChar(e)
       if (char !== null) searchType(char)
-      return true
-    }
-
-    if (editor.isEditing()) {
-      if (key === "return" || key === "enter" || key === "\r") {
-        commitEdit()
-        return true
-      }
-      if (key === "\u001b" || key === "Escape" || key === "escape" || (e.ctrl === true && key === "c")) {
-        editor.cancel()
-        return true
-      }
-      if (key === "backspace") {
-        editor.backspace()
-        return true
-      }
-      const char = resolveTypedChar(e)
-      if (char !== null) editor.type(char)
       return true
     }
 
@@ -357,23 +344,6 @@ export function ExplorerScreen() {
     },
   })
 
-  const commitEdit = () => {
-    const target = editor.editTarget()
-    if (!target) return
-    const editingColumns = tableInfo
-      ? tableInfo.columns.map(column => ({ name: column.name, type: column.type }))
-      : explorer.table.columns
-    const result = editor.commit(editingColumns)
-    if (!result) {
-      const failure = editor.errorValue()
-      if (failure) toasts.push("error", failure)
-      return
-    }
-    editor.cancel()
-    releaseText()
-    void explorer.saveCell(target.rowIndex, target.column, result.value)
-  }
-
   const editCurrentRow = () => {
     if (!tableName || !active) {
       toasts.push("error", "no table open to edit")
@@ -429,10 +399,7 @@ export function ExplorerScreen() {
     const columns = tableInfo?.columns ?? []
     const yank = yankRows(columns, explorer.table.sortedRows, vim.cursor, vim.selection)
     if (!yank) {
-      toasts.push(
-        "error",
-        columns.length > 0 ? "no rows to copy" : `table ${tableName} has no columns to copy`
-      )
+      toasts.push("error", columns.length > 0 ? "no rows to copy" : `table ${tableName} has no columns to copy`)
       return
     }
     const { text, count } = yank
@@ -448,8 +415,7 @@ export function ExplorerScreen() {
   const hints = useMemo(() => {
     /* While a selection is open those are the only live keys, so the hints name
        them and nothing else — the normal bindings are inert until it closes. */
-    if (vimMode === "visual")
-      return ["y copy", "j/k extend", "gg/G ends", "Esc cancel"]
+    if (vimMode === "visual") return ["y copy", "i edit row", "Enter preview", "j/k extend", "gg/G ends", "Esc cancel"]
 
     /* Paging leads the hint list. Hints get a third of the strip, so one buried
        at the end of ten others is never seen — and paging is the one action a
@@ -465,9 +431,9 @@ export function ExplorerScreen() {
     return [
       ...paging,
       "s settings",
+      "Enter preview",
       "i edit row",
       "V select rows",
-      "Enter cell",
       "j/k move",
       "space jump",
       "gg/G jump",
@@ -485,14 +451,23 @@ export function ExplorerScreen() {
   const selectedRange = selection ? selectionRange(selection) : null
   const selectedCount = selectedRange ? selectedRange.end - selectedRange.start + 1 : undefined
 
+  /* The row the preview is showing. Derived, never captured: the panel and the
+     grid therefore cannot disagree about which row is open, and a reload that
+     shortens the table under it closes the panel instead of stranding it on a
+     row that no longer exists. */
+  const previewRow = tableName ? (explorer.table.sortedRows[vim.cursor] ?? null) : null
+
+  /* Rows left for values once the panel's own chrome (title, gap, hint strip,
+     the shadow ring's padding) is paid for. */
+  const previewMaxRows = Math.max(1, Math.min(height - 12, 24))
+
   /* Push the story to the shell's status bar. The database is the connection:
      one name, its engine alongside. */
   const { setStatus } = session
   useEffect(() => {
     setStatus({
-      /* Finder, `/` search, and the cell editor are text fields: while one is
-         open the session is in INSERT mode regardless of the vim mode behind
-         it. */
+      /* Finder and `/` search are text fields: while one is open the session is
+         in INSERT mode regardless of the vim mode behind it. */
       mode: textInput.active ? "insert" : vimMode,
       engine: active?.database.engine,
       database: active?.database.name,
@@ -522,11 +497,42 @@ export function ExplorerScreen() {
 
   useKeyboard(e => {
     /* NORMAL mode only. `route` hands the key to the INSERT-mode owner when
-       one exists (finder, `/` search, cell editor) and says so; there is
-       nothing to bind in that case. */
+       one exists (the finder, `/` search) and says so; there is nothing to bind
+       in that case. */
     if (textInput.route(e)) return
     if (router.helpOpen || commandLine.open) return
     const key = normalModeKey(e)
+
+    /* The preview panel owns the keyboard while it is open. It is a viewer, not
+       a field, so it claims no INSERT-mode text input — but every other key has
+       to stop here, or `q` would quit the app and `s` would open settings with
+       the panel still painted over them. */
+    if (previewOpen) {
+      if (key === "i") {
+        /* Leave the preview up across the `$EDITOR` session: the panel reads
+           the cursor row, so coming back shows the row as it now is. */
+        editCurrentRow()
+        return
+      }
+      if (key === "\u001b" || key === "Escape" || key === "escape" || key === "q") {
+        setPreviewOpen(false)
+        return
+      }
+      if (TABLE_MOVE_KEYS.has(key) || key === "up" || key === "down") {
+        vim.pressKey(key === "up" ? "k" : key === "down" ? "j" : key)
+        return
+      }
+      if (key === "g") {
+        vim.pressKey("g")
+        return
+      }
+      if (key === "G") {
+        vim.pressKey("G")
+        return
+      }
+      e.preventDefault()
+      return
+    }
 
     /* `q` quits, but only from NORMAL with nothing modal open — the guards
        above already returned for a text field, the help overlay, and the
@@ -594,13 +600,31 @@ export function ExplorerScreen() {
         return
       }
     } else {
+      /* Enter inspects, it never edits: opening `$EDITOR` needs no confirmation,
+         and a table is somewhere a stray Return lands all the time. `i` is the
+         edit key, here and in VISUAL mode alike, so one muscle memory covers
+         both. */
+      if (key === "return" || key === "enter" || key === "\r") {
+        setPreviewOpen(true)
+        return
+      }
+
       /* VISUAL mode owns the keyboard: movement extends the linewise selection,
-         `y` yanks it and closes, and every other key is swallowed rather than
-         acting on one row while a span is highlighted. */
+         `y` yanks it and closes, `i` edits the row under the cursor, and every
+         other key is swallowed rather than acting on one row while a span is
+         highlighted. Swallowing `i` was the one binding that made a live
+         selection feel broken — the highlighted rows are the obvious target for
+         "edit this", and `i` is the key the hint strip names for it. */
       if (vimMode === "visual") {
         if (key === "y" || key === "Y") {
           copyRows()
           vim.pressKey("escape")
+          return
+        }
+        /* Editing leaves the selection open: the span survives the `$EDITOR`
+           session so the rows are still highlighted when the user comes back. */
+        if (key === "i") {
+          editCurrentRow()
           return
         }
         if (key === "v" || key === "V" || key === "\u001b" || key === "Escape" || key === "escape") {
@@ -675,22 +699,6 @@ export function ExplorerScreen() {
         if (explorer.search.trim()) vim.pressKey(key === "n" ? "j" : "k")
         return
       }
-      if (key === "return" || key === "enter" || key === "\r") {
-        if (tableName && active) {
-          const row = explorer.table.sortedRows[vim.cursor]
-          const column = explorer.table.columns[editColumn]?.name ?? explorer.table.columns[0]?.name
-          if (row && column) {
-            const current = row[column]
-            editor.open({
-              rowIndex: vim.cursor,
-              column,
-              original: current === null || current === undefined ? "" : formatCell(current),
-            })
-            claimText(e)
-          }
-        }
-        return
-      }
     }
 
     switch (key) {
@@ -740,7 +748,6 @@ export function ExplorerScreen() {
             viewportRows={viewportRows}
             availableWidth={dataWidth}
             empty="no rows"
-            editing={editor.preview}
             activeColumn={explorer.table.columns[editColumn]?.name ?? explorer.table.columns[0]?.name}
             columnFocus={focus === "table"}
             highlight={explorer.search.trim() || undefined}
@@ -754,6 +761,18 @@ export function ExplorerScreen() {
       </box>
       {finderOpen ? (
         <FinderOverlay query={finderQuery} entries={finderMatches} cursor={finderCursor} loading={finderLoading} />
+      ) : null}
+      {previewOpen && previewRow ? (
+        <RowPreview
+          tableName={tableName!}
+          row={previewRow}
+          columns={explorer.table.columns}
+          primaryKey={tableInfo?.primaryKey ?? []}
+          position={vim.cursor + 1}
+          total={explorer.table.sortedRows.length}
+          maxRows={previewMaxRows}
+          truncated={explorer.table.columns.length > previewMaxRows}
+        />
       ) : null}
     </box>
   )

@@ -11,6 +11,7 @@
  * provides — nothing is lost by a stray keypress inside the app.
  */
 import { spawn } from "node:child_process"
+import type { ChildProcess } from "node:child_process"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -54,6 +55,15 @@ export const editRowInEditor = (options: EditRowOptions): void => {
   const { renderer, tableName, columns, primaryKey, row, callbacks } = options
   const command = editorCommand()
 
+  /* Every early return below has to hand control back to the caller, which holds
+     a re-entry guard for the whole session. A bail-out that skips `done` leaves
+     that guard set for the life of the process, so `i` silently stops opening
+     the editor and no key can clear it. */
+  const abandon = (message: string): void => {
+    callbacks.error(message)
+    callbacks.done()
+  }
+
   const dir = mkdtempSync(join(tmpdir(), "dient-row-"))
   const file = join(dir, `${safeName(tableName)}.txt`)
   let wrote = false
@@ -61,62 +71,70 @@ export const editRowInEditor = (options: EditRowOptions): void => {
     writeFileSync(file, serializeRowToKeyValue(columns, row), "utf8")
     wrote = true
   } catch (cause) {
-    callbacks.error(`could not stage the row for editing: ${describeError(cause)}`)
-    return
+    abandon(`could not stage the row for editing: ${describeError(cause)}`)
   }
-
-  const clean = (): void => {
-    try {
-      rmSync(dir, { recursive: true, force: true })
-    } catch {
-      /* best-effort temp cleanup */
-    }
+  if (!wrote) {
+    cleanDir(dir)
+    return
   }
 
   const program = command.split(/\s+/).filter(Boolean)
   const bin = program[0]
+  /* `$EDITOR` is frequently set to an empty string by a shell profile. That
+     parses to an empty argv, and `spawn` would throw on the missing binary —
+     inside a keypress handler, with the renderer already suspended and the
+     re-entry guard set. Report it the same way as any other unusable editor. */
+  if (bin === undefined) {
+    cleanDir(dir)
+    abandon(`no editor to run — set $EDITOR or $VISUAL`)
+    return
+  }
 
   callbacks.notice(`editing ${tableName} in ${bin}`)
   renderer.suspend()
 
-  const child = spawn(bin!, [...program.slice(1), file], {
-    stdio: "inherit",
-    env: process.env,
-  })
+  let child: ChildProcess
+  try {
+    child = spawn(bin, [...program.slice(1), file], {
+      stdio: "inherit",
+      env: process.env,
+    })
+  } catch (cause) {
+    renderer.resume()
+    cleanDir(dir)
+    abandon(`could not start "${command}": ${describeError(cause)}`)
+    return
+  }
 
   let handled = false
   child.on("error", err => {
     if (handled) return
     handled = true
     renderer.resume()
-    clean()
-    callbacks.error(`could not start "${command}": ${err.message}`)
-    callbacks.done()
+    cleanDir(dir)
+    abandon(`could not start "${command}": ${err.message}`)
   })
   child.on("exit", code => {
     if (handled) return
     handled = true
     renderer.resume()
     if (code !== 0) {
-      clean()
-      callbacks.error(`editor exited with code ${code} — no changes taken back`)
-      callbacks.done()
+      cleanDir(dir)
+      abandon(`editor exited with code ${code} — no changes taken back`)
       return
     }
     let edited: string
     try {
       edited = readFileSync(file, "utf8")
     } catch (cause) {
-      clean()
-      callbacks.error(`could not read the edited file: ${describeError(cause)}`)
-      callbacks.done()
+      cleanDir(dir)
+      abandon(`could not read the edited file: ${describeError(cause)}`)
       return
     }
-    clean()
+    cleanDir(dir)
     const result = parseRowKeyValue(edited, columns, primaryKey, row)
     if (!result.ok) {
-      callbacks.error(result.error)
-      callbacks.done()
+      abandon(result.error)
       return
     }
     if (result.updates.length === 0) {
@@ -127,4 +145,12 @@ export const editRowInEditor = (options: EditRowOptions): void => {
     options.callbacks.onChanges(result.updates)
     callbacks.done()
   })
+}
+
+const cleanDir = (dir: string): void => {
+  try {
+    rmSync(dir, { recursive: true, force: true })
+  } catch {
+    /* best-effort temp cleanup */
+  }
 }

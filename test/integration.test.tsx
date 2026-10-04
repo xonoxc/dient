@@ -6,7 +6,7 @@
  * containers — rather than the mocked connect used by the unit suites:
  *
  *   1. boot → expand the tree → connect a Postgres database → browse data
- *   2. edit a cell → save → verify the row really changed inside the container
+ *   2. edit a row via `$EDITOR` → save → verify it really changed in the container
  *   3. switch live between Postgres and MySQL → table + data follow the cursor
  *   4. create a connection in settings → it appears in the explorer sidebar
  *   5. delete a connection in settings → it disappears from the sidebar
@@ -17,11 +17,14 @@
  */
 import { describe, expect, test, beforeAll, afterAll } from "bun:test"
 import { Effect, Scope } from "effect"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import App from "@/app"
 import { PostgreSqlContainer } from "@testcontainers/postgresql"
 import { MySqlContainer } from "@testcontainers/mysql"
 import { makeTheme } from "@/theme"
-import { pressKeys, renderApp } from "@test/support/render-ui"
+import { pressKeys, renderApp, waitForFrameDriven } from "@test/support/render-ui"
 import { freshConfigFile, resolveTestServices, seedProject } from "@test/support/services-fixture"
 import { DatabaseDriver } from "@/drivers/database-driver"
 import type { AppServices } from "@/app-context"
@@ -134,6 +137,15 @@ const seedServerProject = async (services: AppServices) => {
    count happens across several effect-driven frames. */
 const WAIT = { maxPasses: 80 }
 
+/* A stand-in `$EDITOR` that rewrites the row file it is handed, so the edit
+   path runs for real without a human at a terminal. */
+const EDITOR_DIR = mkdtempSync(join(tmpdir(), "dient-it-editor-"))
+const installEditor = (name: string, body: string): string => {
+  const file = join(EDITOR_DIR, name)
+  writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 })
+  return file
+}
+
 /** Boot to a connected prod (Postgres) with the users table on screen. */
 async function openProd(setup: Awaited<ReturnType<typeof renderApp>>): Promise<void> {
   await pressKeys(setup, ["RETURN"])
@@ -161,36 +173,28 @@ describe("integration (real containers)", () => {
     }
   })
 
-  test("edit a cell, save, and verify the row really changed in the container", async () => {
+  test("edit a row via $EDITOR, save, and verify it really changed in the container", async () => {
     const services = await resolveTestServices(freshConfigFile())
     await seedContainers()
     const seeded = await seedServerProject(services.services)
+    /* Rename alice → amy and leave her email alone, so the assertion below
+       proves one column changed and the others rode along untouched. */
+    process.env.EDITOR = installEditor(
+      "save.sh",
+      `cat > "$1" <<'DIENTEOF'\nid: 1\nname: amy\nemail: alice@example.com\nDIENTEOF\n`
+    )
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openProd(setup)
 
-      /* move into the table panel so the editor targets the name column */
+      /* `i` is the edit key. Enter only previews the row, so the write path is
+         reached deliberately here rather than by a stray Return. In the sidebar
+         `i` is a literal, so move into the table first. */
       await pressKeys(setup, ["l"])
-
-      /* overwrite alice → amy (cursor is on row 1 / column 0, so right arrow
-         lands on the name column) */
-      globalThis.IS_REACT_ACT_ENVIRONMENT = true
-      try {
-        await import("react").then(({ act }) =>
-          act(async () => {
-            setup.mockInput.pressArrow("right")
-            setup.renderOnce()
-            setup.flush()
-          })
-        )
-      } finally {
-        globalThis.IS_REACT_ACT_ENVIRONMENT = false
-      }
-      await setup.waitForVisualIdle()
-
-      const CLEAR = ["BACKSPACE", "BACKSPACE", "BACKSPACE", "BACKSPACE", "BACKSPACE"] as const
-      await pressKeys(setup, ["RETURN", ...CLEAR, "a", "m", "y", "RETURN"])
-      await setup.waitForFrame(f => f.includes("amy") && f.includes("alice@example.com"), WAIT)
+      await pressKeys(setup, ["i"])
+      /* The renderer is suspended for the duration of the `$EDITOR` session, so
+         the frame has to be driven rather than waited on. */
+      await waitForFrameDriven(setup, f => f.includes("saved users.") && f.includes("amy"))
 
       /* prove the bytes actually made it to Postgres: read straight from the
          container over a fresh driver connection */
@@ -219,10 +223,7 @@ describe("integration (real containers)", () => {
     try {
       /* expand the tree so both database rows are visible before connecting */
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(
-        f => f.includes("▾ demo") && f.includes("○ prod") && f.includes("○ stage"),
-        WAIT
-      )
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ prod") && f.includes("○ stage"), WAIT)
 
       /* connect prod (Postgres) first */
       await pressKeys(setup, ["j", "RETURN"])

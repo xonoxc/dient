@@ -12,7 +12,7 @@ const EXPLORER: ReadonlyArray<Binding> = [
   ["gg / G", "first / last"],
   ["h / l", "focus sidebar / table"],
   ["← / →", "previous / next col"],
-  ["Enter", "open / edit cell"],
+  ["Enter", "preview the row"],
   ["i", "edit row in $EDITOR"],
   ["V", "start row selection"],
   ["y", "copy the selection"],
@@ -97,20 +97,28 @@ export function HelpScreen() {
         <text fg={c.accent}>NAVIGATION & ACTIONS</text>
         <box flexDirection="row">
           <box width={columnWidth} flexDirection="column">
-            {left.map(([key, action]) => <BindingRow key={key} keyName={key} action={action} keyWidth={keyWidth} />)}
+            {left.map(([key, action]) => (
+              <BindingRow key={key} keyName={key} action={action} keyWidth={keyWidth} />
+            ))}
           </box>
           <box width={columnWidth} flexDirection="column">
-            {right.map(([key, action]) => <BindingRow key={key} keyName={key} action={action} keyWidth={keyWidth} />)}
+            {right.map(([key, action]) => (
+              <BindingRow key={key} keyName={key} action={action} keyWidth={keyWidth} />
+            ))}
           </box>
         </box>
         <box height={1} />
         <text fg={c.accent}>COMMANDS</text>
         <box flexDirection="row">
           <box width={columnWidth} flexDirection="column">
-            {commandLeft.map(([key, action]) => <BindingRow key={key} keyName={key} action={action} keyWidth={keyWidth} />)}
+            {commandLeft.map(([key, action]) => (
+              <BindingRow key={key} keyName={key} action={action} keyWidth={keyWidth} />
+            ))}
           </box>
           <box width={columnWidth} flexDirection="column">
-            {commandRight.map(([key, action]) => <BindingRow key={key} keyName={key} action={action} keyWidth={keyWidth} />)}
+            {commandRight.map(([key, action]) => (
+              <BindingRow key={key} keyName={key} action={action} keyWidth={keyWidth} />
+            ))}
           </box>
         </box>
       </ModalSurface>
@@ -122,8 +130,12 @@ function BindingRow({ keyName, action, keyWidth }: { keyName: string; action: st
   const { colors: c } = useTheme()
   return (
     <box height={1} flexDirection="row" overflow="hidden">
-      <text fg={c.textBright} width={keyWidth} truncate>{keyName}</text>
-      <text fg={c.textMuted} truncate>{action}</text>
+      <text fg={c.textBright} width={keyWidth} truncate>
+        {keyName}
+      </text>
+      <text fg={c.textMuted} truncate>
+        {action}
+      </text>
     </box>
   )
 }

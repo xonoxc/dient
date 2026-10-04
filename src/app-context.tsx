@@ -52,13 +52,7 @@ export interface RouterState {
 
 const RouterContext = createContext<RouterState | null>(null)
 
-export function RouterProvider({
-  children,
-  exit,
-}: {
-  children?: ReactNode
-  readonly exit: (code: number) => void
-}) {
+export function RouterProvider({ children, exit }: { children?: ReactNode; readonly exit: (code: number) => void }) {
   const [screen, setScreen] = useState<AppScreen>("explorer")
   const [helpOpen, setHelpOpen] = useState(false)
   const value = useMemo<RouterState>(
@@ -323,7 +317,7 @@ export type TextKeyHandler = (key: RoutedKey) => boolean
  * ignores `stopPropagation`, so "who gets this key" cannot be left to each
  * handler guessing. Instead it is decided once, here:
  *
- *   - A text surface (a settings form, the finder, `/` search, a cell editor)
+ *   - A text surface (a settings form, the finder, `/` search)
  *     registers a handler when it opens and releases it when it closes.
  *   - The single app-level dispatcher sends the key to that handler and stops.
  *   - NORMAL-mode bindings are only consulted when nothing owns input.
@@ -360,7 +354,7 @@ export interface TextInputState {
 const TextInputContext = createContext<TextInputState | null>(null)
 
 export function TextInputProvider({ children }: { children?: ReactNode }) {
-  /* A stack, not a single slot: a field can open over another (the cell editor
+  /* A stack, not a single slot: a field can open over another
      opened from a search), and closing it must restore the one beneath. */
   const stackRef = useRef<TextKeyHandler[]>([])
   /* Events already delivered to an owner, keyed by identity so the guarantee
@@ -436,7 +430,8 @@ export function ConfigRevisionProvider({ children }: { children?: ReactNode }) {
     () => ({
       revision: state.revision,
       reveal: state.reveal,
-      bump: revealProjectId => setState(current => ({ revision: current.revision + 1, reveal: revealProjectId ?? null })),
+      bump: revealProjectId =>
+        setState(current => ({ revision: current.revision + 1, reveal: revealProjectId ?? null })),
     }),
     [state]
   )

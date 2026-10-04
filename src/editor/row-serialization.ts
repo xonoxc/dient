@@ -29,7 +29,7 @@
  */
 import type { TableColumn } from "@/inspector/types"
 import { formatCell } from "@/table/use-table"
-import { validateCellValue } from "@/editor/use-cell-editor"
+import { validateCellValue } from "@/editor/validate-cell"
 
 export interface RowValueUpdate {
   readonly column: string

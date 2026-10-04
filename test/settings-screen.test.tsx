@@ -222,8 +222,30 @@ describe("settings screen", () => {
       /* a p d t r e s g G v i j k h l w b m n x ? : / space - the union of
          NORMAL bindings this screen and the explorer declare. */
       const keys = [
-        "a", "p", "d", "t", "r", "e", "s", "g", "G", "v", "i", "j", "k", "h", "l", "w", "b", "m", "n", "x",
-        "?", ":", "/", " ",
+        "a",
+        "p",
+        "d",
+        "t",
+        "r",
+        "e",
+        "s",
+        "g",
+        "G",
+        "v",
+        "i",
+        "j",
+        "k",
+        "h",
+        "l",
+        "w",
+        "b",
+        "m",
+        "n",
+        "x",
+        "?",
+        ":",
+        "/",
+        " ",
       ]
       for (const key of keys) await pressKeys(setup, [key])
       expect(draft()).toBe(keys.join(""))
@@ -232,8 +254,8 @@ describe("settings screen", () => {
     }
   })
 
-  /* Same contract for the other INSERT surfaces: the finder query, `/` search,
-     and a cell value are all text fields, so they must take these keys too. */
+  /* Same contract for the other INSERT surfaces: the finder query and `/`
+     search are text fields, so they must take these keys too. */
   test("the finder query takes characters the NORMAL mode binds", async () => {
     const services = await resolveTestServices(freshConfigFile())
     await seedProject(services.store, {

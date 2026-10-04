@@ -65,7 +65,6 @@ export interface UseExplorerResult {
   /** Jump to a specific connection from the finder, expanding the containing
       project first if its (lazily loaded) tree has not reached it yet. */
   readonly jumpToConnection: (projectId: ProjectId, connectionId: ConnectionId) => void
-  readonly saveCell: (rowIndex: number, column: string, value: string) => Promise<boolean>
   readonly saveRow: (
     row: Record<string, unknown>,
     updates: ReadonlyArray<{ readonly column: string; readonly param: unknown }>
@@ -389,65 +388,6 @@ export const useExplorer = (): UseExplorerResult => {
      Vim mode, so we advertise the vim cursor (0 default) as the active row. */
   const table = useTable(searchedRows, columns)
 
-  /* Persist a single-cell edit. The primary key comes from the schema
-     inspector's `describeTable`, so the WHERE clause always reaches the exact
-     row without trusting a value the user typed. */
-  const saveCell = (rowIndex: number, column: string, value: string): Promise<boolean> => {
-    const explorer = activeExplorer.current
-    if (!explorer || !tableName) {
-      toasts.push("error", "nothing open to edit")
-      return Promise.resolve(false)
-    }
-    const row = rows[rowIndex]
-    if (!row) return Promise.resolve(false)
-    if (!tableInfo) {
-      toasts.push("error", `no schema info for ${tableName}`)
-      return Promise.resolve(false)
-    }
-    const pk = tableInfo.primaryKey
-    if (pk.length === 0) {
-      toasts.push("error", `table ${tableName} has no primary key — can't edit rows`)
-      return Promise.resolve(false)
-    }
-    if (pk.includes(column)) {
-      toasts.push("error", `editing the primary key column "${column}" is not supported`)
-      return Promise.resolve(false)
-    }
-    const columnInfo = tableInfo.columns.find(columnInfo => columnInfo.name === column)
-    const type = columnInfo?.type ?? ""
-    /* Keep numeric cells numeric (whatever the draft looks like) and let a
-       blank draft on a nullable column clear the value back to NULL. */
-    const param: unknown = /int|bigint|numeric|decimal|real|float|double|money|double_precision/.test(
-      type.toLowerCase()
-    )
-      ? Number(value)
-      : value === "" && columnInfo?.nullable
-        ? null
-        : value
-    const engine = explorer.database.engine
-    return runService(
-      queryExecutor.execute(
-        explorer.id,
-        `UPDATE ${cleanIdentifier(engine, tableName)} SET ${cleanIdentifier(engine, column)} = ? WHERE ${cleanIdentifier(engine, pk[0]!)} = ?`,
-        [param, row[pk[0]!]]
-      )
-    )
-      .then(() => {
-        toasts.push("success", `saved ${tableName}.${column}`)
-        /* Reload the page we were on, not page 1: the UPDATE targeted this row
-           by primary key, so a `openTable` reset would lose the reader's place
-           in a long table. An UPDATE cannot change the row count, so the page
-           is still valid and the count does not need re-reading. */
-        loadPage(tableName, offset, false)
-        return true
-      })
-      .catch(cause => {
-        errorLog.append("explorer.saveCell", cause)
-        toasts.push("error", `save failed: ${describeError(cause)}`)
-        return false
-      })
-  }
-
   /* Persist a whole edited row: one UPDATE with a SET clause per changed
      field, always keyed on the primary key from the schema inspector. */
   const saveRow = (
@@ -486,7 +426,10 @@ export const useExplorer = (): UseExplorerResult => {
       .then(() => {
         const changed = updates.length === 1 ? updates[0]!.column : `${updates.length} columns`
         toasts.push("success", `saved ${tableName}.${changed}`)
-        /* Stay on the current page, as in saveCell. */
+        /* Reload the page we were on, not page 1: the UPDATE targeted this row
+           by primary key, so a `openTable` reset would lose the reader's place
+           in a long table. An UPDATE cannot change the row count, so the page
+           is still valid and the count does not need re-reading. */
         loadPage(tableName, offset, false)
         return true
       })
@@ -525,7 +468,6 @@ export const useExplorer = (): UseExplorerResult => {
       openTable,
       cycleConnection,
       jumpToConnection,
-      saveCell,
       saveRow,
     }),
     [
@@ -545,7 +487,6 @@ export const useExplorer = (): UseExplorerResult => {
       hasNextPage,
       hasPrevPage,
       searchedRows.length,
-      saveCell,
       saveRow,
     ]
   )

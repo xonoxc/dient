@@ -1,7 +1,8 @@
 /**
  * Data table view. Renders column headers plus a small window of rows around
- * the cursor (full virtualization), a cursor arrow, sort indicators, and an
- * in-place cell-edit preview.
+ * the cursor (full virtualization), a cursor arrow, and sort indicators. Rows
+ * are never edited in place: a row edit is a `$EDITOR` session over the whole
+ * row, so this view only ever renders committed values.
  *
  * Horizontal layout is a `<scrollbox>`: when columns overflow the pane, the
  * view scrolls sideways (keyboard left/right pan via the active column, shift+
@@ -28,7 +29,6 @@ export interface DataTableProps {
   readonly table: UseTableResult
   readonly viewportRows?: number
   readonly availableWidth?: number
-  readonly editing?: { readonly column: string; readonly draft: string } | null
   readonly activeColumn?: string
   readonly columnFocus?: boolean
   readonly highlight?: string
@@ -77,7 +77,6 @@ export function DataTable({
   table,
   viewportRows = 20,
   availableWidth,
-  editing = null,
   activeColumn,
   columnFocus = false,
   highlight,
@@ -163,7 +162,6 @@ export function DataTable({
                 selected={selected}
                 inSelection={inSelection}
                 widthOf={widthOf}
-                editing={editing}
                 activeColumn={activeColumn}
                 columnFocus={columnFocus}
                 rowIndex={rowIndex}
@@ -248,7 +246,6 @@ function RowLine({
   rowIndex,
   widthOf,
   tableWidth,
-  editing,
   activeColumn,
   columnFocus,
   highlight,
@@ -260,7 +257,6 @@ function RowLine({
   rowIndex: number
   widthOf: (column: string) => number
   tableWidth: number
-  editing?: DataTableProps["editing"]
   activeColumn?: string
   columnFocus: boolean
   highlight?: string
@@ -279,14 +275,13 @@ function RowLine({
         {selected ? "▶" : " "}
       </text>
       {columns.map((column, index) => {
-        const editingThis = editing && editing.column === column.name
         const activeCell = selected && columnFocus && activeColumn === column.name
         /* Only the focused row's cells carry scroll ids, unique per row, so
            `scrollChildIntoView` has exactly one child to reveal. */
         const cellId = selected && activeColumn === column.name ? `dient-col-${rowIndex}-${column.name}` : undefined
-        const formatted = editingThis ? editing.draft : formatCell(row[column.name])
-        const fg = banded ? c.textBright : editingThis ? c.success : c.text
-        const parts = matches(formatted) && !editingThis ? splitHighlighted(formatted, highlight!) : null
+        const formatted = formatCell(row[column.name])
+        const fg = banded ? c.textBright : c.text
+        const parts = matches(formatted) ? splitHighlighted(formatted, highlight!) : null
         const last = index === columns.length - 1
         return (
           <box

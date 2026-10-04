@@ -1,6 +1,6 @@
 /**
  * Text-entry helpers shared by every field in the app (the `:` command line,
- * the finder query, `/` search, the cell editor, and every settings form).
+ * the finder query, `/` search, and every settings form).
  *
  * One rule holds all of them together: a screen that accepts text must be
  * able to type the text. Keybindings belong to NORMAL mode, which is only
