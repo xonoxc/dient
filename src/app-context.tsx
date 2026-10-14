@@ -15,12 +15,14 @@ import type { SchemaInspectorService } from "@/inspector"
 import type { Engine } from "@/domain"
 import type { VimMode } from "@/vim"
 import type { ErrorLog } from "@/log/error-log"
+import type { UpdateCheckerService } from "@/update/update-checker"
 
 export interface AppServices {
   readonly configStore: ConfigStoreService
   readonly connectionManager: ConnectionManagerService
   readonly schemaInspector: SchemaInspectorService
   readonly queryExecutor: QueryExecutorService
+  readonly updateChecker: UpdateCheckerService
   readonly errorLog: ErrorLog
 }
 
@@ -35,8 +37,6 @@ export function useServices(): AppServices {
   if (!services) throw new Error("useServices() used outside of a <ServicesProvider>")
   return services
 }
-
-/* ------------------------------------------------------------------ router */
 
 export type AppScreen = "explorer" | "settings"
 
@@ -74,8 +74,6 @@ export function useRouter(): RouterState {
   if (!router) throw new Error("useRouter() used outside of a <RouterProvider>")
   return router
 }
-
-/* ------------------------------------------------------------------ toasts */
 
 export type ToastKind = "info" | "success" | "error" | "warning"
 
@@ -131,8 +129,6 @@ export function useToasts(): ToastState {
   return toasts
 }
 
-/* ------------------------------------------------------------------ dialogs */
-
 export interface ConfirmOptions {
   readonly title: string
   readonly body: string
@@ -176,8 +172,6 @@ export function useDialog(): DialogState {
   if (!dialog) throw new Error("useDialog() used outside of a <DialogProvider>")
   return dialog
 }
-
-/* --------------------------------------------------------- session status */
 
 /**
  * Everything the shared status bar shows. Screens push a partial here whenever
@@ -224,8 +218,6 @@ export function useSessionStatus(): SessionState {
   if (!session) throw new Error("useSessionStatus() used outside of a <SessionProvider>")
   return session
 }
-
-/* ---------------------------------------------------------- command line */
 
 /** The single-line `:` command prompt. State only; which commands it can run
     is decided where services live (see `AppRoot`), so the context stays generic. */
@@ -295,8 +287,6 @@ export function useCommandLine(): CommandLineState {
   if (!commandLine) throw new Error("useCommandLine() used outside of a <CommandLineProvider>")
   return commandLine
 }
-
-/* ---------------------------------------------------------- text input */
 
 /** A key event as the router sees it (structurally a subset of the runtime's). */
 export interface RoutedKey {
@@ -406,8 +396,6 @@ export function useTextInput(): TextInputState {
   return textInput
 }
 
-/* ------------------------------------------------------- config revision */
-
 export interface ConfigRevisionState {
   /** Bumped whenever the config store is mutated. */
   readonly revision: number
@@ -444,8 +432,6 @@ export function useConfigRevision(): ConfigRevisionState {
   if (!value) throw new Error("useConfigRevision() used outside of a <ConfigRevisionProvider>")
   return value
 }
-
-/* ---------------------------------------------------------- command bus */
 
 /** One `:` command. `match` decides if a typed line applies, `run` executes it
     with the full text (trimmed) so commands can parse their own arguments. */

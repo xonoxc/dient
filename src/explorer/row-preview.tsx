@@ -30,12 +30,30 @@ export interface RowPreviewProps {
   readonly total: number
   /** Rows the panel may spend on values: everything else is the terminal's. */
   readonly maxRows: number
+  readonly activeColumn: string | undefined
+  /** Responsive panel dimensions, leaving a small margin around the terminal. */
+  readonly width: number
+  readonly maxHeight: number
   /** True when columns were dropped to fit — otherwise the truncation is silent. */
   readonly truncated: boolean
 }
 
-const LABEL_WIDTH = 22
 const TYPE_WIDTH = 16
+
+const wrapValue = (value: string, width: number): ReadonlyArray<string> => {
+  const room = Math.max(1, width)
+  const lines: string[] = []
+  for (const paragraph of value.split("\n")) {
+    if (paragraph.length === 0) {
+      lines.push("")
+      continue
+    }
+    for (let at = 0; at < paragraph.length; at += room) {
+      lines.push(paragraph.slice(at, at + room))
+    }
+  }
+  return lines.length > 0 ? lines : [""]
+}
 
 export function RowPreview({
   tableName,
@@ -45,12 +63,16 @@ export function RowPreview({
   position,
   total,
   maxRows,
+  activeColumn,
+  width,
+  maxHeight,
   truncated,
 }: RowPreviewProps) {
   const theme = useTheme()
   const c = theme.colors
   const key = primaryKey.map(name => formatCell(row[name])).join(", ")
   const shown = columns.slice(0, maxRows)
+  const labelWidth = Math.min(24, Math.max(8, ...shown.map(column => column.name.length + 2)))
   /* Engines that report no per-column type would otherwise leave a sixteen
      column hole in front of every value. */
   const showTypes = columns.some(column => column.type)
@@ -64,7 +86,7 @@ export function RowPreview({
       justifyContent="center"
       backgroundColor={c.bg}
     >
-      <ModalSurface width={72} paddingY={1}>
+      <ModalSurface width={width} paddingY={1} maxHeight={maxHeight}>
         <box height={1} flexDirection="row">
           <text fg={c.textBright}>{tableName}</text>
           <text fg={c.textMuted}>
@@ -74,19 +96,26 @@ export function RowPreview({
           </text>
         </box>
         <box height={1} />
-        {shown.map(column => (
-          <box key={column.name} height={1} flexDirection="row">
-            <text fg={c.accentMuted} width={LABEL_WIDTH}>
-              {column.name}
-            </text>
-            {showTypes ? (
-              <text fg={c.textMuted} width={TYPE_WIDTH}>
-                {column.type ?? ""}
-              </text>
-            ) : null}
-            <text fg={c.text}>{formatCell(row[column.name])}</text>
-          </box>
-        ))}
+        {shown.map(column => {
+          const valueWidth = Math.max(1, width - labelWidth - (showTypes ? TYPE_WIDTH : 0) - 8)
+          const lines = wrapValue(formatCell(row[column.name]), valueWidth)
+          const selected = column.name === activeColumn
+          return lines.map((line, index) => (
+            <box key={`${column.name}-${index}`} height={1} flexDirection="row">
+              {index === 0 ? (
+                <text fg={selected ? c.accent : c.accentMuted} width={labelWidth}>
+                  {selected ? "› " : "  "}{column.name}:
+                </text>
+              ) : <text width={labelWidth}> </text>}
+              {showTypes ? (
+                <text fg={c.textMuted} width={TYPE_WIDTH}>
+                  {index === 0 ? column.type ?? "" : ""}
+                </text>
+              ) : null}
+              <text fg={selected ? c.textBright : c.text} truncate={false}>{line || " "}</text>
+            </box>
+          ))
+        })}
         {truncated ? (
           <>
             <box height={1} />
@@ -97,7 +126,7 @@ export function RowPreview({
         <box height={1} flexDirection="row">
           <text fg={c.textMuted}> i edit </text>
           <text fg={c.success}>$EDITOR</text>
-          <text fg={c.textMuted}> · j/k rows · Esc close </text>
+          <text fg={c.textMuted}> · h/l field · e expand · j/k row · Esc close </text>
         </box>
       </ModalSurface>
     </box>

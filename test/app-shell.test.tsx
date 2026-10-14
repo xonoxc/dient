@@ -71,9 +71,9 @@ describe("App shell", () => {
       await setup.waitForFrame(f => f.includes("sample"))
       await pressKeys(setup, ["j", "RETURN"])
       await setup.waitForFrame(f => f.includes("USERS") && f.includes("alice"))
-      /* `l` moves focus to the grid, which is the hint list that used to be
+      /* Ctrl+L moves focus to the grid, which is the hint list that used to be
          cut mid-word. */
-      await pressKeys(setup, ["l"])
+      await pressKeys(setup, ["CTRL+l"])
 
       const row = lastTextRow(setup.captureSpans())
       /* The location reads whole, and hints are taken whole or not at all. */
@@ -133,7 +133,7 @@ describe("App shell", () => {
       await setup.waitForFrame(f => f.includes("sample"))
       await pressKeys(setup, ["j", "RETURN"])
       await setup.waitForFrame(f => f.includes("USERS"))
-      await pressKeys(setup, ["l"])
+      await pressKeys(setup, ["CTRL+l"])
 
       const row = lastTextRow(setup.captureSpans())
       /* Symmetric outer columns: the row opens with the page's padding plus the
@@ -166,7 +166,7 @@ describe("App shell", () => {
       await setup.waitForFrame(f => f.includes("NORMAL"))
       await pressKeys(setup, ["j", "RETURN"])
       await setup.waitForFrame(f => f.includes("USERS"))
-      await pressKeys(setup, ["l"])
+      await pressKeys(setup, ["CTRL+l"])
 
       const row = lastTextRow(setup.captureSpans())
       expect(row.length).toBeLessThanOrEqual(60)

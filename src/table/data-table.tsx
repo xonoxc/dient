@@ -23,7 +23,12 @@ import { useTheme } from "@/theme-context"
 import { HorizontalScrollIndicator } from "@/table/horizontal-scroll-indicator"
 import type { ScrollBoxRenderable } from "@opentui/core"
 import type { SelectionRange } from "@/vim/types"
-import { formatCell, MAX_COL_WIDTH, MIN_COL_WIDTH, type UseTableResult } from "@/table/use-table"
+import {
+  formatCellDisplay,
+  MAX_COL_WIDTH,
+  MIN_COL_WIDTH,
+  type UseTableResult,
+} from "@/table/use-table"
 
 export interface DataTableProps {
   readonly table: UseTableResult
@@ -108,6 +113,7 @@ export function DataTable({
      — pressing `right` moved the cursor but left the frame untouched. The
      offset is arithmetic instead: cells are laid out left to right at a known
      width each, so the focused cell's span is exact and needs no render-tree
+
      lookup. Vertical movement is not needed — `rowsWindow` already slides the
      window so the cursor row is on screen. */
   useEffect(() => {
@@ -221,11 +227,15 @@ function HeaderRow({
         const marker = sort?.column === column.name ? (sort.dir === "asc" ? " ▲" : " ▼") : ""
         const last = index === columns.length - 1
         return (
-          <box key={column.name} width={widthOf(column.name) - (last ? 1 : 0)} flexDirection="row" overflow="hidden">
+          <box
+            key={column.name}
+            width={widthOf(column.name) - (last ? 1 : 0)}
+            flexDirection="row"
+            overflow="hidden"
+          >
             <text
               fg={activeColumn === column.name ? c.textBright : c.accent}
               width={Math.max(1, widthOf(column.name) - 2)}
-              truncate
             >
               {column.name.toUpperCase()}
               {marker}
@@ -279,9 +289,11 @@ function RowLine({
         /* Only the focused row's cells carry scroll ids, unique per row, so
            `scrollChildIntoView` has exactly one child to reveal. */
         const cellId = selected && activeColumn === column.name ? `dient-col-${rowIndex}-${column.name}` : undefined
-        const formatted = formatCell(row[column.name])
+        // Use display truncation to prevent vertical expansion
+        const cellWidth = Math.max(1, widthOf(column.name) - 2)
+        const rawFormatted = formatCellDisplay(row[column.name], cellWidth)
         const fg = banded ? c.textBright : c.text
-        const parts = matches(formatted) ? splitHighlighted(formatted, highlight!) : null
+        const parts = matches(rawFormatted) ? splitHighlighted(rawFormatted, highlight!) : null
         const last = index === columns.length - 1
         return (
           <box
@@ -296,15 +308,13 @@ function RowLine({
               {parts ? (
                 <box flexDirection="row">
                   {parts.map((part, index) => (
-                    <text key={index} fg={part.matched ? c.accent : fg} truncate>
+                    <text key={index} fg={part.matched ? c.accent : fg}>
                       {part.text}
                     </text>
                   ))}
                 </box>
               ) : (
-                <text fg={fg} truncate>
-                  {formatted}
-                </text>
+                <text fg={fg}>{rawFormatted}</text>
               )}
             </box>
             <text fg={c.grid}>{last ? "│" : "│ "}</text>

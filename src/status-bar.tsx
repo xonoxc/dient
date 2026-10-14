@@ -38,6 +38,8 @@ export interface StatusBarProps {
   /** Milliseconds the last page fetch took, once one has landed. */
   readonly lastQueryMs?: number
   readonly hints?: ReadonlyArray<string>
+  /** App version, shown after the brand (`dient v0.1.0`). */
+  readonly version?: string
 }
 
 const MODE_LABEL: Record<VimMode, string> = {
@@ -107,6 +109,7 @@ export function StatusBar(props: StatusBarProps) {
      its inner spacing. Padding it here as well is what pushed the right-hand
      zones past the edge and clipped the trailing gap. */
   const mode = MODE_LABEL[props.mode]
+  const brand = props.version ? `${BRAND} v${props.version}` : BRAND
 
   const location = [props.connection, props.database].filter(Boolean).join("@")
   const locationText = location ? (props.engine ? `${location} · ${props.engine}` : location) : ""
@@ -124,8 +127,7 @@ export function StatusBar(props: StatusBarProps) {
 
   /* A visual selection is a count the user is actively changing, so it leads —
      placing it after the row figure would push it off a narrow terminal. */
-  const selectionInfo =
-    props.selected !== undefined && props.selected > 1 ? ` ${props.selected} selected` : ""
+  const selectionInfo = props.selected !== undefined && props.selected > 1 ? ` ${props.selected} selected` : ""
 
   /* Keep table/rows (rightmost) whole; drop location only if it does not fit. */
   const rightBits = `${tableInfo}${selectionInfo}${rowInfo}`
@@ -135,8 +137,7 @@ export function StatusBar(props: StatusBarProps) {
      query cost is visible, and on a paged table it is what tells a user whether
      Ctrl+f will feel instant. */
   const latency = props.lastQueryMs !== undefined ? ` ${formatQueryMs(props.lastQueryMs)} ` : ""
-  const fixed =
-    mode.length + 1 + BRAND.length + (rightBits ? 1 + rightBits.length : 0) + latency.length + EDGE_GAP
+  const fixed = mode.length + 1 + brand.length + (rightBits ? 1 + rightBits.length : 0) + latency.length + EDGE_GAP
 
   /* Hints yield before the location does, one whole hint at a time. */
   let hints = fitHints(props.hints ?? [], Math.floor(strip / HINT_SHARE))
@@ -150,7 +151,7 @@ export function StatusBar(props: StatusBarProps) {
   return (
     <box height={1} flexDirection="row" alignItems="center">
       <text fg={modeColor}>{` ${mode} `}</text>
-      <text fg={c.textMuted}>{BRAND}</text>
+      <text fg={c.textMuted}>{brand}</text>
       {mid ? <text fg={c.text}>{` ${mid}`}</text> : null}
       <box flexGrow={1} />
       {hints ? <text fg={c.textMuted}>{` ${hints}`}</text> : null}

@@ -1,0 +1,103 @@
+# Release: typecheck, test, build one binary per platform, attach them to the
+# GitHub Release for the pushed tag.
+#
+# Cut a release with:
+#   npm version 0.2.0 --no-git-tag-version   # bump package.json
+#   git commit -am "release v0.2.0" && git tag v0.2.0 && git push origin v0.2.0
+#
+# The tag (`v0.2.0`) must match `package.json`'s `version` (`0.2.0`) — the
+# checks job enforces that, because the in-app updater compares the bundled
+# version against release tags. Asset names (`dient-linux-x64`, …) are a
+# contract with `src/update/check.ts`: rename them in both places or the
+# `:upgrade` command cannot find its download.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Tag matches package.json version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VERSION="$(bun -e 'console.log(require("./package.json").version)')"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package.json version $VERSION"
+            exit 1
+          fi
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test
+
+  build:
+    needs: checks
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+          - os: macos-latest
+            target: darwin-arm64
+          - os: macos-15-intel
+            target: darwin-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Built natively per OS (not `bun build --target` cross-compiled):
+      # @opentui/core ships platform-specific native bindings, and a binary
+      # compiled on the real OS always loads the right one.
+      - name: Compile binary
+        run: bun build --compile --outfile dient-${{ matrix.target }} src/index.tsx
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dient-${{ matrix.target }}
+          path: dient-${{ matrix.target }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release and attach binaries
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ls -la dist/
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes dist/*

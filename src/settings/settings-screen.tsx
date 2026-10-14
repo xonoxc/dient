@@ -13,6 +13,7 @@ import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/react"
 import { decodePasteBytes } from "@opentui/core"
 import { useTheme } from "@/theme-context"
 import { useRouter, useCommandLine, useSessionStatus, useTextInput, useToasts, type RoutedKey } from "@/app-context"
+import { useUpdateUi } from "@/update/update-provider"
 import { useSettings, type SettingsForm, type SettingsListItem } from "@/settings/use-settings"
 import { FIELD_LABEL, CONNECTION_FIELDS, ADD_CHOICES } from "@/settings/use-settings"
 import { normalModeKey, resolveTypedChar } from "@/ui/text-entry"
@@ -64,15 +65,20 @@ export function SettingsScreen() {
   } = settings
 
   const textInput = useTextInput()
+  const update = useUpdateUi()
   const selectedItem = items[cursor]
   const showDetails = width >= 100
   const listWidth = Math.min(48, Math.floor(width * 0.38))
 
-  const fieldLabel = field ? (field === "uri" ? "connection string" : (FIELD_LABEL[field as keyof typeof FIELD_LABEL] ?? "value")) : ""
+  const fieldLabel = field
+    ? field === "uri"
+      ? "connection string"
+      : (FIELD_LABEL[field as keyof typeof FIELD_LABEL] ?? "value")
+    : ""
 
   const pasteConnectionString = () => {
     const item = items[cursor]
-    const projectId = item?.kind === "project" ? item.refId : item?.parentId ?? projects[0]?.id
+    const projectId = item?.kind === "project" ? item.refId : (item?.parentId ?? projects[0]?.id)
     if (!projectId) {
       toasts.push("info", "create a project with P before adding a database")
       return
@@ -100,23 +106,35 @@ export function SettingsScreen() {
   })
 
   useEffect(() => {
+    /* A pending update names its own command here too, so it stays visible
+       while the user is in settings. Form hints stay purely contextual. */
+    const idle: string[] = [
+      "a db",
+      "p paste URI",
+      "Shift+P project",
+      "e explorer",
+      "j/k move",
+      "Enter expand",
+      "? help",
+    ]
+    if (update.phase === "available" && update.release) idle.unshift(`${update.release.tag} :upgrade`)
     session.setStatus({
       /* Ownership decides the mode, not the local `form` value. */
       mode: textInput.active ? "insert" : "normal",
       table: "settings",
       hints: form
-          ? form.kind === "addChoice"
-            ? ["j/k move", "Enter open", "Esc cancel"]
-            : form.kind === "connect" && form.mode === "uri"
-              ? ["paste connection string", "Tab complete", "Ctrl+n credentials", "Enter add", "Esc cancel"]
-              : form.kind === "connect"
-                ? [`type ${fieldLabel}`, "Tab field", "Ctrl+n engine", "Enter add", "Esc cancel"]
-                : form.kind === "connectName"
-                  ? ["database name missing", "Enter add", "Esc cancel"]
-                  : form.kind === "rename"
-                    ? ["new name", "Enter save", "Esc cancel"]
-                    : ["type name", "Enter save", "Esc cancel"]
-          : ["a db", "p paste URI", "Shift+P project", "e explorer", "j/k move", "Enter expand", "? help"],
+        ? form.kind === "addChoice"
+          ? ["j/k move", "Enter open", "Esc cancel"]
+          : form.kind === "connect" && form.mode === "uri"
+            ? ["paste connection string", "Tab complete", "Ctrl+n credentials", "Enter add", "Esc cancel"]
+            : form.kind === "connect"
+              ? [`type ${fieldLabel}`, "Tab field", "Ctrl+n engine", "Enter add", "Esc cancel"]
+              : form.kind === "connectName"
+                ? ["database name missing", "Enter add", "Esc cancel"]
+                : form.kind === "rename"
+                  ? ["new name", "Enter save", "Esc cancel"]
+                  : ["type name", "Enter save", "Esc cancel"]
+        : idle,
     })
   }, [session.setStatus, form, field, testing, completions.length, textInput.active]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -253,7 +271,9 @@ export function SettingsScreen() {
           <text fg={c.textMuted}>Projects and database connections</text>
         </box>
         <box flexGrow={1} />
-        <text fg={c.textMuted}>{projects.length} project{projects.length === 1 ? "" : "s"}</text>
+        <text fg={c.textMuted}>
+          {projects.length} project{projects.length === 1 ? "" : "s"}
+        </text>
       </box>
 
       <box flexGrow={1} flexDirection="row" overflow="hidden">
@@ -299,7 +319,9 @@ export function SettingsScreen() {
           field={field}
           draft={draft}
           completions={completions}
-          projectName={form.kind === "addChoice" ? (projects.find(p => p.id === form.projectId)?.name ?? "project") : ""}
+          projectName={
+            form.kind === "addChoice" ? (projects.find(p => p.id === form.projectId)?.name ?? "project") : ""
+          }
           terminalWidth={width}
           terminalHeight={height}
         />
@@ -337,19 +359,25 @@ function SettingsDetails({ item, projectCount }: { item?: SettingsListItem; proj
             <>
               <text fg={c.textMuted}>{connection ? "CONNECTION" : "CONNECTION MISSING"}</text>
               <text fg={connection ? c.text : c.warning}>{location ?? "Add connection details with a."}</text>
-              {connection?.defaultDatabase ? <text fg={c.textMuted}>default database · {connection.defaultDatabase}</text> : null}
+              {connection?.defaultDatabase ? (
+                <text fg={c.textMuted}>default database · {connection.defaultDatabase}</text>
+              ) : null}
             </>
           )}
           <box height={2} />
           <text fg={c.textMuted}>{item.kind === "project" ? "Shift+P  create project" : "r  rename   d  remove"}</text>
-          <text fg={c.textMuted}>{item.kind === "project" ? "a  add database   p  paste URI" : "t  test connection"}</text>
+          <text fg={c.textMuted}>
+            {item.kind === "project" ? "a  add database   p  paste URI" : "t  test connection"}
+          </text>
         </>
       ) : (
         <>
           <box height={1} />
           <text fg={c.textBright}>Your database workspaces</text>
           <box height={1} />
-          <text fg={c.textMuted}>{projectCount === 0 ? "Create a project to get started." : "Select a project or database to see details."}</text>
+          <text fg={c.textMuted}>
+            {projectCount === 0 ? "Create a project to get started." : "Select a project or database to see details."}
+          </text>
           <text fg={c.textMuted}>Press ? for all keyboard shortcuts.</text>
         </>
       )}
@@ -390,22 +418,41 @@ function SettingsFormDialog({
   terminalHeight: number
 }) {
   const { colors: c } = useTheme()
-  const panelWidth = form.kind === "addChoice"
-    ? Math.max(36, Math.min(62, terminalWidth - 4))
-    : Math.max(40, Math.min(76, terminalWidth - 4))
-  const title = form.kind === "addChoice" ? `Add database · ${projectName}`
-    : form.kind === "connect" ? `Add database · ${form.mode === "uri" ? "connection string" : form.engine}`
-      : form.kind === "connectName" ? "Choose a database name"
-        : form.kind === "rename" ? "Rename database" : "New project"
+  const panelWidth =
+    form.kind === "addChoice"
+      ? Math.max(36, Math.min(62, terminalWidth - 4))
+      : Math.max(40, Math.min(76, terminalWidth - 4))
+  const title =
+    form.kind === "addChoice"
+      ? `Add database · ${projectName}`
+      : form.kind === "connect"
+        ? `Add database · ${form.mode === "uri" ? "connection string" : form.engine}`
+        : form.kind === "connectName"
+          ? "Choose a database name"
+          : form.kind === "rename"
+            ? "Rename database"
+            : "New project"
   /* Content width inside `ModalSurface`: its outer padding (1 per side) plus the
      inner `paddingX={2}` leave `panelWidth - 4` cells for the form. */
   const contentWidth = panelWidth - 4
-  const formLabel = form.kind === "connect" ? "new database · connection string: "
-    : form.kind === "connectName" ? "the URL has no database name · name: "
-      : form.kind === "rename" ? "rename to: " : "new project: "
+  const formLabel =
+    form.kind === "connect"
+      ? "new database · connection string: "
+      : form.kind === "connectName"
+        ? "the URL has no database name · name: "
+        : form.kind === "rename"
+          ? "rename to: "
+          : "new project: "
 
   return (
-    <box position="absolute" width="100%" height="100%" alignItems="center" justifyContent="center" backgroundColor={c.bg}>
+    <box
+      position="absolute"
+      width="100%"
+      height="100%"
+      alignItems="center"
+      justifyContent="center"
+      backgroundColor={c.bg}
+    >
       <ModalSurface width={panelWidth} paddingX={2} paddingY={1} maxHeight={Math.max(10, terminalHeight - 2)}>
         <text fg={c.accent}>{title}</text>
         <box height={1} />
@@ -417,9 +464,17 @@ function SettingsFormDialog({
               const selected = form.cursor === index
               return (
                 <box key={choice.label} flexDirection="column">
-                  <box height={1} flexDirection="row" alignItems="center" backgroundColor={selected ? c.bgHighlight : undefined} paddingX={1}>
+                  <box
+                    height={1}
+                    flexDirection="row"
+                    alignItems="center"
+                    backgroundColor={selected ? c.bgHighlight : undefined}
+                    paddingX={1}
+                  >
                     <text fg={selected ? c.accent : c.textMuted}>{selected ? "›" : " "}</text>
-                    <text fg={selected ? c.textBright : c.text} paddingLeft={1}>{choice.label}</text>
+                    <text fg={selected ? c.textBright : c.text} paddingLeft={1}>
+                      {choice.label}
+                    </text>
                   </box>
                   <box height={1} paddingLeft={3}>
                     <text fg={c.textMuted}>{choice.hint}</text>
@@ -428,7 +483,7 @@ function SettingsFormDialog({
               )
             })}
             <box height={1} />
-            <text fg={c.text}>↑/↓ or j/k move   Enter open   Esc cancel</text>
+            <text fg={c.text}>↑/↓ or j/k move Enter open Esc cancel</text>
           </>
         ) : form.kind === "connect" && form.mode === "fields" ? (
           <CredentialsFields form={form} field={field} draft={draft} contentWidth={contentWidth} />
@@ -443,7 +498,11 @@ function SettingsFormDialog({
               <>
                 <box height={1} />
                 <text fg={c.textMuted}>Ctrl+V paste · Enter add</text>
-                {draft.length > 0 && completions.length > 0 ? <text fg={c.textMuted} truncate>{completions.slice(0, 5).join("  ")}</text> : null}
+                {draft.length > 0 && completions.length > 0 ? (
+                  <text fg={c.textMuted} truncate>
+                    {completions.slice(0, 5).join("  ")}
+                  </text>
+                ) : null}
               </>
             ) : null}
           </>
@@ -456,7 +515,7 @@ function SettingsFormDialog({
                 ? "Tab next field · Ctrl+n engine · Enter save · Esc cancel"
                 : form.kind === "connect" && form.mode === "uri"
                   ? "Ctrl+V paste · Ctrl+N credentials · Enter add · Esc cancel"
-                : "Enter save · Esc cancel"}
+                  : "Enter save · Esc cancel"}
             </text>
           </>
         ) : null}
@@ -483,12 +542,24 @@ function CredentialsFields({
       {fields.map(key => {
         const active = key === field
         const value = active ? draft : (form.values[key as keyof typeof form.values] ?? "")
-        const display = key === "password" && value ? "•".repeat(Math.min(value.length, 32)) : value || (active ? " " : "—")
+        const display =
+          key === "password" && value ? "•".repeat(Math.min(value.length, 32)) : value || (active ? " " : "—")
         const label = key === "defaultDatabase" ? "database" : (FIELD_LABEL[key as keyof typeof FIELD_LABEL] ?? key)
         return (
-          <box key={key} height={1} flexDirection="row" backgroundColor={active ? c.bgHighlight : undefined} paddingX={1}>
-            <text fg={active ? c.accent : c.textMuted} width={16}>{active ? "› " : "  "}{label}</text>
-            <text fg={active ? c.textBright : c.text}>{windowTail(display, contentWidth - 2 - 16 - (active ? 1 : 0))}</text>
+          <box
+            key={key}
+            height={1}
+            flexDirection="row"
+            backgroundColor={active ? c.bgHighlight : undefined}
+            paddingX={1}
+          >
+            <text fg={active ? c.accent : c.textMuted} width={16}>
+              {active ? "› " : "  "}
+              {label}
+            </text>
+            <text fg={active ? c.textBright : c.text}>
+              {windowTail(display, contentWidth - 2 - 16 - (active ? 1 : 0))}
+            </text>
             {active ? <text fg={c.accent}>▍</text> : null}
           </box>
         )

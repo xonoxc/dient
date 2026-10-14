@@ -113,10 +113,17 @@ export const applyAction = (state: VimState, action: VimAction): VimState => {
           }
         return state
       }
+
       if (action.mode === "normal") {
         if (state.mode === "normal") return state
-        return { ...state, mode: "normal", selection: Option.none(), pendingG: 0 }
+        return {
+          ...state,
+          mode: "normal",
+          selection: Option.none(),
+          pendingG: 0,
+        }
       }
+
       if (state.mode === "normal") return enterVisual(state)
       return state
 
@@ -152,6 +159,7 @@ export const pressKey = (state: VimState, key: string): VimState => {
         },
         jumpFirst
       )
+
     return pressKey({ ...state, pendingG: 0 }, key)
   }
 

@@ -15,6 +15,9 @@ export interface SortState {
 export const MIN_COL_WIDTH = 4
 export const MAX_COL_WIDTH = 28
 
+/** Maximum number of lines a cell can take for display. Longer content is truncated */
+export const MAX_CELL_LINES = 1
+
 /**
  * The width one column needs: the longest of its cell texts, floored at
  * `MIN_COL_WIDTH`. Shared with the clipboard serializer so a copied table is
@@ -53,6 +56,42 @@ export const formatCell = (value: unknown): string => {
     }
   }
   return String(value)
+}
+
+/**
+ * Truncate text to fit within a budget while preserving tail (end) of the text.
+ * Used for display truncation: keeps the most recent characters visible.
+ * Appends "…" when truncated.
+ */
+export const truncateForDisplay = (text: string, budget: number): string => {
+  const room = Math.max(0, Math.floor(budget))
+  if (text.length <= room) return text
+  // Leave room for ellipsis
+  if (room <= 1) return ""
+  const usable = room - 1
+  return text.slice(-usable) + "…"
+}
+
+/**
+ * Limit cell content to a maximum number of lines by truncating long values.
+ * Also truncates each line to fit within the column width.
+ */
+export const formatCellDisplay = (value: unknown, maxWidth: number): string => {
+  const formatted = formatCell(value)
+
+  // Check if content spans multiple lines
+  const lines = formatted.split("\n")
+
+  if (lines.length <= MAX_CELL_LINES) {
+    // Single line - just truncate if needed
+    return truncateForDisplay(formatted, maxWidth)
+  }
+
+  // Multiple lines - truncate to first N lines and truncate each line
+  return lines
+    .slice(0, MAX_CELL_LINES)
+    .map(line => truncateForDisplay(line, maxWidth))
+    .join("\n")
 }
 
 export interface UseTableResult {
@@ -124,3 +163,4 @@ export const useTable = (
     },
   }
 }
+

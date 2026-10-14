@@ -36,6 +36,9 @@ import { StatusBar } from "@/status-bar"
 import { ToastView } from "@/ui/toast"
 import { ModalView } from "@/ui/modal"
 import { HelpScreen } from "@/ui/help-screen"
+import { UpdateCommands } from "@/update/update-commands"
+import { UpdateProvider } from "@/update/update-provider"
+import { APP_VERSION } from "@/version"
 import { normalModeKey, resolveTypedChar } from "@/ui/text-entry"
 import { windowTail } from "@/ui/text-window"
 
@@ -61,7 +64,9 @@ export default function App({
                   <CommandLineProvider>
                     <ConfigRevisionProvider>
                       <TextInputProvider>
-                        <Shell />
+                        <UpdateProvider>
+                          <Shell />
+                        </UpdateProvider>
                       </TextInputProvider>
                     </ConfigRevisionProvider>
                   </CommandLineProvider>
@@ -220,8 +225,10 @@ function Shell() {
         </box>
         <CommandBar commands={allCommands} />
         <ToastView />
+        <UpdateCommands />
         <StatusBar
           mode={status.mode}
+          version={APP_VERSION}
           engine={status.engine}
           connection={status.connection}
           database={status.database}

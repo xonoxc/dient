@@ -42,5 +42,9 @@ data.db
 x.db
 sample.db
 
+# Compiled release binaries (`bun run build` writes `./dient`).
+/dient
+/dient-*
+
 
 AGENTS.md

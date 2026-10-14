@@ -1,6 +1,6 @@
 /**
  * Data table screen tests — the table area as rendered by the real App against
- * a seeded SQLite file. Driving the table needs the `l` focus switch after
+ * a seeded SQLite file. Driving the table needs the Ctrl+L focus switch after
  * connecting, since Enter on a connection leaves focus on the sidebar. Each
  * tree step is an async DB round-trip, so the presses are staged like human
  * input.
@@ -21,7 +21,7 @@ async function openTable(setup: Awaited<ReturnType<typeof renderApp>>, waitLine:
   await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
   await pressKeys(setup, ["j", "RETURN"])
   await setup.waitForFrame(f => f.includes(waitLine))
-  await pressKeys(setup, ["l"])
+  await pressKeys(setup, ["CTRL+l"])
   return setup.captureCharFrame()
 }
 
@@ -199,6 +199,198 @@ describe("data table", () => {
       const back = setup.captureCharFrame()
       expect(back).toContain("CUSTOMER_NAME")
       expect(back).toContain("ID")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+})
+
+/** A users table whose first row holds a value far wider than any column. */
+const longValueFile = (): string => {
+  const path = join(mkdtempSync(join(tmpdir(), "dient-long-")), "data.db")
+  const db = new SqliteDatabase(path)
+  db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT)")
+  const insert = db.prepare("INSERT INTO users (id, name, email) VALUES (?, ?, ?)")
+  insert.run(1, "FULL-" + "A".repeat(100) + "-TAIL", "alice@example.com")
+  insert.run(2, "bob", "bob@example.com")
+  db.close()
+  return path
+}
+
+/** A users table whose first row holds a 25-line value to scroll through. */
+const multiLineFile = (): string => {
+  const path = join(mkdtempSync(join(tmpdir(), "dient-multiline-")), "data.db")
+  const db = new SqliteDatabase(path)
+  db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT)")
+  const lines = Array.from({ length: 25 }, (_, i) => `row-${String(i + 1).padStart(2, "0")}`)
+  const insert = db.prepare("INSERT INTO users (id, name, email) VALUES (?, ?, ?)")
+  insert.run(1, lines.join("\n"), "alice@example.com")
+  insert.run(2, "bob", "bob@example.com")
+  db.close()
+  return path
+}
+
+describe("cell viewer", () => {
+  test("e on a truncated cell shows the whole value, Esc closes it", async () => {
+    const full = "FULL-" + "A".repeat(100) + "-TAIL"
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: longValueFile(),
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await openTable(setup, "bob")
+
+      /* the grid truncates to the column width, so the full value is nowhere */
+      expect(setup.captureCharFrame()).not.toContain(full)
+
+      /* one step right lands the column cursor on name, e expands it */
+      await pressKeys(setup, ["l"])
+      await pressKeys(setup, ["e"])
+      const viewer = await setup.waitForFrame(f => f.includes("j/k scroll"))
+      expect(viewer).toContain("users.name")
+      /* the value wraps mid-string, so pin its head and its tail */
+      expect(viewer).toContain("FULL-AAAAAAAA")
+      expect(viewer).toContain("AAAAAAA-TAIL")
+
+      await pressKeys(setup, ["ESCAPE"])
+      await setup.waitForFrame(f => !f.includes("j/k scroll"))
+      expect(setup.captureCharFrame()).not.toContain(full)
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test("e inside the preview expands the active cell, j/k and g/G scroll it", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: multiLineFile(),
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await openTable(setup, "bob")
+      await pressKeys(setup, ["l", "RETURN"])
+      await setup.waitForFrame(f => f.includes("row 1 of 2"))
+
+      /* the preview clips to one row, so the later lines are nowhere */
+      expect(setup.captureCharFrame()).not.toContain("row-25")
+
+      await pressKeys(setup, ["e"])
+      const viewer = await setup.waitForFrame(f => f.includes("j/k scroll"))
+      expect(viewer).toContain("row-02")
+      expect(viewer).not.toContain("row-25")
+
+      /* G jumps to the end, g back to the start */
+      await pressKeys(setup, ["G"])
+      await setup.waitForFrame(f => f.includes("row-25"))
+      await pressKeys(setup, ["g"])
+      await setup.waitForFrame(f => f.includes("lines 1–"))
+
+      /* Esc lands back on the preview, another Esc closes that too */
+      await pressKeys(setup, ["ESCAPE"])
+      await setup.waitForFrame(f => f.includes("row 1 of 2") && !f.includes("j/k scroll"))
+      await pressKeys(setup, ["ESCAPE"])
+      await setup.waitForFrame(f => !f.includes("row 1 of 2"))
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+})
+
+describe("pane focus", () => {
+  test("CTRL+l moves focus sidebar to table and CTRL+h moves it back", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile(),
+    })
+    /* wide enough for the full hint strip: at the default width the trailing
+       sidebar hints ("Enter open") are shed to fit. */
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />, {
+      width: 160,
+      height: 26,
+    })
+    try {
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
+      await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(f => f.includes("USERS") && f.includes("alice"))
+
+      /* sidebar owns the keyboard: its hints name opening, not previewing */
+      expect(setup.captureCharFrame()).toContain("Enter open")
+
+      await pressKeys(setup, ["CTRL+l"])
+      await setup.waitForFrame(f => f.includes("Enter preview"))
+
+      await pressKeys(setup, ["CTRL+h"])
+      await setup.waitForFrame(f => f.includes("Enter open"))
+      expect(setup.captureCharFrame()).not.toContain("Enter preview")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test("plain h/l scroll the columns without leaving the table", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: wideDataFile(),
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await openTable(setup, "Acme")
+      expect(setup.captureCharFrame()).not.toContain("TOTAL_DUE")
+
+      /* l walks the active column right exactly like the right arrow */
+      await pressKeys(setup, ["l", "l", "l", "l"])
+      await setup.waitForFrame(f => f.includes("TOTAL_DUE"))
+      const panned = setup.captureCharFrame()
+      expect(panned).toContain("TOTAL_DUE")
+      /* ...and focus never left the table for the sidebar */
+      expect(panned).toContain("Enter preview")
+
+      /* h walks back left */
+      await pressKeys(setup, ["h", "h", "h", "h"])
+      await setup.waitForFrame(f => f.includes("CUSTOMER_NAME"))
+      expect(setup.captureCharFrame()).toContain("Enter preview")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test("Backspace (the legacy-terminal encoding of CTRL+h) returns focus to the sidebar", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile(),
+    })
+    /* wide enough for the full hint strip: at the default width the trailing
+       sidebar hints ("Enter open") are shed to fit. */
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />, {
+      width: 160,
+      height: 26,
+    })
+    try {
+      await openTable(setup, "alice")
+      await setup.waitForFrame(f => f.includes("Enter preview"))
+
+      /* a legacy terminal reports CTRL+h as a bare backspace byte (0x08),
+         with no ctrl flag — the app cannot tell it from Backspace, and
+         Backspace is unbound in NORMAL mode, so it switches panes. */
+      await pressKeys(setup, ["BACKSPACE"])
+      await setup.waitForFrame(f => f.includes("Enter open"))
     } finally {
       setup.renderer.destroy()
     }

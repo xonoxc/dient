@@ -4,12 +4,14 @@ import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { buildAppLayer } from "@/runtime"
+import { UpdateChecker } from "@/update/update-checker"
 import { ConfigStore, type ConfigStoreService } from "@/config"
 import { DatabaseDriver } from "@/drivers/database-driver"
 import { SchemaInspector } from "@/inspector"
 import { ConnectionManager } from "@/connection/connection-manager"
 import { QueryExecutor } from "@/query/query-executor"
 import { makeErrorLog } from "@/log/error-log"
+import type { UpdateCheckerDeps } from "@/update/update-checker"
 import type { AppServices } from "@/app-context"
 import type { Connection, Database, Engine, Project } from "@/domain"
 
@@ -24,10 +26,21 @@ export interface TestAppServices {
  * that survives the effect run, so React hooks can keep using the services
  * after this resolves. Mirrors `src/index.tsx`, minus the render loop.
  */
-export const buildTestServices = (configPath: string): Effect.Effect<TestAppServices> =>
+export const buildTestServices = (configPath: string, updateDeps?: UpdateCheckerDeps): Effect.Effect<TestAppServices> =>
   Effect.gen(function* () {
     const scope = yield* Scope.make()
-    const context = yield* Scope.extend(Layer.build(buildAppLayer(configPath)), scope)
+    /* Tests never touch the network or the real machine by default: the
+       checker gets an offline stub fetch, a throwaway store, and a fake
+       binary path, so the startup check always resolves silent and no test
+       can self-update. Tests that need a release pass their own deps. */
+    const deps: UpdateCheckerDeps = updateDeps ?? {
+      storePath: join(mkdtempSync(join(tmpdir(), "dient-update-")), "update.json"),
+      execPath: join(tmpdir(), "bun-test-fake"),
+      platform: "linux",
+      arch: "x64",
+      fetchFn: (() => Promise.reject(new Error("offline"))) as unknown as typeof fetch,
+    }
+    const context = yield* Scope.extend(Layer.build(buildAppLayer(configPath, deps)), scope)
 
     return {
       services: {
@@ -35,14 +48,15 @@ export const buildTestServices = (configPath: string): Effect.Effect<TestAppServ
         connectionManager: Context.get(context, ConnectionManager),
         schemaInspector: Context.get(context, SchemaInspector),
         queryExecutor: Context.get(context, QueryExecutor),
+        updateChecker: Context.get(context, UpdateChecker),
         errorLog: makeErrorLog(`${configPath}.error.log`),
       },
       store: Context.get(context, ConfigStore),
     }
   })
 
-export const resolveTestServices = (configPath: string): Promise<TestAppServices> =>
-  Effect.runPromise(buildTestServices(configPath))
+export const resolveTestServices = (configPath: string, updateDeps?: UpdateCheckerDeps): Promise<TestAppServices> =>
+  Effect.runPromise(buildTestServices(configPath, updateDeps))
 
 const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
 

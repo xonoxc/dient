@@ -140,6 +140,9 @@ Type `:` for the command line.
 | `:e <table>` | Open a table |
 | `:connect <name>` | Switch database |
 | `:refresh` | Reload the current table |
+| `:upgrade` | Install the pending update |
+| `:ignore-update` | Skip the pending update |
+| `:version` | Show the app version |
 | `:settings` / `:explorer` | Switch screen |
 | `:help` | Keybindings |
 | `:q` | Quit (from settings, back to the explorer) |

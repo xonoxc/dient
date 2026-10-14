@@ -12,12 +12,14 @@ import { DatabaseDriver } from "@/drivers/database-driver"
 import { SchemaInspector } from "@/inspector"
 import { ConnectionManager } from "@/connection/connection-manager"
 import { QueryExecutor } from "@/query/query-executor"
+import { UpdateChecker, type UpdateCheckerDeps } from "@/update/update-checker"
 import { defaultLogPath, makeErrorLog } from "@/log/error-log"
 import type { AppServices } from "@/app-context"
 import { Context, Effect, Layer, type Scope } from "effect"
 
-export const buildAppLayer = (configPath?: string) => {
-  const base = Layer.mergeAll(ConfigStore.layer(configPath), DatabaseDriver.layer)
+export const buildAppLayer = (configPath?: string, updateDeps?: UpdateCheckerDeps) => {
+  const updateLayer = updateDeps ? UpdateChecker.layer(updateDeps) : UpdateChecker.layerDefault
+  const base = Layer.mergeAll(ConfigStore.layer(configPath), DatabaseDriver.layer, updateLayer)
   return Layer.mergeAll(
     base,
     Layer.provide(ConnectionManager.layer, base),
@@ -34,6 +36,7 @@ export const resolveAppServices = (configPath?: string): Effect.Effect<AppServic
       schemaInspector: Context.get(context, SchemaInspector),
       connectionManager: Context.get(context, ConnectionManager),
       queryExecutor: Context.get(context, QueryExecutor),
+      updateChecker: Context.get(context, UpdateChecker),
       errorLog: makeErrorLog(defaultLogPath()),
     }
   })

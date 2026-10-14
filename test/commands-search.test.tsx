@@ -12,9 +12,10 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import App from "@/app"
 import { makeTheme } from "@/theme"
+import { APP_VERSION } from "@/version"
 import { pressKeys, renderApp } from "@test/support/render-ui"
 import { splitHighlighted } from "@/table/data-table"
-import { freshConfigFile, freshSqliteDataFile, resolveTestServices, seedProject } from "@test/support/services-fixture"
+import { freshConfigFile, resolveTestServices, seedProject } from "@test/support/services-fixture"
 
 /** A sqlite file at a distinctive basename so connections can be told apart
     in the sidebar (the shared fixture always names its file "data.db"). */
@@ -36,10 +37,48 @@ async function connect(setup: Awaited<ReturnType<typeof renderApp>>) {
   await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
   await pressKeys(setup, ["j", "RETURN"])
   await setup.waitForFrame(f => f.includes("USERS") && f.includes("alice"))
-  await pressKeys(setup, ["l"])
+  await pressKeys(setup, ["CTRL+l"])
 }
 
 describe("command line", () => {
+  test(":version reports the bundled app version", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store)
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await pressKeys(setup, [":", "v", "e", "r", "s", "i", "o", "n", "RETURN"])
+      await setup.waitForFrame(f => f.includes(`dient v${APP_VERSION}`))
+      expect(setup.captureCharFrame()).toContain(`dient v${APP_VERSION}`)
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test("a newer release toasts on startup with the upgrade command", async () => {
+    const releasePayload = {
+      tag_name: "v9.9.9",
+      body: "notes",
+      html_url: "https://github.com/xonoxc/dient/releases/tag/v9.9.9",
+      assets: [{ name: "dient-linux-x64", browser_download_url: "https://example.com/b" }],
+    }
+    const updateDeps = {
+      storePath: join(mkdtempSync(join(tmpdir(), "dient-update-")), "update.json"),
+      execPath: join(tmpdir(), "bun-test-fake"),
+      platform: "linux",
+      arch: "x64",
+      fetchFn: (() =>
+        Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(releasePayload) })) as unknown as typeof fetch,
+    }
+    const services = await resolveTestServices(freshConfigFile(), updateDeps)
+    await seedProject(services.store)
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await setup.waitForFrame(f => f.includes("v9.9.9 available") && f.includes(":upgrade"))
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
   test(": opens the command palette with help text", async () => {
     const services = await resolveTestServices(freshConfigFile())
     await seedProject(services.store)
@@ -113,9 +152,7 @@ describe("command line", () => {
     const main = await Effect.runPromise(
       services.store.createDatabase({ projectId: project.id, name: "main", engine: "sqlite" })
     )
-    await Effect.runPromise(
-      services.store.createConnection({ databaseId: main.id, filename: namedDataFile("a.db") })
-    )
+    await Effect.runPromise(services.store.createConnection({ databaseId: main.id, filename: namedDataFile("a.db") }))
     const alt = await Effect.runPromise(
       services.store.createDatabase({ projectId: project.id, name: "alt", engine: "sqlite" })
     )

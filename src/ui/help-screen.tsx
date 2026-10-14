@@ -10,10 +10,12 @@ type Binding = readonly [string, string]
 const EXPLORER: ReadonlyArray<Binding> = [
   ["j / k (↓ / ↑)", "move down / up"],
   ["gg / G", "first / last"],
-  ["h / l", "focus sidebar / table"],
+  ["Ctrl+H / Ctrl+L", "focus sidebar / table"],
+  ["h / l", "scroll columns left / right"],
   ["← / →", "previous / next col"],
   ["Enter", "preview the row"],
   ["i", "edit row in $EDITOR"],
+  ["e", "view full cell value"],
   ["V", "start row selection"],
   ["y", "copy the selection"],
   ["Space", "open quick finder"],
@@ -22,6 +24,7 @@ const EXPLORER: ReadonlyArray<Binding> = [
   ["Ctrl+f / Ctrl+b", "next / prev page"],
   ["Tab", "next connection"],
   ["s", "settings"],
+  ["?", "show this reference"],
 ]
 
 const SETTINGS: ReadonlyArray<Binding> = [
@@ -36,6 +39,7 @@ const SETTINGS: ReadonlyArray<Binding> = [
   ["t", "test connection"],
   ["d", "delete"],
   ["e", "return to explorer"],
+  ["?", "show this reference"],
 ]
 
 const COMMANDS: ReadonlyArray<Binding> = [
@@ -43,6 +47,9 @@ const COMMANDS: ReadonlyArray<Binding> = [
   [":e <table>", "open a table"],
   [":connect <name>", "switch database"],
   [":refresh", "reload current table"],
+  [":upgrade", "install pending update"],
+  [":ignore-update", "skip pending update"],
+  [":version", "show app version"],
   [":settings", "open settings"],
   [":help", "show this reference"],
   [":w", "flush pending changes"],

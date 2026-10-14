@@ -30,12 +30,20 @@ import { useCommand } from "@/app-context"
 import { buildFinderIndex, type FinderEntry } from "@/finder/finder"
 import { FinderOverlay } from "@/finder/finder-overlay"
 import { RowPreview } from "@/explorer/row-preview"
+import { useUpdateUi } from "@/update/update-provider"
+import { CELL_VIEWER_TEXT_WIDTH, CellViewer, wrapText } from "@/explorer/cell-viewer"
 import { fuzzyMatch } from "@/finder/fuzzy"
 import { normalModeKey, resolveTypedChar } from "@/ui/text-entry"
 import { windowTail } from "@/ui/text-window"
 import { LoadingIndicator } from "@/ui/loading-indicator"
 
 const TABLE_MOVE_KEYS = new Set(["j", "k", "g", "G"])
+
+const isCtrlH = (name: string, ctrl: boolean, shift: boolean): boolean =>
+  !shift && ((ctrl && name.toLowerCase() === "h") || name.toLowerCase() === "ctrl+h" || name === "backspace")
+
+const isCtrlL = (name: string, ctrl: boolean, shift: boolean): boolean =>
+  !shift && ((ctrl && name.toLowerCase() === "l") || name.toLowerCase() === "ctrl+l")
 
 /** Rows the data pane cannot spend on rows: page top padding, table strip,
     column header, command bar, status bar. */
@@ -51,6 +59,7 @@ export function ExplorerScreen() {
   const explorer = useExplorer()
   const { sidebar, focus, setFocus, active, loading, error, tableName, tableInfo } = explorer
   const { configStore } = useServices()
+  const update = useUpdateUi()
 
   /* Vim mode drives the cursor inside the currently loaded rows. */
   const vim = useVimMode(explorer.table.sortedRows.length)
@@ -65,6 +74,13 @@ export function ExplorerScreen() {
      reads whatever is under the cursor, so j/k inside it walks the table and a
      save is visible in place without reopening anything. */
   const [previewOpen, setPreviewOpen] = useState(false)
+
+  /* `e` on the active cell opens the full-value viewer over whatever is up
+     (table or preview). Same flag-not-capture contract as the preview: the
+     panel reads the cursor row and column live. The offset resets on open so
+     a reopened value always starts at the top. */
+  const [viewerOpen, setViewerOpen] = useState(false)
+  const [viewerOffset, setViewerOffset] = useState(0)
 
   /* Whole-row editing runs in the user's `$EDITOR` over a `column: value` temp
      file, so nothing in the app can swallow a keystroke or drop an edit. Guard
@@ -89,6 +105,7 @@ export function ExplorerScreen() {
      the difference became permanent horizontal overflow: the rightmost column
      was always cut off and a scrollbar was always on screen. */
   const dataWidth = Math.max(0, width - 2 - SIDEBAR_WIDTH - 3)
+  const previewWidth = Math.max(24, Math.min(96, width - 8))
 
   /* Never leave the keyboard claimed if the screen goes away mid-edit. */
   useEffect(() => releaseText, [])
@@ -424,25 +441,51 @@ export function ExplorerScreen() {
     if (explorer.hasNextPage) paging.push("^f next page")
     if (explorer.hasPrevPage) paging.push("^b prev page")
 
+    /* A pending update outranks the trailing hints: it names its own command,
+       so it stays discoverable after the toast expires. */
+    const pending: string[] = update.phase === "available" && update.release ? [`${update.release.tag} :upgrade`] : []
+
     if (focus === "sidebar") {
-      return [...paging, "s settings", "j/k move", "Enter open", "space jump", "h/l panels", "q quit", "? help"]
+      return [
+        ...paging,
+        ...pending,
+        "s settings",
+        "j/k move",
+        "Enter open",
+        "space jump",
+        "Ctrl+H/L panels",
+        "q quit",
+        "? help",
+      ]
     }
     if (explorer.search.trim()) return [...paging, `${explorer.searchCount} matches`, "n/N jump", "Esc clear"]
     return [
       ...paging,
+      ...pending,
       "s settings",
       "Enter preview",
       "i edit row",
       "V select rows",
+      "e full value",
       "j/k move",
+      "h/l cols",
       "space jump",
       "gg/G jump",
       "/ search",
-      "h/l panels",
+      "Ctrl+H/L panels",
       "q quit",
       "? help",
     ]
-  }, [focus, explorer.search, explorer.searchCount, explorer.hasNextPage, explorer.hasPrevPage, vimMode])
+  }, [
+    focus,
+    explorer.search,
+    explorer.searchCount,
+    explorer.hasNextPage,
+    explorer.hasPrevPage,
+    vimMode,
+    update.phase,
+    update.release,
+  ])
 
   /* The open visual-mode span, normalized, for both the highlighted band and
      the status count. Recomputed from the cursor's selection on every render,
@@ -459,7 +502,45 @@ export function ExplorerScreen() {
 
   /* Rows left for values once the panel's own chrome (title, gap, hint strip,
      the shadow ring's padding) is paid for. */
-  const previewMaxRows = Math.max(1, Math.min(height - 12, 24))
+  const previewMaxRows = Math.max(1, height - 8)
+
+  /* The active cell the `e` viewer shows: cursor row, column cursor. Clamped
+     like the grid's own `activeColumn` so the two can never disagree. */
+  const viewerColumn =
+    explorer.table.columns[Math.min(editColumn, Math.max(explorer.table.columns.length - 1, 0))]?.name ??
+    explorer.table.columns[0]?.name ??
+    null
+  const viewerRow = previewRow
+  const viewerValue = viewerRow && viewerColumn ? formatCell(viewerRow[viewerColumn]) : null
+  const viewerNeedsExpansion =
+    viewerValue !== null &&
+    (viewerValue.includes("\n") || viewerValue.length > (explorer.table.widths[viewerColumn!] ?? 4) + 2)
+
+  /* Rows the viewer may spend on wrapped value lines: title, gap, optional
+     scroll position, gap, and hint strip all come out of the terminal first. */
+  const viewerMaxRows = Math.max(4, Math.min(height - 10, 16))
+
+  const openViewer = () => {
+    if (!viewerRow || !viewerColumn || !viewerNeedsExpansion) return
+    setViewerOffset(0)
+    setViewerOpen(true)
+  }
+
+  const scrollViewer = (delta: number) => {
+    if (viewerValue === null) return
+    const lines = wrapText(viewerValue, CELL_VIEWER_TEXT_WIDTH).length
+    setViewerOffset(current => Math.max(0, Math.min(lines - viewerMaxRows, current + delta)))
+  }
+
+  const jumpViewer = (where: "first" | "last") => {
+    if (viewerValue === null) return
+    if (where === "first") {
+      setViewerOffset(0)
+      return
+    }
+    const lines = wrapText(viewerValue, CELL_VIEWER_TEXT_WIDTH).length
+    setViewerOffset(Math.max(0, lines - viewerMaxRows))
+  }
 
   /* Push the story to the shell's status bar. The database is the connection:
      one name, its engine alongside. */
@@ -503,6 +584,45 @@ export function ExplorerScreen() {
     if (router.helpOpen || commandLine.open) return
     const key = normalModeKey(e)
 
+    /* The full-value viewer sits above everything (table or preview) while it
+       is open and owns the keyboard the same way the preview does: `j`/`k`
+       scroll its wrapped lines, and anything else either closes it or stops
+       here, so a keystroke can never reach the table underneath. */
+    if (viewerOpen) {
+      if (
+        key === "\u001b" ||
+        key === "Escape" ||
+        key === "escape" ||
+        key === "q" ||
+        key === "e" ||
+        key === "E" ||
+        key === "return" ||
+        key === "enter" ||
+        key === "\r"
+      ) {
+        setViewerOpen(false)
+        return
+      }
+      if (key === "j" || key === "down") {
+        scrollViewer(1)
+        return
+      }
+      if (key === "k" || key === "up") {
+        scrollViewer(-1)
+        return
+      }
+      if (key === "g") {
+        jumpViewer("first")
+        return
+      }
+      if (key === "G") {
+        jumpViewer("last")
+        return
+      }
+      e.preventDefault()
+      return
+    }
+
     /* The preview panel owns the keyboard while it is open. It is a viewer, not
        a field, so it claims no INSERT-mode text input — but every other key has
        to stop here, or `q` would quit the app and `s` would open settings with
@@ -512,6 +632,20 @@ export function ExplorerScreen() {
         /* Leave the preview up across the `$EDITOR` session: the panel reads
            the cursor row, so coming back shows the row as it now is. */
         editCurrentRow()
+        return
+      }
+      /* The viewer opens over the preview and reads the same cursor row and
+         column cursor, so closing it lands back on this panel. */
+      if (key === "e" || key === "E") {
+        openViewer()
+        return
+      }
+      if (key === "h" || key === "left") {
+        setEditColumn(current => Math.max(0, current - 1))
+        return
+      }
+      if (key === "l" || key === "right") {
+        setEditColumn(current => Math.min(Math.max(explorer.table.columns.length - 1, 0), current + 1))
         return
       }
       if (key === "\u001b" || key === "Escape" || key === "escape" || key === "q") {
@@ -531,6 +665,20 @@ export function ExplorerScreen() {
         return
       }
       e.preventDefault()
+      return
+    }
+
+    /* Ctrl+H is encoded as Backspace by terminals using the legacy control
+       byte. Keep the pane chords symmetric and check them before focus-specific
+       navigation so they work from either pane. */
+    if (isCtrlH(key, e.ctrl === true, e.shift === true)) {
+      e.preventDefault()
+      setFocus("sidebar")
+      return
+    }
+    if (isCtrlL(key, e.ctrl === true, e.shift === true)) {
+      e.preventDefault()
+      setFocus("table")
       return
     }
 
@@ -595,7 +743,9 @@ export function ExplorerScreen() {
         explorer.selectActive()
         return
       }
-      if (key === "l" || key === "right") {
+      /* Pane switching is a Ctrl chord (vim-style window command): plain `l`
+         stays unbound here so the switch reads the same from both panes. */
+      if (key === "right") {
         setFocus("table")
         return
       }
@@ -640,12 +790,14 @@ export function ExplorerScreen() {
         openFinder(e)
         return
       }
+      /* Plain h/l scroll the columns (like the arrow keys below) instead of
+         switching panes, so a wide table is navigable without the mouse. */
       if (key === "h") {
-        setFocus("sidebar")
+        setEditColumn(current => Math.max(0, current - 1))
         return
       }
       if (key === "l") {
-        setFocus("table")
+        setEditColumn(current => Math.min(Math.max(explorer.table.columns.length - 1, 0), current + 1))
         return
       }
       if (key === "s") {
@@ -667,6 +819,13 @@ export function ExplorerScreen() {
       }
       if (key === "i") {
         editCurrentRow()
+        return
+      }
+      /* `e` expands the active cell: the grid truncates every value to its
+         column width, so a long value is only ever a hint that there is more
+         until this panel shows it whole. */
+      if (key === "e" || key === "E") {
+        openViewer()
         return
       }
       /* Page through the table. Ctrl+f / Ctrl+b are chords a printable field
@@ -771,7 +930,22 @@ export function ExplorerScreen() {
           position={vim.cursor + 1}
           total={explorer.table.sortedRows.length}
           maxRows={previewMaxRows}
+          activeColumn={viewerColumn ?? undefined}
+          width={previewWidth}
+          maxHeight={Math.max(8, height - 2)}
           truncated={explorer.table.columns.length > previewMaxRows}
+        />
+      ) : null}
+      {viewerOpen && viewerRow && viewerColumn && viewerValue !== null ? (
+        <CellViewer
+          tableName={tableName!}
+          columnName={viewerColumn}
+          columnType={explorer.table.columns.find(column => column.name === viewerColumn)?.type}
+          position={vim.cursor + 1}
+          total={explorer.table.sortedRows.length}
+          value={viewerValue}
+          visibleRows={viewerMaxRows}
+          offset={viewerOffset}
         />
       ) : null}
     </box>

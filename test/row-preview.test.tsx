@@ -63,7 +63,7 @@ describe("row preview", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openUsers(setup)
-      await pressKeys(setup, ["l"])
+      await pressKeys(setup, ["CTRL+l"])
       await pressKeys(setup, ["RETURN"])
 
       const frame = await waitForFrameDriven(setup, f => f.includes("row 1 of 3"))
@@ -73,8 +73,8 @@ describe("row preview", () => {
       expect(frame).toContain("email")
       expect(frame).toContain("alice@example.com")
       /* The value is paired with its column name, the same shape `$EDITOR`
-         receives. */
-      expect(frame).toMatch(/name\s+alice/)
+         receives (`name: alice`). */
+      expect(frame).toMatch(/name:\s*alice/)
       /* The hint strip advertises the way out and the way in. */
       expect(frame).toContain("i edit")
       expect(frame).toContain("Esc close")
@@ -92,7 +92,7 @@ describe("row preview", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openUsers(setup)
-      await pressKeys(setup, ["l"])
+      await pressKeys(setup, ["CTRL+l"])
       await pressKeys(setup, ["RETURN"])
       await waitForFrameDriven(setup, f => f.includes("row 1 of 3"))
 
@@ -108,7 +108,7 @@ describe("row preview", () => {
 
       /* The preview is left up and reads the cursor row, so the result is
          visible without reopening anything. */
-      expect(setup.captureCharFrame()).toMatch(/name\s+amy/)
+      expect(setup.captureCharFrame()).toMatch(/name:\s*amy/)
     } finally {
       setup.renderer.destroy()
     }
@@ -120,7 +120,7 @@ describe("row preview", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openUsers(setup)
-      await pressKeys(setup, ["l"])
+      await pressKeys(setup, ["CTRL+l"])
       await pressKeys(setup, ["RETURN"])
       await waitForFrameDriven(setup, f => f.includes("row 1 of 3"))
 
@@ -128,9 +128,12 @@ describe("row preview", () => {
       await waitForFrameDriven(setup, f => !f.includes("row 1 of 3"))
 
       /* Closing a panel must not strand the keybindings — `i` was reachable
-         without the panel in the first place, so it has to be reachable after. */
+         without the panel in the first place, so it has to be reachable after.
+         `noop.sh` exits clean with no changes, so the stable "no changes"
+         toast (not the transient "editing…" notice, which a fast editor
+         outruns) proves the editor spawned. */
       await pressKeys(setup, ["i"])
-      await waitForFrameDriven(setup, f => f.includes("editing users in"))
+      await waitForFrameDriven(setup, f => f.includes("no changes to save"))
     } finally {
       setup.renderer.destroy()
     }
@@ -142,7 +145,7 @@ describe("row preview", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openUsers(setup)
-      await pressKeys(setup, ["l"])
+      await pressKeys(setup, ["CTRL+l"])
       await pressKeys(setup, ["RETURN"])
       await waitForFrameDriven(setup, f => f.includes("row 1 of 3"))
 
