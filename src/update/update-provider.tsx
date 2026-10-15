@@ -129,7 +129,12 @@ export function UpdateProvider({ children }: { children?: ReactNode }) {
   }, [updateChecker, release, toasts])
 
   const value = useMemo<UpdateUiState>(
-    () => ({ phase, release, upgradeNow, ignoreRelease }),
+    () => ({
+      phase,
+      release,
+      upgradeNow,
+      ignoreRelease,
+    }),
     [phase, release, upgradeNow, ignoreRelease]
   )
   return <UpdateUiContext.Provider value={value}>{children}</UpdateUiContext.Provider>
