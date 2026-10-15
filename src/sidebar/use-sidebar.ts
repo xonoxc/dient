@@ -8,8 +8,7 @@
  * database's connections when that is expanded.
  */
 import { useEffect, useRef, useState } from "react"
-import { Effect } from "effect"
-import { Option } from "effect"
+import { Deferred, Effect, Fiber, Option } from "effect"
 import { useConfigRevision } from "@/app-context"
 import type { ConfigStoreService } from "@/config"
 import type { Connection, Database, DatabaseId, Project, ProjectId } from "@/domain"
@@ -133,10 +132,10 @@ export interface UseSidebarResult {
   /** Force a connection node open so a freshly connected connection's tables
       are visible without a second Enter. */
   readonly expandConnection: (connectionId: string) => void
-  /** Expand a project and await its databases (and their connections) being
-      loaded, so external callers (e.g. the finder) can select a row that the
-      lazy tree has not reached yet. Resolves immediately if already expanded. */
-  readonly expandProject: (projectId: ProjectId) => Promise<void>
+  /** Expand a project and load its databases (and their connections), so
+      external callers (e.g. the finder) can select a row that the lazy tree
+      has not reached yet. Already-expanded projects resolve immediately. */
+  readonly expandProject: (projectId: ProjectId) => Effect.Effect<void>
 }
 
 type ReactMutableRef<T> = { readonly current: T }
@@ -157,9 +156,13 @@ export const useSidebar = (
      mirror would make them miss nodes the load just added. */
   const itemsRef = useRef<ReadonlyArray<SidebarNode>>(buildTree(EMPTY, new Set()))
 
-  /* In-flight database loads, so `expandProject` fans out requests and the
-     caller can await the same promise a chained keyboard press already fired. */
-  const pendingDatabases = useRef(new Map<ProjectId, Promise<void>>())
+  /* In-flight database loads, shared by every caller. The handle is a
+     `Deferred`, not a promise: concurrent callers await the same load without
+     anything crossing the promise boundary, and interruption completes it
+     instead of hanging them. External callers chain off async loads — the
+     finder awaits `expandProject` and then indexes this ref — so a stale
+     mirror would make them miss nodes the load just added. */
+  const inFlight = useRef(new Map<ProjectId, Deferred.Deferred<void>>())
 
   const [items, setItems] = useState<ReadonlyArray<SidebarNode>>(() => buildTree(EMPTY, new Set()))
   const [cursor, setCursor] = useState(0)
@@ -193,22 +196,18 @@ export const useSidebar = (
   itemsRef.current = items
 
   useEffect(() => {
-    let cancelled = false
-    void Effect.runPromise(configStore.listProjects())
-      .then(projects => {
-        if (cancelled) return
+    /* One program: load, commit to refs, render. Interruption on unmount
+       replaces the `cancelled` flag — a torn-down screen runs nothing. */
+    const fiber = Effect.runFork(
+      Effect.gen(function* () {
+        const projects = yield* configStore.listProjects().pipe(Effect.orElseSucceed(() => []))
         dataRef.current = { ...dataRef.current, projects }
-        recompute()
-        setLoaded(true)
+        yield* Effect.sync(recompute)
+        yield* Effect.sync(() => setLoaded(true))
       })
-      .catch(() => {
-        if (cancelled) return
-        dataRef.current = EMPTY
-        recompute()
-        setLoaded(true)
-      })
+    )
     return () => {
-      cancelled = true
+      Effect.runFork(Fiber.interrupt(fiber))
     }
   }, [configStore])
 
@@ -219,68 +218,98 @@ export const useSidebar = (
      nothing under it. */
   useEffect(() => {
     if (revision === 0) return
-    let cancelled = false
-    pendingDatabases.current.clear()
-    void Effect.runPromise(configStore.listProjects())
-      .then(async projects => {
-        if (cancelled) return
+    const fiber = Effect.runFork(
+      Effect.gen(function* () {
+        /* Drop the sharing handles so post-mutation loads start fresh — but
+           complete orphaned deferreds first, or a fiber awaiting one hangs.
+           In-flight loaders keep running to completion, as before. */
+        yield* Effect.forEach([...inFlight.current.values()], deferred => Deferred.succeed(deferred, undefined), {
+          discard: true,
+        })
+        yield* Effect.sync(() => inFlight.current.clear())
+        const projects = yield* configStore.listProjects().pipe(Effect.orElseSucceed(() => []))
         dataRef.current = { ...dataRef.current, projects }
         const targets = reveal ? [reveal] : []
-        await Promise.all(targets.map(projectId => loadDatabases(projectId as ProjectId)))
-        if (cancelled) return
+        yield* Effect.all(
+          targets.map(projectId => ensureDatabases(projectId as ProjectId)),
+          { concurrency: "unbounded" }
+        )
         if (targets.length > 0) {
           /* Update the ref synchronously: `recompute` below reads it, and
              `setExpanded` alone would not be visible until the next render. */
           const next = new Set(expandedRef.current)
           for (const projectId of targets) next.add(projectId)
           expandedRef.current = next
-          setExpanded(next)
+          yield* Effect.sync(() => setExpanded(next))
         }
-        recompute()
+        yield* Effect.sync(recompute)
       })
-      .catch(() => undefined)
+    )
     return () => {
-      cancelled = true
+      Effect.runFork(Fiber.interrupt(fiber))
     }
   }, [revision]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const loadDatabases = (projectId: ProjectId): Promise<void> => {
-    const existing = pendingDatabases.current.get(projectId)
-    if (existing) return existing
-    const promise = Effect.runPromise(configStore.listDatabases(projectId))
-      .then(async rows => {
-        const databases = new Map(dataRef.current.databases)
-        databases.set(projectId, rows)
-        /* Databases are leaves now — their (single) connection rides along, so
-           the row can show status and connect in one step. Load the primary
-           connection's params with the database, not on a later expand. */
-        const connections = new Map(dataRef.current.connections)
-        for (const database of rows) {
-          if (connections.has(database.id)) continue
-          const rowsConn = await Effect.runPromise(configStore.listConnections(database.id)).catch(() => [])
-          connections.set(database.id, rowsConn)
-        }
-        dataRef.current = { ...dataRef.current, databases, connections }
-        recompute()
-      })
-      .catch(() => {
-        /* failed load leaves the node collapsed silently */
-      })
-    pendingDatabases.current.set(projectId, promise)
-    return promise
-  }
+  /* One project's databases plus every primary connection, as a single
+     Effect. Failure folds to "leave the node collapsed" — the tree degrades,
+     it never rejects. */
+  const loadDatabasesEffect = (projectId: ProjectId): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const rows = yield* configStore.listDatabases(projectId).pipe(Effect.orElseSucceed(() => []))
+      const databases = new Map(dataRef.current.databases)
+      databases.set(projectId, rows)
+      /* Databases are leaves now — their (single) connection rides along, so
+         the row can show status and connect in one step. Load the primary
+         connection's params with the database, not on a later expand. */
+      const connections = new Map(dataRef.current.connections)
+      const missing = rows.filter(database => !connections.has(database.id))
+      const loaded = yield* Effect.all(
+        missing.map(database =>
+          Effect.map(
+            Effect.orElseSucceed(configStore.listConnections(database.id), () => []),
+            conns => ({ id: database.id, conns }) as const
+          )
+        ),
+        { concurrency: "unbounded" }
+      )
+      for (const { id, conns } of loaded) connections.set(id, conns)
+      dataRef.current = { ...dataRef.current, databases, connections }
+      yield* Effect.sync(recompute)
+    })
+
+  /* One logical load per project, shared by every caller. The first caller
+     runs the load inline; concurrent callers find its deferred and await the
+     same execution. Completion (or interruption) settles the deferred and
+     evicts it, so a later call starts fresh — no promise ever changes hands. */
+  const ensureDatabases = (projectId: ProjectId): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const running = inFlight.current.get(projectId)
+      if (running) return yield* Deferred.await(running)
+      const done = yield* Deferred.make<void>()
+      inFlight.current.set(projectId, done)
+      yield* loadDatabasesEffect(projectId).pipe(
+        Effect.ensuring(
+          Effect.zipRight(
+            Deferred.succeed(done, undefined),
+            Effect.sync(() => {
+              if (inFlight.current.get(projectId) === done) inFlight.current.delete(projectId)
+            })
+          )
+        )
+      )
+      return yield* Deferred.await(done)
+    })
 
   const loadConnections = (databaseId: DatabaseId): void => {
-    void Effect.runPromise(configStore.listConnections(databaseId))
-      .then(rows => {
+    Effect.runFork(
+      Effect.gen(function* () {
+        const rows = yield* configStore.listConnections(databaseId).pipe(Effect.orElseSucceed(() => []))
         const next = new Map(dataRef.current.connections)
         next.set(databaseId, rows)
         dataRef.current = { ...dataRef.current, connections: next }
-        recompute()
+        yield* Effect.sync(recompute)
       })
-      .catch(() => {
-        /* failed load leaves the node collapsed silently */
-      })
+    )
   }
 
   const toggleExpanded = (index: number): void => {
@@ -289,7 +318,7 @@ export const useSidebar = (
 
     const willExpand = !expandedRef.current.has(node.refId)
     if (willExpand) {
-      if (node.kind === "project") void loadDatabases(node.refId as ProjectId)
+      if (node.kind === "project") Effect.runFork(ensureDatabases(node.refId as ProjectId))
       else if (node.kind === "database") loadConnections(node.refId as DatabaseId)
     }
     const next = new Set(expandedRef.current)
@@ -301,16 +330,15 @@ export const useSidebar = (
 
   const clamp = (next: number): number => Math.max(0, Math.min(itemsRef.current.length - 1, next))
 
-  const expandProject = (projectId: ProjectId): Promise<void> => {
-    const node = itemsRef.current.find(node => node.kind === "project" && node.refId === projectId)
-
-    if (!node || expandedRef.current.has(projectId)) {
-      return Promise.resolve()
-    }
-
-    toggleExpanded(itemsRef.current.indexOf(node))
-    return loadDatabases(projectId)
-  }
+  const expandProject = (projectId: ProjectId): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const node = itemsRef.current.find(node => node.kind === "project" && node.refId === projectId)
+      if (!node || expandedRef.current.has(projectId)) return
+      toggleExpanded(itemsRef.current.indexOf(node))
+      /* Await the same shared load a chained keypress may have started —
+         no promise involved, just the deferred both sides see. */
+      yield* ensureDatabases(projectId)
+    })
 
   return {
     items,

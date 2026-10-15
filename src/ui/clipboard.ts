@@ -1,22 +1,36 @@
+/**
+ * System clipboard through small composed Effects. Reads fail with
+ * `ClipboardError` (callers fold that into a toast inside their own program);
+ * writes never fail — copying is best-effort convenience, so the outcome is a
+ * status value, exactly as before.
+ */
 import { createHostClipboard } from "@opentui/core"
+import { Data, Effect, Option } from "effect"
+
+export class ClipboardError extends Data.TaggedError("ClipboardError")<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
 
 /** Read plain text from the local system clipboard. Terminal paste events are
  * handled separately by OpenTUI; OSC 52 cannot provide portable clipboard reads. */
-export async function readSystemClipboard(): Promise<string | null> {
-  const clipboard = createHostClipboard({ maxReadBytes: 256 * 1024, timeoutMs: 1000 })
-  try {
-    const result = await clipboard.read({ preferredTypes: ["text/plain"] })
-    if (result.status !== "read") return null
-    const text = new TextDecoder().decode(result.representation.bytes)
-    const singleLine = text
-      .replace(/\0/g, "")
-      .replace(/[\r\n]+/g, "")
-      .trim()
-    return singleLine.length > 0 ? singleLine : null
-  } finally {
-    await clipboard.dispose()
-  }
-}
+export const readSystemClipboard: Effect.Effect<Option.Option<string>, ClipboardError> = Effect.gen(function* () {
+  const clipboard = yield* Effect.try({
+    try: () => createHostClipboard({ maxReadBytes: 256 * 1024, timeoutMs: 1000 }),
+    catch: cause => new ClipboardError({ message: "could not open the clipboard", cause }),
+  })
+  const text = yield* Effect.tryPromise({
+    try: () => clipboard.read({ preferredTypes: ["text/plain"] }).finally(() => clipboard.dispose()),
+    catch: cause => new ClipboardError({ message: "could not read the clipboard", cause }),
+  })
+  if (text.status !== "read") return Option.none()
+  const singleLine = new TextDecoder()
+    .decode(text.representation.bytes)
+    .replace(/\0/g, "")
+    .replace(/[\r\n]+/g, "")
+    .trim()
+  return singleLine.length > 0 ? Option.some(singleLine) : Option.none()
+})
 
 /** The renderer surface needed to mirror a copy into the terminal's own
  * clipboard (OSC 52), the only path that reaches a remote/SSH session. */
@@ -35,40 +49,38 @@ export interface ClipboardWriteResult {
   readonly ok: boolean
 }
 
+const mirrorToTerminal = (terminal: ClipboardTerminalSink | undefined, text: string): boolean => {
+  if (!terminal) return false
+  try {
+    return terminal.copyToClipboardOSC52(text)
+  } catch {
+    /* OSC 52 is best-effort: an unsupported terminal throws rather than returning false. */
+    return false
+  }
+}
+
 /**
  * Put text on the clipboard, newline-rich content included. Both channels are
  * tried: the host clipboard for a local terminal, and OSC 52 so a copy still
- * lands when dient runs over SSH and the host clipboard is not ours. A failure
- * is reported rather than thrown — copying is a convenience, not an operation
- * the caller has to unwind.
+ * lands when dient runs over SSH and the host clipboard is not ours.
  */
-export async function writeSystemClipboard(
+export const writeSystemClipboard = (
   text: string,
   terminal?: ClipboardTerminalSink
-): Promise<ClipboardWriteResult> {
-  let terminalAccepted = false
-  try {
-    terminalAccepted = terminal?.copyToClipboardOSC52(text) ?? false
-  } catch {
-    /* OSC 52 is best-effort: an unsupported terminal throws rather than returning false. */
-  }
-
-  try {
-    const clipboard = hostClipboardForWrite()
-    const result = await clipboard.writeText(text)
-    if (result.status === "written") {
-      return { host: "written", terminal: terminalAccepted, ok: true }
-    }
-    /* Only the host had not taken it; OSC 52 alone is still a real copy. */
-    if (result.status === "unsupported") {
-      return { host: "unsupported", terminal: terminalAccepted, ok: terminalAccepted }
-    }
-    return { host: "failed", terminal: terminalAccepted, ok: terminalAccepted }
-  } catch {
-    /* Includes a host clipboard the platform cannot create at all. */
-    return { host: "failed", terminal: terminalAccepted, ok: terminalAccepted }
-  }
-}
+): Effect.Effect<ClipboardWriteResult> =>
+  Effect.gen(function* () {
+    const terminalAccepted = mirrorToTerminal(terminal, text)
+    const status = yield* Effect.tryPromise(() => hostClipboardForWrite().writeText(text)).pipe(
+      Effect.map(result => result.status),
+      Effect.orElseSucceed(() => "failed" as const)
+    )
+    /* The host reports several non-write outcomes (unsupported, cancelled,
+       timed-out); all of them mean "not on the host clipboard". */
+    const host: ClipboardWriteStatus =
+      status === "written" ? "written" : status === "unsupported" ? "unsupported" : "failed"
+    if (host === "written") return { host, terminal: terminalAccepted, ok: true }
+    return { host, terminal: terminalAccepted, ok: terminalAccepted }
+  })
 
 /**
  * A host clipboard service kept alive for the life of the process.
@@ -77,7 +89,8 @@ export async function writeSystemClipboard(
  * *owns the selection and serves it on request*. Disposing the service drops
  * that ownership — the copy reports success and every paste afterwards comes
  * back empty. So the writer is never disposed; process exit releases it, and
- * the OSC 52 write is what makes a copy survive dient quitting.
+ * the OSC 52 write is what makes a copy survive dient quitting. A scoped
+ * resource cannot express "lives as long as the process", hence the singleton.
  */
 let writeService: ReturnType<typeof createHostClipboard> | null = null
 

@@ -4,6 +4,10 @@
  * plus the currently opened connection's tables — as a flat list the overlay
  * fuzzy-filters. Selection reuses the explorer's own navigation so a hit lands
  * exactly where pressing Enter on the sidebar row would.
+ *
+ * One composed Effect: per-project and per-database loads fan out with
+ * `Effect.all`, and a dead store resolves as an empty universe rather than a
+ * rejection — the finder with no entries is honest, a crashed finder is not.
  */
 import { Effect } from "effect"
 import type { ConfigStoreService } from "@/config"
@@ -24,43 +28,62 @@ export interface FinderEntry {
 
 const ENGINE_NAME: Record<string, string> = { postgres: "postgres", mysql: "mysql", sqlite: "sqlite" }
 
-export const buildFinderIndex = async (
+/* One project's databases, each paired with its connections, loaded together.
+   Failure degrades to no databases rather than no finder. */
+const databasesOf = (configStore: ConfigStoreService, projectId: ProjectId) =>
+  Effect.orElseSucceed(configStore.listDatabases(projectId), () => []).pipe(
+    Effect.flatMap(databases =>
+      Effect.all(
+        databases.map(database =>
+          Effect.map(
+            Effect.orElseSucceed(configStore.listConnections(database.id), () => []),
+            connections => ({ database, primary: connections[0] })
+          )
+        ),
+        { concurrency: "unbounded" }
+      )
+    )
+  )
+
+export const buildFinderIndex = (
   configStore: ConfigStoreService,
   activeDatabase: Database | null,
   tables: ReadonlyArray<string>
-): Promise<ReadonlyArray<FinderEntry>> => {
-  const projects = await Effect.runPromise(configStore.listProjects()).catch(() => [])
-  const entries: FinderEntry[] = []
-  for (const project of projects) {
-    entries.push({
-      id: `project:${project.id}`,
-      kind: "project",
-      label: project.name,
-      projectId: project.id,
-    })
-    const databases = await Effect.runPromise(configStore.listDatabases(project.id)).catch(() => [])
-    for (const database of databases) {
-      const connections = await Effect.runPromise(configStore.listConnections(database.id)).catch(() => [])
-      const primary = connections[0]
+): Effect.Effect<ReadonlyArray<FinderEntry>> =>
+  Effect.gen(function* () {
+    const projects = yield* Effect.orElseSucceed(configStore.listProjects(), () => [])
+    const entries: FinderEntry[] = []
+    const perProject = yield* Effect.all(
+      projects.map(project => Effect.map(databasesOf(configStore, project.id), databases => ({ project, databases }))),
+      { concurrency: "unbounded" }
+    )
+    for (const { project, databases } of perProject) {
       entries.push({
-        id: `database:${database.id}`,
-        kind: "db",
-        label: database.name,
-        sub: ENGINE_NAME[database.engine] ?? database.engine,
+        id: `project:${project.id}`,
+        kind: "project",
+        label: project.name,
         projectId: project.id,
-        databaseId: database.id,
-        connectionId: primary?.id,
+      })
+      for (const { database, primary } of databases) {
+        entries.push({
+          id: `database:${database.id}`,
+          kind: "db",
+          label: database.name,
+          sub: ENGINE_NAME[database.engine] ?? database.engine,
+          projectId: project.id,
+          databaseId: database.id,
+          connectionId: primary?.id,
+        })
+      }
+    }
+    for (const table of tables) {
+      entries.push({
+        id: `table:${activeDatabase?.id ?? ""}:${table}`,
+        kind: "table",
+        label: table,
+        projectId: activeDatabase?.projectId,
+        databaseId: activeDatabase?.id,
       })
     }
-  }
-  for (const table of tables) {
-    entries.push({
-      id: `table:${activeDatabase?.id ?? ""}:${table}`,
-      kind: "table",
-      label: table,
-      projectId: activeDatabase?.projectId,
-      databaseId: activeDatabase?.id,
-    })
-  }
-  return entries
-}
+    return entries
+  })

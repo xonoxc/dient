@@ -6,7 +6,7 @@
  * mid-flow and no second Effect is ever run from a `.then`.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react"
-import { Effect, Option } from "effect"
+import { Effect, Fiber, Option } from "effect"
 import { useDialog, useServices, useToasts } from "@/app-context"
 import type { ReleaseInfo } from "@/update/check"
 import { UpdateError } from "@/update/errors"
@@ -37,7 +37,11 @@ export function UpdateProvider({ children }: { children?: ReactNode }) {
   /* Background check, once: a silent failure resolves as "current" because a
      startup probe must never interrupt a session. */
   useEffect(() => {
+    let isMounted = true
+
     const program = Effect.gen(function* () {
+      if (!isMounted) return
+
       setPhase("checking")
       const update = yield* updateChecker.check.pipe(Effect.orElseSucceed(() => Option.none()))
       if (Option.isSome(update)) {
@@ -49,7 +53,12 @@ export function UpdateProvider({ children }: { children?: ReactNode }) {
         setPhase("current")
       }
     })
-    Effect.runFork(program)
+
+    const forkedFiber = Effect.runFork(program)
+
+    return () => {
+      Effect.runFork(Fiber.interrupt(forkedFiber))
+    }
   }, [updateChecker, toasts])
 
   const upgradeNow = useCallback(() => {

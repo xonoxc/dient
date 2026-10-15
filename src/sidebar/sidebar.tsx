@@ -33,12 +33,7 @@ export function Sidebar(props: SidebarProps) {
 
   if (props.items.length === 0) {
     return (
-      <box
-        width={SIDEBAR_WIDTH}
-        height="100%"
-        flexDirection="row"
-        overflow="hidden"
-      >
+      <box width={SIDEBAR_WIDTH} height="100%" flexDirection="row" overflow="hidden">
         <box flexGrow={1} flexDirection="column" paddingX={1}>
           <box height={1}>
             <text fg={c.textMuted}>PROJECTS</text>
@@ -54,12 +49,7 @@ export function Sidebar(props: SidebarProps) {
   }
 
   return (
-    <box
-      width={SIDEBAR_WIDTH}
-      height="100%"
-      flexDirection="row"
-      overflow="hidden"
-    >
+    <box width={SIDEBAR_WIDTH} height="100%" flexDirection="row" overflow="hidden">
       <box flexGrow={1} flexDirection="column" overflow="hidden">
         <box height={1} paddingX={1}>
           <text fg={c.textMuted}>PROJECTS</text>

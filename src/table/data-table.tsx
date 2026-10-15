@@ -23,12 +23,7 @@ import { useTheme } from "@/theme-context"
 import { HorizontalScrollIndicator } from "@/table/horizontal-scroll-indicator"
 import type { ScrollBoxRenderable } from "@opentui/core"
 import type { SelectionRange } from "@/vim/types"
-import {
-  formatCellDisplay,
-  MAX_COL_WIDTH,
-  MIN_COL_WIDTH,
-  type UseTableResult,
-} from "@/table/use-table"
+import { formatCellDisplay, MAX_COL_WIDTH, MIN_COL_WIDTH, type UseTableResult } from "@/table/use-table"
 
 export interface DataTableProps {
   readonly table: UseTableResult
@@ -227,12 +222,7 @@ function HeaderRow({
         const marker = sort?.column === column.name ? (sort.dir === "asc" ? " ▲" : " ▼") : ""
         const last = index === columns.length - 1
         return (
-          <box
-            key={column.name}
-            width={widthOf(column.name) - (last ? 1 : 0)}
-            flexDirection="row"
-            overflow="hidden"
-          >
+          <box key={column.name} width={widthOf(column.name) - (last ? 1 : 0)} flexDirection="row" overflow="hidden">
             <text
               fg={activeColumn === column.name ? c.textBright : c.accent}
               width={Math.max(1, widthOf(column.name) - 2)}

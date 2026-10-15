@@ -111,9 +111,7 @@ describe("finder", () => {
     const other = await Effect.runPromise(
       services.store.createDatabase({ projectId: seeded.project.id, name: "other", engine: "sqlite" })
     )
-    await Effect.runPromise(
-      services.store.createConnection({ databaseId: other.id, filename: twoTableDataFile() })
-    )
+    await Effect.runPromise(services.store.createConnection({ databaseId: other.id, filename: twoTableDataFile() }))
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       /* the project starts collapsed: no database rows exist yet */

@@ -23,9 +23,9 @@ import { useConfigRevision, useDialog, useServices, useToasts } from "@/app-cont
 import { completePath, pathCandidates } from "@/fs/path-complete"
 import { parseConnectionString, type ConnectionString } from "@/connection/parse"
 import type { CreateConnectionInput } from "@/config"
+import { ConfigError } from "@/config"
 import type { Connection, Database, DatabaseId, Engine, Project, ProjectId } from "@/domain"
 import { describeError } from "@/errors/describe"
-import { runService } from "@/effect/run"
 
 export type SettingsKind = "project" | "database"
 
@@ -220,6 +220,15 @@ export const useSettings = (): UseSettingsResult => {
     return undefined
   }
 
+  /* One add-flow failure handler, shared by every submit path below: log it
+     for the error file, say it once in a toast. A small Effect composed into
+     each program's `catchAll`, not five copies of a `.catch` callback. */
+  const reportAddFailure = (op: string) => (cause: unknown) =>
+    Effect.sync(() => {
+      errorLog.append(op, cause)
+      toasts.push("error", `failed to add: ${describeError(cause)}`)
+    })
+
   const refresh = (): void => {
     const restore = (): void => {
       formRef.current = null
@@ -228,28 +237,55 @@ export const useSettings = (): UseSettingsResult => {
       setDraftState("")
     }
 
-    runService(configStore.listProjects())
-      .then(async rows => {
-        setProjects(rows)
-        for (const project of rows) {
-          const dbRows = (await runService(configStore.listDatabases(project.id)).catch(() => null)) ?? []
-          setDatabases(current => {
-            const next = new Map(current)
-            next.set(project.id, dbRows)
-            return next
-          })
-          for (const database of dbRows) {
-            const connRows = (await runService(configStore.listConnections(database.id)).catch(() => null)) ?? []
-            setConnections(current => {
-              const next = new Map(current)
-              next.set(database.id, connRows)
-              return next
+    /* One program: projects, then each project's databases, then each
+       database's connections — committed level by level so the tree fills in
+       as loads land, exactly like the old chained version. Every level folds
+       to empty on failure; `restore` rides along in `ensuring` so it runs on
+       every exit path, the way `.finally` did. */
+    Effect.runFork(
+      Effect.gen(function* () {
+        const rows = yield* configStore.listProjects().pipe(Effect.orElseSucceed(() => []))
+        yield* Effect.sync(() => setProjects(rows))
+        yield* Effect.all(
+          rows.map(project =>
+            Effect.gen(function* () {
+              const dbRows = yield* configStore.listDatabases(project.id).pipe(Effect.orElseSucceed(() => []))
+              yield* Effect.sync(() =>
+                setDatabases(current => {
+                  const next = new Map(current)
+                  next.set(project.id, dbRows)
+                  return next
+                })
+              )
+              const conns = yield* Effect.all(
+                dbRows.map(database =>
+                  Effect.map(
+                    Effect.orElseSucceed(configStore.listConnections(database.id), () => []),
+                    rows => ({ id: database.id, rows }) as const
+                  )
+                ),
+                { concurrency: "unbounded" }
+              )
+              yield* Effect.sync(() =>
+                setConnections(current => {
+                  const next = new Map(current)
+                  for (const { id, rows } of conns) next.set(id, rows)
+                  return next
+                })
+              )
             })
-          }
-        }
-      })
-      .catch(() => setProjects([]))
-      .finally(restore)
+          ),
+          { concurrency: "unbounded" }
+        )
+      }).pipe(
+        Effect.ensuring(Effect.sync(restore)),
+        Effect.catchAll(() =>
+          Effect.sync(() => {
+            setProjects([])
+          })
+        )
+      )
+    )
   }
 
   useEffect(refresh, [configStore])
@@ -394,24 +430,23 @@ export const useSettings = (): UseSettingsResult => {
     setDraftState(text)
   }
 
+  /* Every create path funnels through here. Returns the Effect (rather than
+     running it) so each submitter composes it into its own program — one
+     fork per submit, with `revealDatabase` as the final stage. */
   const createDatabaseAndConnection = (
     projectId: ProjectId,
     name: string,
     engine: Engine,
     params: Partial<Omit<CreateConnectionInput, "databaseId">>
-  ): Promise<void> =>
-    runService(
-      Effect.gen(function* () {
-        const database = yield* configStore.createDatabase({ projectId, name, engine })
-        yield* configStore.createConnection({ databaseId: database.id, ...params })
-      })
-    ).then(() => {
-      /* Every create path funnels through here, so reveal once, here. */
-      revealDatabase(projectId, name)
+  ): Effect.Effect<void, ConfigError> =>
+    Effect.gen(function* () {
+      const database = yield* configStore.createDatabase({ projectId, name, engine })
+      yield* configStore.createConnection({ databaseId: database.id, ...params })
+      yield* Effect.sync(() => revealDatabase(projectId, name))
     })
 
-  const nameTaken = (projectId: ProjectId, name: string): Promise<boolean> =>
-    runService(configStore.listDatabases(projectId)).then(rows => rows.some(row => row.name === name))
+  const nameTaken = (projectId: ProjectId, name: string): Effect.Effect<boolean, ConfigError> =>
+    Effect.map(configStore.listDatabases(projectId), rows => rows.some(row => row.name === name))
 
   const submitConnectionForm = (form: Extract<SettingsForm, { kind: "connect" }>): void => {
     const finish = (): void => {
@@ -426,18 +461,17 @@ export const useSettings = (): UseSettingsResult => {
         return
       }
       if (parsed.engine === "sqlite") {
-        void (async () => {
-          if (await nameTaken(form.projectId, parsed.name)) {
-            toasts.push("error", `a database named "${parsed.name}" already exists`)
-            return
-          }
-          await createDatabaseAndConnection(form.projectId, parsed.name, "sqlite", { filename: parsed.filename })
-          toasts.push("success", `added ${parsed.name} (${parsed.filename})`)
-          finish()
-        })().catch(cause => {
-          errorLog.append("settings.addConnection", cause)
-          toasts.push("error", `failed to add: ${describeError(cause)}`)
-        })
+        Effect.runFork(
+          Effect.gen(function* () {
+            if (yield* nameTaken(form.projectId, parsed.name)) {
+              toasts.push("error", `a database named "${parsed.name}" already exists`)
+              return
+            }
+            yield* createDatabaseAndConnection(form.projectId, parsed.name, "sqlite", { filename: parsed.filename })
+            toasts.push("success", `added ${parsed.name} (${parsed.filename})`)
+            finish()
+          }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))
+        )
         return
       }
       if (!parsed.name) {
@@ -447,24 +481,23 @@ export const useSettings = (): UseSettingsResult => {
         return
       }
       const urlName = parsed.name
-      void (async () => {
-        if (await nameTaken(form.projectId, urlName)) {
-          toasts.push("error", `a database named "${urlName}" already exists`)
-          return
-        }
-        await createDatabaseAndConnection(form.projectId, urlName, parsed.engine, {
-          host: parsed.host,
-          port: parsed.port,
-          user: parsed.user,
-          password: parsed.password,
-          defaultDatabase: parsed.defaultDatabase ?? urlName,
-        })
-        toasts.push("success", `added ${urlName} (${parsed.engine})`)
-        finish()
-      })().catch(cause => {
-        errorLog.append("settings.addConnection", cause)
-        toasts.push("error", `failed to add: ${describeError(cause)}`)
-      })
+      Effect.runFork(
+        Effect.gen(function* () {
+          if (yield* nameTaken(form.projectId, urlName)) {
+            toasts.push("error", `a database named "${urlName}" already exists`)
+            return
+          }
+          yield* createDatabaseAndConnection(form.projectId, urlName, parsed.engine, {
+            host: parsed.host,
+            port: parsed.port,
+            user: parsed.user,
+            password: parsed.password,
+            defaultDatabase: parsed.defaultDatabase ?? urlName,
+          })
+          toasts.push("success", `added ${urlName} (${parsed.engine})`)
+          finish()
+        }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))
+      )
       return
     }
 
@@ -481,15 +514,17 @@ export const useSettings = (): UseSettingsResult => {
         toasts.push("error", "a sqlite connection requires a filename")
         return
       }
-      void (async () => {
-        if (await nameTaken(form.projectId, name)) return toastTaken(name)
-        await createDatabaseAndConnection(form.projectId, name, "sqlite", { filename })
-        toasts.push("success", `added ${name} (${filename})`)
-        finish()
-      })().catch(cause => {
-        errorLog.append("settings.addConnection", cause)
-        toasts.push("error", `failed to add: ${describeError(cause)}`)
-      })
+      Effect.runFork(
+        Effect.gen(function* () {
+          if (yield* nameTaken(form.projectId, name)) {
+            toastTaken(name)
+            return
+          }
+          yield* createDatabaseAndConnection(form.projectId, name, "sqlite", { filename })
+          toasts.push("success", `added ${name} (${filename})`)
+          finish()
+        }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))
+      )
       return
     }
     const host = values.host?.trim() ?? ""
@@ -502,22 +537,24 @@ export const useSettings = (): UseSettingsResult => {
       toasts.push("error", "port must be a number")
       return
     }
-    void (async () => {
-      if (await nameTaken(form.projectId, name)) return toastTaken(name)
-      const input = {
-        host,
-        ...(port ? { port: Number(port) } : {}),
-        ...(values.user?.trim() ? { user: values.user.trim() } : {}),
-        ...(values.password?.trim() ? { password: values.password.trim() } : {}),
-        ...(values.defaultDatabase?.trim() ? { defaultDatabase: values.defaultDatabase.trim() } : {}),
-      }
-      await createDatabaseAndConnection(form.projectId, name, form.engine, input)
-      toasts.push("success", `added ${name} (${form.engine})`)
-      finish()
-    })().catch(cause => {
-      errorLog.append("settings.addConnection", cause)
-      toasts.push("error", `failed to add: ${describeError(cause)}`)
-    })
+    Effect.runFork(
+      Effect.gen(function* () {
+        if (yield* nameTaken(form.projectId, name)) {
+          toastTaken(name)
+          return
+        }
+        const input = {
+          host,
+          ...(port ? { port: Number(port) } : {}),
+          ...(values.user?.trim() ? { user: values.user.trim() } : {}),
+          ...(values.password?.trim() ? { password: values.password.trim() } : {}),
+          ...(values.defaultDatabase?.trim() ? { defaultDatabase: values.defaultDatabase.trim() } : {}),
+        }
+        yield* createDatabaseAndConnection(form.projectId, name, form.engine, input)
+        toasts.push("success", `added ${name} (${form.engine})`)
+        finish()
+      }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))
+    )
   }
 
   const toastTaken = (name: string) => toasts.push("error", `a database named "${name}" already exists`)
@@ -529,22 +566,24 @@ export const useSettings = (): UseSettingsResult => {
       return
     }
     const parsed = form.pending
-    void (async () => {
-      if (await nameTaken(form.projectId, name)) return toastTaken(name)
-      await createDatabaseAndConnection(form.projectId, name, parsed.engine, {
-        host: parsed.host,
-        port: parsed.port,
-        user: parsed.user,
-        password: parsed.password,
-        defaultDatabase: parsed.defaultDatabase ?? name,
-      })
-      toasts.push("success", `added ${name} (${parsed.engine})`)
-      openForm(null)
-      refresh()
-    })().catch(cause => {
-      errorLog.append("settings.addConnection", cause)
-      toasts.push("error", `failed to add: ${describeError(cause)}`)
-    })
+    Effect.runFork(
+      Effect.gen(function* () {
+        if (yield* nameTaken(form.projectId, name)) {
+          toastTaken(name)
+          return
+        }
+        yield* createDatabaseAndConnection(form.projectId, name, parsed.engine, {
+          host: parsed.host,
+          port: parsed.port,
+          user: parsed.user,
+          password: parsed.password,
+          defaultDatabase: parsed.defaultDatabase ?? name,
+        })
+        toasts.push("success", `added ${name} (${parsed.engine})`)
+        openForm(null)
+        refresh()
+      }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))
+    )
   }
 
   const testConnection = (): void => {
@@ -567,19 +606,24 @@ export const useSettings = (): UseSettingsResult => {
     const label = database.name
     testingRef.current = label
     setTesting(label)
-    void runService(connectionManager.pingConnection(database, connection))
-      .then(ok => {
+    Effect.runFork(
+      Effect.gen(function* () {
+        const ok = yield* connectionManager.pingConnection(database, connection)
         testingRef.current = null
         setTesting(null)
         if (ok) toasts.push("success", `${label} ok (${database.engine})`)
         else toasts.push("error", `${label} unreachable`)
-      })
-      .catch(cause => {
-        testingRef.current = null
-        setTesting(null)
-        errorLog.append("settings.testConnection", cause)
-        toasts.push("error", `${label} unreachable: ${describeError(cause)}`)
-      })
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            testingRef.current = null
+            setTesting(null)
+            errorLog.append("settings.testConnection", cause)
+            toasts.push("error", `${label} unreachable: ${describeError(cause)}`)
+          })
+        )
+      )
+    )
   }
 
   return {
@@ -697,36 +741,48 @@ export const useSettings = (): UseSettingsResult => {
       const item = items[Math.min(cursor, items.length - 1)]
       if (!item) return
       if (item.kind === "database") {
-        void dialog
-          .confirm({
-            title: `Delete database "${item.label}"?`,
-            body: "This removes the database and its connection settings.",
-            okLabel: "delete",
-            danger: true,
-          })
-          .then(ok => {
-            if (!ok) return
-            void runService(configStore.deleteDatabase(item.refId as DatabaseId))
-              .then(() => {
-                toasts.push("success", "database deleted")
-                refresh()
+        /* The confirm dialog is a promise boundary by nature (React state
+           round-trip); it is lifted once and the delete composes after it —
+           one program, one fork, no `.then` chain. */
+        Effect.runFork(
+          Effect.gen(function* () {
+            const ok = yield* Effect.promise(() =>
+              dialog.confirm({
+                title: `Delete database "${item.label}"?`,
+                body: "This removes the database and its connection settings.",
+                okLabel: "delete",
+                danger: true,
               })
-              .catch(cause => {
+            )
+            if (!ok) return
+            yield* configStore.deleteDatabase(item.refId as DatabaseId)
+            toasts.push("success", "database deleted")
+            refresh()
+          }).pipe(
+            Effect.catchAll(cause =>
+              Effect.sync(() => {
                 errorLog.append("settings.deleteDatabase", cause)
                 toasts.push("error", `failed to delete: ${describeError(cause)}`)
               })
-          })
+            )
+          )
+        )
         return
       }
-      void runService(configStore.deleteProject(item.refId as ProjectId))
-        .then(() => {
+      Effect.runFork(
+        Effect.gen(function* () {
+          yield* configStore.deleteProject(item.refId as ProjectId)
           toasts.push("success", "project deleted")
           refresh()
-        })
-        .catch(cause => {
-          errorLog.append("settings.deleteProject", cause)
-          toasts.push("error", `failed to delete: ${describeError(cause)}`)
-        })
+        }).pipe(
+          Effect.catchAll(cause =>
+            Effect.sync(() => {
+              errorLog.append("settings.deleteProject", cause)
+              toasts.push("error", `failed to delete: ${describeError(cause)}`)
+            })
+          )
+        )
+      )
     },
     rename: () => {
       const item = items[Math.min(cursor, items.length - 1)]
@@ -754,16 +810,21 @@ export const useSettings = (): UseSettingsResult => {
           toasts.push("error", "a name is required")
           return
         }
-        void runService(configStore.updateDatabase(current.databaseId, { name }))
-          .then(() => {
+        Effect.runFork(
+          Effect.gen(function* () {
+            yield* configStore.updateDatabase(current.databaseId, { name })
             toasts.push("success", `renamed to ${name}`)
             openForm(null)
             refresh()
-          })
-          .catch(cause => {
-            errorLog.append("settings.rename", cause)
-            toasts.push("error", `rename failed: ${describeError(cause)}`)
-          })
+          }).pipe(
+            Effect.catchAll(cause =>
+              Effect.sync(() => {
+                errorLog.append("settings.rename", cause)
+                toasts.push("error", `rename failed: ${describeError(cause)}`)
+              })
+            )
+          )
+        )
         return
       }
       const name = draftRef.current.trim()
@@ -771,17 +832,22 @@ export const useSettings = (): UseSettingsResult => {
         toasts.push("error", "a name is required")
         return
       }
-      void runService(configStore.createProject({ name }))
-        .then(() => {
+      Effect.runFork(
+        Effect.gen(function* () {
+          yield* configStore.createProject({ name })
           toasts.push("success", "project added")
           openForm(null)
           refresh()
-        })
-        .catch(cause => {
-          toasts.push("error", `failed to add project: ${describeError(cause)}`)
-          openForm(null)
-          refresh()
-        })
+        }).pipe(
+          Effect.catchAll(cause =>
+            Effect.sync(() => {
+              toasts.push("error", `failed to add project: ${describeError(cause)}`)
+              openForm(null)
+              refresh()
+            })
+          )
+        )
+      )
     },
     cancelForm: () => openForm(null),
     testing,

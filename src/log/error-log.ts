@@ -1,43 +1,41 @@
 /**
  * Plain file-backed error log. The TUI appends one line per unexpected failure
- * so a crash after exit still leaves a trace for debugging. Reads/writes never
- * block the UI thread: appends are fire-and-forget async appends.
+ * so a crash after exit still leaves a trace for debugging. Appends are small
+ * composed Effects (`read → trim → append`) forked exactly once inside the
+ * service — callers stay synchronous and can never observe a rejection,
+ * because logging must never crash the app.
  */
-import { appendFile } from "node:fs/promises"
+import { appendFile, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { homedir } from "node:os"
+import { Effect } from "effect"
 
 export const defaultLogPath = (): string => join(homedir(), ".dient", "error.log")
 
 const MAX_LOG_LINES = 2000
 
-/* Keep only the tail when the log grows past the cap, so it never balloons. */
-const trimLog = async (path: string): Promise<void> => {
-  const { readFile, writeFile } = await import("node:fs/promises")
-  try {
-    const lines = (await readFile(path, "utf8")).split("\n")
-    if (lines.length <= MAX_LOG_LINES) return
-    await writeFile(path, lines.slice(-MAX_LOG_LINES).join("\n"))
-  } catch {
-    /* trimming is best effort */
-  }
-}
+/* Keep only the tail when the log grows past the cap, so it never balloons.
+   Best effort: trimming failure degrades to an untrimmed log, never an error. */
+const trimLog = (path: string): Effect.Effect<void> =>
+  Effect.tryPromise(() => readFile(path, "utf8")).pipe(
+    Effect.flatMap(contents => {
+      const lines = contents.split("\n")
+      if (lines.length <= MAX_LOG_LINES) return Effect.void
+      return Effect.tryPromise(() => writeFile(path, lines.slice(-MAX_LOG_LINES).join("\n"), "utf8")).pipe(
+        Effect.orElseSucceed(() => undefined)
+      )
+    }),
+    Effect.orElseSucceed(() => undefined)
+  )
 
-export const appendError = async (path: string, source: string, error: unknown): Promise<void> => {
+const formatLine = (source: string, error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error)
   const stack = error instanceof Error && error.stack ? "\n" + error.stack : ""
-  const line = `[${new Date().toISOString()}] ${source} :: ${message}${stack}`
-  try {
-    await appendFile(path, line + "\n", "utf8")
-    void trimLog(path)
-  } catch {
-    /* logging must never crash the app */
-  }
+  return `[${new Date().toISOString()}] ${source} :: ${message}${stack}\n`
 }
 
-export const appendErrorDefault = (source: string, error: unknown): void => {
-  void appendError(defaultLogPath(), source, error)
-}
+const appendLine = (path: string, line: string): Effect.Effect<void> =>
+  Effect.tryPromise(() => appendFile(path, line, "utf8")).pipe(Effect.orElseSucceed(() => undefined))
 
 /** A ready-to-call appender bound to one log file (tests use a temp path). */
 export interface ErrorLog {
@@ -46,6 +44,17 @@ export interface ErrorLog {
 
 export const makeErrorLog = (path: string): ErrorLog => ({
   append: (source, error) => {
-    void appendError(path, source, error)
+    /* The single fork: read, trim, and append compose into one Effect whose
+       every failure is already folded to success — fire and forget. */
+    Effect.runFork(
+      Effect.gen(function* () {
+        yield* appendLine(path, formatLine(source, error))
+        yield* trimLog(path)
+      })
+    )
   },
 })
+
+export const appendErrorDefault = (source: string, error: unknown): void => {
+  makeErrorLog(defaultLogPath()).append(source, error)
+}

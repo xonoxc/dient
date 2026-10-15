@@ -7,8 +7,12 @@
  * which is the only way to see that.
  */
 import { describe, expect, test } from "bun:test"
+import { Effect } from "effect"
 import { createHostClipboard } from "@opentui/core"
 import { writeSystemClipboard } from "@/ui/clipboard"
+
+/** Run one composed Effect; the single promise jump each test is allowed. */
+const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect)
 
 /** Read the clipboard with newlines intact; the app's own reader strips them. */
 const readRaw = async (): Promise<string | null> => {
@@ -24,23 +28,27 @@ const readRaw = async (): Promise<string | null> => {
 describe("writeSystemClipboard", () => {
   test("mirrors the text over OSC 52, which is what reaches a remote session", async () => {
     const seen: string[] = []
-    const result = await writeSystemClipboard("id: 1\n", {
-      copyToClipboardOSC52: text => {
-        seen.push(text)
-        return true
-      },
-    })
+    const result = await run(
+      writeSystemClipboard("id: 1\n", {
+        copyToClipboardOSC52: text => {
+          seen.push(text)
+          return true
+        },
+      })
+    )
     expect(seen).toEqual(["id: 1\n"])
     expect(result.terminal).toBe(true)
     expect(result.ok).toBe(true)
   })
 
   test("a terminal that rejects OSC 52 is reported, not thrown", async () => {
-    const result = await writeSystemClipboard("x", {
-      copyToClipboardOSC52: () => {
-        throw new Error("terminal says no")
-      },
-    })
+    const result = await run(
+      writeSystemClipboard("x", {
+        copyToClipboardOSC52: () => {
+          throw new Error("terminal says no")
+        },
+      })
+    )
     expect(result.terminal).toBe(false)
     expect(result).toHaveProperty("host")
   })
@@ -50,7 +58,7 @@ describe("writeSystemClipboard", () => {
      no selection to read back. */
   test("the copied text survives the write (the writer keeps owning the selection)", async () => {
     const text = `dient-clipboard-${Date.now()}\nsecond line\n`
-    const result = await writeSystemClipboard(text)
+    const result = await run(writeSystemClipboard(text))
     if (!result.ok) return
     expect(await readRaw()).toBe(text)
   })

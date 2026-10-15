@@ -29,7 +29,9 @@ export const connectSqlite = (
        * other constructor throw) arrives as a defect. `catchAllCause` folds
        * every cause — fail or die — into the typed `ConnectionError`.
        */
-      Effect.catchAllCause(cause => Effect.fail(new ConnectionError({ engine: ENGINE, message: describeError(cause), cause })))
+      Effect.catchAllCause(cause =>
+        Effect.fail(new ConnectionError({ engine: ENGINE, message: describeError(cause), cause }))
+      )
     )
     return { id: crypto.randomUUID(), engine: ENGINE, _client: client, _scope: scope }
   })

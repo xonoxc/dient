@@ -42,10 +42,18 @@ export const readStore = (path: string = defaultStorePath()): Effect.Effect<Upda
   )
 
 export const writeStore = (store: UpdateStore, path: string = defaultStorePath()): Effect.Effect<void, UpdateError> =>
+  Effect.gen(function* () {
+    yield* ensureParentDir(path)
+    yield* Effect.tryPromise({
+      try: () => writeFile(path, `${JSON.stringify(store)}\n`, "utf8"),
+      catch: cause => new UpdateError({ message: "could not write update store", cause }),
+    })
+  })
+
+const ensureParentDir = (path: string): Effect.Effect<void, UpdateError> =>
   Effect.tryPromise({
-    try: () =>
-      mkdir(dirname(path), { recursive: true }).then(() => writeFile(path, `${JSON.stringify(store)}\n`, "utf8")),
-    catch: cause => new UpdateError({ message: "could not write update store", cause }),
+    try: () => mkdir(dirname(path), { recursive: true }),
+    catch: cause => new UpdateError({ message: "could not create state directory", cause }),
   })
 
 /** True when the last check is recent enough to skip. Pure: time is an argument. */

@@ -40,11 +40,44 @@ const downloadBytes = (url: string, fetchFn: typeof fetch): Effect.Effect<Uint8A
     if (!response.ok) {
       return yield* Effect.fail(new UpdateError({ message: `download answered ${response.status}` }))
     }
-    return yield* Effect.tryPromise({
-      try: () => response.arrayBuffer().then(buffer => new Uint8Array(buffer)),
+    const buffer = yield* Effect.tryPromise({
+      try: () => response.arrayBuffer(),
       catch: cause => new UpdateError({ message: "download failed", cause }),
     })
+    return new Uint8Array(buffer)
   })
+
+/* One stage of the install, each its own small Effect so the pipeline below
+   reads as stages, not nested callbacks. */
+const stageFile = (staged: string, bytes: Uint8Array): Effect.Effect<void, UpdateError> =>
+  Effect.tryPromise({
+    try: () => writeFile(staged, bytes),
+    catch: cause => new UpdateError({ message: "could not stage the download", cause }),
+  })
+
+const makeExecutable = (staged: string): Effect.Effect<void, UpdateError> =>
+  Effect.tryPromise({
+    try: () => chmod(staged, 0o755),
+    catch: cause => new UpdateError({ message: "could not mark the binary executable", cause }),
+  })
+
+const swapIntoPlace = (staged: string, target: string): Effect.Effect<void, UpdateError> =>
+  Effect.tryPromise({
+    try: () => rename(staged, target),
+    catch: cause => new UpdateError({ message: "install failed", cause }),
+  })
+
+const ensureDir = (dir: string): Effect.Effect<void, UpdateError> =>
+  Effect.tryPromise({
+    try: () => mkdir(dir, { recursive: true }),
+    catch: cause => new UpdateError({ message: "could not create install directory", cause }),
+  })
+
+const isWritable = (dir: string): Effect.Effect<boolean> =>
+  Effect.tryPromise(() => access(dir, constants.W_OK)).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false)
+  )
 
 /**
  * Replace `execPath` with the release's binary for this platform. The new
@@ -66,23 +99,15 @@ export const installRelease = (release: ReleaseInfo, deps: UpgradeDeps): Effect.
       } as const
     }
     const dir = dirname(deps.execPath)
-    const writable = yield* Effect.tryPromise(() => access(dir, constants.W_OK)).pipe(
-      Effect.as(true),
-      Effect.orElseSucceed(() => false)
-    )
-    if (!writable) {
+    if (!(yield* isWritable(dir))) {
       return { _tag: "NeedsManual", reason: "cannot write to the install directory", url: asset.downloadUrl } as const
     }
     const staged = join(dir, `${basename(deps.execPath)}.new`)
     const bytes = yield* downloadBytes(asset.downloadUrl, deps.fetchFn ?? fetch)
-    yield* Effect.tryPromise({
-      try: () =>
-        mkdir(dir, { recursive: true })
-          .then(() => writeFile(staged, bytes))
-          .then(() => chmod(staged, 0o755))
-          .then(() => rename(staged, deps.execPath)),
-      catch: cause => new UpdateError({ message: "install failed", cause }),
-    })
+    yield* ensureDir(dir)
+    yield* stageFile(staged, bytes)
+    yield* makeExecutable(staged)
+    yield* swapIntoPlace(staged, deps.execPath)
     return { _tag: "Installed", version: release.version } as const
   })
 

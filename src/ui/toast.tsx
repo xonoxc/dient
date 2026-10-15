@@ -22,7 +22,9 @@ export function ToastView() {
   return (
     <box height={1} flexDirection="row" alignItems="center" paddingX={1} overflow="hidden">
       <text fg={theme.colors[TOAST_COLOR[toast.kind]]}>● </text>
-      <text fg={theme.colors.text} truncate>{toast.text}</text>
+      <text fg={theme.colors.text} truncate>
+        {toast.text}
+      </text>
     </box>
   )
 }

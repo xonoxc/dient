@@ -16,12 +16,12 @@
  */
 import { ConfigStore, ConfigError } from "@/config"
 import { DatabaseDriver } from "@/drivers/database-driver"
-import type { ActiveConnection, QueryResult } from "@/drivers/types"
 import { ConnectionError, QueryError } from "@/drivers/types"
-import { cleanIdentifier } from "@/query/identifier"
 import { resolveConnectionConfig } from "@/connection/config"
-import type { Connection, ConnectionId, Database } from "@/domain"
 import { Context, Effect, Layer, Ref, Schedule } from "effect"
+
+import type { ActiveConnection, QueryResult } from "@/drivers/types"
+import type { Connection, ConnectionId, Database } from "@/domain"
 
 export type ConnectionStatus = "connected" | "disconnected" | "error"
 
@@ -97,12 +97,7 @@ export namespace ConnectionManager {
              hooks (`Effect.runPromise`) that live outside any scope. */
           const active = yield* Effect.scoped(driver.connect(config))
           yield* Ref.update(slots, s => {
-            s.active.set(id, {
-              id,
-              connection: found.connection,
-              database: found.database,
-              active,
-            })
+            s.active.set(id, { id, connection: found.connection, database: found.database, active })
             s.failed.delete(id)
             return s
           })
@@ -155,6 +150,7 @@ export namespace ConnectionManager {
               return driver.isConnected(entry.active).pipe(Effect.catchAll(() => Effect.succeed(false)))
             })
           ),
+
         statusOf: id =>
           slots.pipe(
             Ref.get,
@@ -168,11 +164,13 @@ export namespace ConnectionManager {
                 .pipe(Effect.map(ok => (ok ? "connected" : "error") as ConnectionStatus))
             })
           ),
+
         query: (id, sql, params) =>
           Effect.gen(function* () {
             const active = yield* connect(id)
             return yield* driver.query(active, sql, params).pipe(Effect.mapError(e => e as QueryError))
           }),
+
         pingConnection: (database, connection) =>
           Effect.gen(function* () {
             const config = yield* resolveConnectionConfig(database, connection)
@@ -191,6 +189,7 @@ export namespace ConnectionManager {
             return outcome
             // this is just an empty line to make the diff cleaner, so the closing parens line up with the opening ones
           }).pipe(Effect.catchAll(() => Effect.succeed(false))),
+
         activeConnections: () =>
           slots.pipe(
             Ref.get,
@@ -200,5 +199,3 @@ export namespace ConnectionManager {
     })
   )
 }
-
-export const quoteIdentifier = (engine: import("@/domain").Engine, name: string) => cleanIdentifier(engine, name)

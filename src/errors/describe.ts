@@ -53,8 +53,7 @@ const stripTags = (text: string): string => {
   return out.trim()
 }
 
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null
+const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null
 
 const messageOf = (value: unknown): string | null => {
   if (typeof value === "string") {
@@ -91,9 +90,7 @@ const collectChain = (cause: unknown, depth = 0): ReadonlyArray<string> => {
   if (!isObject(cause)) return []
 
   const own = messageOf(cause)
-  const nested: ReadonlyArray<string> = Array.isArray(cause.errors)
-    ? collectChain(cause.errors[0], depth + 1)
-    : []
+  const nested: ReadonlyArray<string> = Array.isArray(cause.errors) ? collectChain(cause.errors[0], depth + 1) : []
   const inner = cause.cause === undefined || cause.cause === null ? [] : collectChain(cause.cause, depth + 1)
 
   return own === null ? [...nested, ...inner] : [own, ...nested, ...inner]

@@ -8,7 +8,7 @@ import { ConnectionManager } from "@/connection/connection-manager"
 import type { ConnectionId } from "@/domain"
 import type { ActiveConnection, QueryResult } from "@/drivers/types"
 import { QueryError } from "@/drivers/types"
-import { cleanIdentifier, limitClause, isSafeName } from "@/query/identifier"
+import { cleanIdentifier, limitClause } from "@/query/identifier"
 import { Context, Effect, Layer } from "effect"
 
 export interface TablePage {
@@ -50,20 +50,16 @@ export namespace QueryExecutor {
           manager.query(connectionId, sql, params).pipe(Effect.mapError(e => e as QueryFailure)),
         loadTable: (connectionId, database, table, page) =>
           Effect.gen(function* () {
-            if (!isSafeName(table))
-              return yield* Effect.fail(
-                new QueryError({ engine: database.engine, message: `unsafe table name: ${table}` })
-              )
-            const name = cleanIdentifier(database.engine, table)
+            const name = yield* cleanIdentifier(database.engine, table).pipe(
+              Effect.mapError(() => new QueryError({ engine: database.engine, message: `unsafe table name: ${table}` }))
+            )
             return yield* manager.query(connectionId, `SELECT * FROM ${name} ${limitClause(page.limit, page.offset)}`)
           }),
         count: (connectionId, database, table) =>
           Effect.gen(function* () {
-            if (!isSafeName(table))
-              return yield* Effect.fail(
-                new QueryError({ engine: database.engine, message: `unsafe table name: ${table}` })
-              )
-            const name = cleanIdentifier(database.engine, table)
+            const name = yield* cleanIdentifier(database.engine, table).pipe(
+              Effect.mapError(() => new QueryError({ engine: database.engine, message: `unsafe table name: ${table}` }))
+            )
             const result = yield* manager.query(connectionId, `SELECT COUNT(*) AS total FROM ${name}`)
             const total = result.rows[0]?.["total"]
             const parsed = typeof total === "number" ? total : Number.parseInt(String(total ?? ""), 10)

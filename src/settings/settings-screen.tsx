@@ -9,6 +9,7 @@
  * Focus lives entirely here while this screen is active.
  */
 import { useEffect, useRef } from "react"
+import { Effect, Option } from "effect"
 import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/react"
 import { decodePasteBytes } from "@opentui/core"
 import { useTheme } from "@/theme-context"
@@ -84,19 +85,25 @@ export function SettingsScreen() {
       return
     }
     addByUri(projectId as ProjectId)
-    void readSystemClipboard()
-      .then(text => {
+    Effect.runFork(
+      Effect.gen(function* () {
+        const text = yield* readSystemClipboard.pipe(
+          Effect.catchAll(() =>
+            Effect.sync(() => {
+              const activeForm = formNow()
+              if (activeForm?.kind === "connect" && activeForm.mode === "uri") {
+                toasts.push("warning", "could not read system clipboard; paste the URI into the field")
+              }
+              return Option.none()
+            })
+          )
+        )
         const activeForm = formNow()
         if (!activeForm || activeForm.kind !== "connect" || activeForm.mode !== "uri") return
-        if (text) pasteText(text)
+        if (Option.isSome(text)) pasteText(text.value)
         else toasts.push("info", "clipboard is empty or unavailable; paste the URI into the field")
       })
-      .catch(() => {
-        const activeForm = formNow()
-        if (activeForm?.kind === "connect" && activeForm.mode === "uri") {
-          toasts.push("warning", "could not read system clipboard; paste the URI into the field")
-        }
-      })
+    )
   }
 
   usePaste(event => {
@@ -182,12 +189,20 @@ export function SettingsScreen() {
     if (e.ctrl === true) {
       if (key === "n" && current.kind === "connect") cycleEngine()
       else if (key === "v") {
-        void readSystemClipboard()
-          .then(text => {
-            if (text && formNow()) pasteText(text)
-            else if (!text) toasts.push("info", "clipboard is empty or unavailable")
+        Effect.runFork(
+          Effect.gen(function* () {
+            const text = yield* readSystemClipboard.pipe(
+              Effect.catchAll(() =>
+                Effect.sync(() => {
+                  toasts.push("warning", "could not read system clipboard")
+                  return Option.none()
+                })
+              )
+            )
+            if (Option.isSome(text) && formNow()) pasteText(text.value)
+            else if (Option.isNone(text)) toasts.push("info", "clipboard is empty or unavailable")
           })
-          .catch(() => toasts.push("warning", "could not read system clipboard"))
+        )
       }
       return true
     }

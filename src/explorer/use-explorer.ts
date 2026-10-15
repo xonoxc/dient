@@ -8,9 +8,8 @@
  * Effect the service boundary), so hooks never block a render.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Effect, Option } from "effect"
+import { Effect, Fiber, Option } from "effect"
 import { describeError } from "@/errors/describe"
-import { runService } from "@/effect/run"
 import { useDialog, useServices, useToasts } from "@/app-context"
 import { useSidebar, type SidebarNode, type TablesByConnection } from "@/sidebar/use-sidebar"
 import type { ConnectionStatus } from "@/connection/connection-manager"
@@ -68,7 +67,7 @@ export interface UseExplorerResult {
   readonly saveRow: (
     row: Record<string, unknown>,
     updates: ReadonlyArray<{ readonly column: string; readonly param: unknown }>
-  ) => Promise<boolean>
+  ) => void
 }
 
 const PAGE_SIZE = 200
@@ -147,24 +146,32 @@ export const useExplorer = (): UseExplorerResult => {
      connections connect/disconnect. `active` changes when a connect resolves,
      which is what flips a dot from ○ to ●. `statusOf` never blocks. */
   useEffect(() => {
-    let cancelled = false
     const nodes = sidebar.items.filter(node => node.kind === "connection")
     if (nodes.length === 0) {
       setStatuses({})
       return undefined
     }
 
-    runService(Effect.all(nodes.map(node => connectionManager.statusOf(node.refId as ConnectionId))))
-      .then(snapshot => {
-        if (cancelled) return
-        setStatuses(Object.fromEntries(nodes.map((node, i) => [node.refId, snapshot[i]!])))
+    /* One program per poll: snapshot every dot, commit once. Failure folds to
+       cleared dots; interruption on re-poll/unmount replaces the flag. */
+    const fiber = Effect.runFork(
+      Effect.gen(function* () {
+        const snapshot = yield* Effect.all(
+          nodes.map(node => connectionManager.statusOf(node.refId as ConnectionId)),
+          { concurrency: "unbounded" }
+        ).pipe(Effect.orElseSucceed(() => [] as ConnectionStatus[]))
+        if (snapshot.length !== nodes.length) {
+          yield* Effect.sync(() => setStatuses({}))
+          return
+        }
+        yield* Effect.sync(() =>
+          setStatuses(Object.fromEntries(nodes.map((node, i) => [node.refId, snapshot[i]!] as const)))
+        )
       })
-      .catch(() => {
-        if (!cancelled) setStatuses({})
-      })
+    )
 
     return () => {
-      cancelled = true
+      Effect.runFork(Fiber.interrupt(fiber))
     }
   }, [sidebar.items, active, statusPoll, connectionManager])
 
@@ -189,36 +196,40 @@ export const useExplorer = (): UseExplorerResult => {
        clock would report every fetch as 0ms and read as a broken gauge. */
     const startedAt = performance.now()
 
-    runService(
-      queryExecutor.loadTable(explorer.id, explorer.database, name, {
-        limit: PAGE_SIZE,
-        offset: pageOffset,
-      })
-    )
-      .then(result => {
+    /* The whole page pipeline — rows, optional count, schema — as one Effect.
+       Generation checks between stages drop stale pages the way the chained
+       version did; the terminal `catchAll` reports, so this fork needs no
+       promise and no `.catch`. */
+    Effect.runFork(
+      Effect.gen(function* () {
+        const result = yield* queryExecutor.loadTable(explorer.id, explorer.database, name, {
+          limit: PAGE_SIZE,
+          offset: pageOffset,
+        })
         if (gen !== generation.current) return
         setColumns(result.columns)
         setRows(result.rows)
         setTableName(name)
         setLoading(false)
         noteQueryMs(startedAt)
-        if (!withCount) return
-        return runService(queryExecutor.count(explorer.id, explorer.database, name))
-      })
-      .then(count => {
-        if (gen !== generation.current) return
-        if (count !== undefined) setTotal(count ?? null)
-        return runService(schemaInspector.describeTable(activeHandle.current!, name))
-      })
-      .then(info => {
+        if (withCount) {
+          const count = yield* queryExecutor.count(explorer.id, explorer.database, name)
+          if (gen !== generation.current) return
+          setTotal(count ?? null)
+        }
+        const info = yield* schemaInspector.describeTable(activeHandle.current!, name)
         if (gen !== generation.current) return
         setTableInfo(info !== undefined ? Option.getOrNull(info) : null)
-      })
-      .catch(cause => {
-        if (gen !== generation.current) return
-        setLoading(false)
-        reportError("explorer.openTable", describeError(cause), cause)
-      })
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            if (gen !== generation.current) return
+            setLoading(false)
+            reportError("explorer.openTable", describeError(cause), cause)
+          })
+        )
+      )
+    )
   }
 
   /** Opening a table always starts at the first page. */
@@ -279,14 +290,19 @@ export const useExplorer = (): UseExplorerResult => {
     const connectStartedAt = performance.now()
     const previous = activeExplorer.current
     if (previous && previous.id !== node.refId) {
-      void runService(connectionManager.disconnect(previous.id)).catch(() => undefined)
+      /* Best effort: a failed disconnect leaves nothing to report. */
+      Effect.runFork(Effect.ignore(connectionManager.disconnect(previous.id)))
       activeExplorer.current = null
       activeHandle.current = null
     }
 
-    runService(connectionManager.connect(node.refId as ConnectionId))
-      .then(handle => {
-        if (gen !== generation.current) return null
+    /* Connect, then list tables, as one Effect: generation checks between the
+       stages drop a superseded connect, and the terminal `catchAll` resets
+       state, reports, and offers the retry — a single fork, no chain. */
+    Effect.runFork(
+      Effect.gen(function* () {
+        const handle = yield* connectionManager.connect(node.refId as ConnectionId)
+        if (gen !== generation.current) return
 
         activeHandle.current = handle
         activeExplorer.current = {
@@ -300,10 +316,8 @@ export const useExplorer = (): UseExplorerResult => {
         /* Surface the tables under this connection right away. */
         sidebar.expandConnection(node.refId as ConnectionId)
 
-        return runService(schemaInspector.listTables(handle))
-      })
-      .then(tableList => {
-        if (gen !== generation.current || !tableList) return
+        const tableList = yield* schemaInspector.listTables(handle)
+        if (gen !== generation.current) return
         setTables(tableList)
         if (tableList.length > 0) {
           openTable(tableList[0]!)
@@ -315,34 +329,37 @@ export const useExplorer = (): UseExplorerResult => {
           setTotal(null)
           setLoading(false)
         }
-      })
-      .catch(cause => {
-        if (gen !== generation.current) return
-        activeExplorer.current = null
-        activeHandle.current = null
-        setActive(null)
-        setTables([])
-        setTableName(null)
-        setRows([])
-        setColumns([])
-        setTotal(null)
-        setLoading(false)
-        setStatusPoll(poll => poll + 1)
-        reportError("explorer.connect", `connect failed: ${describeError(cause)}`, cause)
-        /* Offer a retry so a transient failure (container still booting, host
-           offline) recovers from the keyboard instead of forcing navigation. */
-        const retryIndex = cursor
-        void dialog
-          .confirm({
-            title: `Connection "${describeTarget(target)}" failed`,
-            body: describeError(cause),
-            okLabel: "retry",
-            danger: true,
-          })
-          .then(ok => {
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.gen(function* () {
+            if (gen !== generation.current) return
+            activeExplorer.current = null
+            activeHandle.current = null
+            setActive(null)
+            setTables([])
+            setTableName(null)
+            setRows([])
+            setColumns([])
+            setTotal(null)
+            setLoading(false)
+            setStatusPoll(poll => poll + 1)
+            reportError("explorer.connect", `connect failed: ${describeError(cause)}`, cause)
+            /* Offer a retry so a transient failure (container still booting, host
+               offline) recovers from the keyboard instead of forcing navigation. */
+            const retryIndex = cursor
+            const ok = yield* Effect.promise(() =>
+              dialog.confirm({
+                title: `Connection "${describeTarget(target)}" failed`,
+                body: describeError(cause),
+                okLabel: "retry",
+                danger: true,
+              })
+            )
             if (ok) selectActive(retryIndex)
           })
-      })
+        )
+      )
+    )
   }
 
   const cycleConnection = (): void => {
@@ -375,8 +392,8 @@ export const useExplorer = (): UseExplorerResult => {
       return
     }
     /* The project may be collapsed (its databases not loaded yet); expand it
-       and select once its rows land in the tree. */
-    void sidebar.expandProject(projectId).then(reveal)
+       and select once its rows land in the tree — one Effect, one fork. */
+    Effect.runFork(sidebar.expandProject(projectId).pipe(Effect.andThen(Effect.sync(reveal))))
   }
 
   const searchedRows = useMemo(
@@ -393,37 +410,44 @@ export const useExplorer = (): UseExplorerResult => {
   const saveRow = (
     row: Record<string, unknown>,
     updates: ReadonlyArray<{ readonly column: string; readonly param: unknown }>
-  ): Promise<boolean> => {
+  ): void => {
     const explorer = activeExplorer.current
     if (!explorer || !tableName) {
       toasts.push("error", "nothing open to edit")
-      return Promise.resolve(false)
+      return
     }
     if (!tableInfo) {
       toasts.push("error", `no schema info for ${tableName}`)
-      return Promise.resolve(false)
+      return
     }
     const pk = tableInfo.primaryKey
     if (pk.length === 0) {
       toasts.push("error", `table ${tableName} has no primary key — can't edit rows`)
-      return Promise.resolve(false)
+      return
     }
     if (updates.length === 0) {
       toasts.push("info", "no changes to save")
-      return Promise.resolve(false)
+      return
     }
     const engine = explorer.database.engine
-    const sets = updates.map(update => `${cleanIdentifier(engine, update.column)} = ?`).join(", ")
-    const where = pk.map(column => `${cleanIdentifier(engine, column)} = ?`).join(" AND ")
-    const params = [...updates.map(update => update.param), ...pk.map(column => row[column])]
-    return runService(
-      queryExecutor.execute(
-        explorer.id,
-        `UPDATE ${cleanIdentifier(engine, tableName)} SET ${sets} WHERE ${where}`,
-        params
-      )
-    )
-      .then(() => {
+    /* Quoting, the UPDATE, the toast, and the same-page reload compose into
+       one Effect: identifier refusal used to throw synchronously out of the
+       key handler, now it lands in the same `catchAll` as a failed write. */
+    Effect.runFork(
+      Effect.gen(function* () {
+        const sets = yield* Effect.all(
+          updates.map(update => Effect.map(cleanIdentifier(engine, update.column), quoted => `${quoted} = ?`))
+        )
+        const where = yield* Effect.all(
+          pk.map(column => Effect.map(cleanIdentifier(engine, column), quoted => `${quoted} = ?`))
+        )
+        const table = yield* cleanIdentifier(engine, tableName)
+        const params = [...updates.map(update => update.param), ...pk.map(column => row[column])]
+        yield* queryExecutor.execute(
+          explorer.id,
+          `UPDATE ${table} SET ${sets.join(", ")} WHERE ${where.join(" AND ")}`,
+          params
+        )
         const changed = updates.length === 1 ? updates[0]!.column : `${updates.length} columns`
         toasts.push("success", `saved ${tableName}.${changed}`)
         /* Reload the page we were on, not page 1: the UPDATE targeted this row
@@ -431,13 +455,15 @@ export const useExplorer = (): UseExplorerResult => {
            in a long table. An UPDATE cannot change the row count, so the page
            is still valid and the count does not need re-reading. */
         loadPage(tableName, offset, false)
-        return true
-      })
-      .catch(cause => {
-        errorLog.append("explorer.saveRow", cause)
-        toasts.push("error", `save failed: ${describeError(cause)}`)
-        return false
-      })
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            errorLog.append("explorer.saveRow", cause)
+            toasts.push("error", `save failed: ${describeError(cause)}`)
+          })
+        )
+      )
+    )
   }
 
   const result = useMemo<UseExplorerResult>(

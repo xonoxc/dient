@@ -236,7 +236,9 @@ describe("checker service", () => {
       return yield* checker.checkLatest
     }).pipe(
       Effect.provide(
-        UpdateChecker.layer(testDeps({ fetchFn: (() => Promise.reject(new Error("offline"))) as unknown as typeof fetch }))
+        UpdateChecker.layer(
+          testDeps({ fetchFn: (() => Promise.reject(new Error("offline"))) as unknown as typeof fetch })
+        )
       )
     )
     /* checkLatest surfaces fetch failure as UpdateError, not silence */

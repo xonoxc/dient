@@ -24,9 +24,7 @@ const CONTENT_WIDTH = 56
  * number is harmless while an undercount silently hides text.
  */
 const bodyRows = (text: string): number =>
-  text
-    .split("\n")
-    .reduce((total, line) => total + Math.max(1, Math.ceil(line.length / CONTENT_WIDTH)), 0)
+  text.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(line.length / CONTENT_WIDTH)), 0)
 
 export function ModalView() {
   const theme = useTheme()
@@ -64,9 +62,7 @@ export function ModalView() {
            drove the height, which is why a raw multi-line rejection dump used
            to swallow the whole terminal. */}
         <box height={Math.min(BODY_MAX_LINES, bodyRows(dialog.options.body))}>
-          <text fg={c.text}>
-            {dialog.options.body}
-          </text>
+          <text fg={c.text}>{dialog.options.body}</text>
         </box>
         <box height={1} />
         <box flexDirection="row">

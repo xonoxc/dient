@@ -70,7 +70,19 @@ describe("resolveTypedChar", () => {
   })
 
   test("control and navigation keys are never typed", () => {
-    for (const name of ["return", "enter", "escape", "tab", "backspace", "up", "down", "left", "right", "home", "end"]) {
+    for (const name of [
+      "return",
+      "enter",
+      "escape",
+      "tab",
+      "backspace",
+      "up",
+      "down",
+      "left",
+      "right",
+      "home",
+      "end",
+    ]) {
       expect(resolveTypedChar({ name })).toBeNull()
     }
   })

@@ -5,7 +5,7 @@
  * `SessionProvider`.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Option } from "effect"
+import { Effect, Option } from "effect"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useTheme } from "@/theme-context"
 import {
@@ -241,16 +241,17 @@ export function ExplorerScreen() {
     setFinderCursor(0)
     setFinderEntries([])
     setFinderLoading(true)
-    void buildFinderIndex(configStore, active ? active.database : null, explorer.tables)
-      .then(entries => {
-        if (finderRequest.current === request) setFinderEntries(entries)
+    /* The index is one Effect whose every failure already folds to an empty
+       universe, so this fork only routes the outcome into current-request
+       state — one jump, no promise chain. */
+    Effect.runFork(
+      Effect.gen(function* () {
+        const entries = yield* buildFinderIndex(configStore, active ? active.database : null, explorer.tables)
+        if (finderRequest.current !== request) return
+        setFinderEntries(entries)
+        setFinderLoading(false)
       })
-      .catch(() => {
-        if (finderRequest.current === request) setFinderEntries([])
-      })
-      .finally(() => {
-        if (finderRequest.current === request) setFinderLoading(false)
-      })
+    )
   }
 
   const closeFinder = () => {
@@ -420,13 +421,16 @@ export function ExplorerScreen() {
       return
     }
     const { text, count } = yank
-    void writeSystemClipboard(text, renderer).then(result => {
-      if (result.ok) {
-        toasts.push("info", `copied ${count} row${count === 1 ? "" : "s"} to the clipboard`)
-      } else {
-        toasts.push("error", "could not write to the clipboard")
-      }
-    })
+    Effect.runFork(
+      Effect.gen(function* () {
+        const result = yield* writeSystemClipboard(text, renderer)
+        if (result.ok) {
+          toasts.push("info", `copied ${count} row${count === 1 ? "" : "s"} to the clipboard`)
+        } else {
+          toasts.push("error", "could not write to the clipboard")
+        }
+      })
+    )
   }
 
   const hints = useMemo(() => {

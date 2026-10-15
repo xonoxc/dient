@@ -41,7 +41,7 @@ function Opener({ body, title }: { body: string; title?: string }) {
 }
 
 const LONG =
-  "Connection \"game_service\" failed: connect ECONNREFUSED 127.0.0.1:3309 " +
+  'Connection "game_service" failed: connect ECONNREFUSED 127.0.0.1:3309 ' +
   "while opening a very long sentence that will not fit on a single row of a " +
   "sixty column dialog and therefore has to wrap somewhere or escape entirely"
 
@@ -73,7 +73,10 @@ interface Panel {
 
 /** Read the dialog's footprint out of a captured frame. */
 function panelOf(setup: { captureCharFrame: () => string }, width: number): Panel {
-  const rows = setup.captureCharFrame().split("\n").filter(row => row.length > 0)
+  const rows = setup
+    .captureCharFrame()
+    .split("\n")
+    .filter(row => row.length > 0)
   const inked: number[] = []
   rows.forEach((row, index) => {
     if (row.trim().length > 0) inked.push(index)
@@ -130,9 +133,7 @@ describe("modal layout", () => {
      the dialog was pushed off screen entirely. The reported failure was
      exactly this shape: a ~19-line rejection dump. */
   test("a multi-line body cannot push the dialog off a short terminal", async () => {
-    const DUMP = Array.from({ length: 18 }, (_, i) => `    at frame ${i} (/app/src/drivers/mysql.ts:35:15)`).join(
-      "\n"
-    )
+    const DUMP = Array.from({ length: 18 }, (_, i) => `    at frame ${i} (/app/src/drivers/mysql.ts:35:15)`).join("\n")
     const setup = await frameFor(`(FiberFailure) ConnectionError: Failed to connect\n${DUMP}`, undefined, 12)
     try {
       const panel = panelOf(setup, 88)

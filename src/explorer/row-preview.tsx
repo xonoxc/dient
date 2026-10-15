@@ -104,15 +104,20 @@ export function RowPreview({
             <box key={`${column.name}-${index}`} height={1} flexDirection="row">
               {index === 0 ? (
                 <text fg={selected ? c.accent : c.accentMuted} width={labelWidth}>
-                  {selected ? "› " : "  "}{column.name}:
+                  {selected ? "› " : "  "}
+                  {column.name}:
                 </text>
-              ) : <text width={labelWidth}> </text>}
+              ) : (
+                <text width={labelWidth}> </text>
+              )}
               {showTypes ? (
                 <text fg={c.textMuted} width={TYPE_WIDTH}>
-                  {index === 0 ? column.type ?? "" : ""}
+                  {index === 0 ? (column.type ?? "") : ""}
                 </text>
               ) : null}
-              <text fg={selected ? c.textBright : c.text} truncate={false}>{line || " "}</text>
+              <text fg={selected ? c.textBright : c.text} truncate={false}>
+                {line || " "}
+              </text>
             </box>
           ))
         })}

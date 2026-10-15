@@ -9,7 +9,11 @@ describe("describeError", () => {
   test("joins what failed with the reason underneath it", () => {
     const inner = new Error("connect ECONNREFUSED 127.0.0.1:3309")
     const sql = Object.assign(new Error("MysqlClient: Failed to connect"), { cause: inner })
-    const conn = new ConnectionError({ engine: "mysql", message: "SqlError: MysqlClient: Failed to connect", cause: sql })
+    const conn = new ConnectionError({
+      engine: "mysql",
+      message: "SqlError: MysqlClient: Failed to connect",
+      cause: sql,
+    })
     expect(describeError(conn)).toBe("Failed to connect: connect ECONNREFUSED 127.0.0.1:3309")
   })
 
@@ -62,7 +66,7 @@ describe("describeError", () => {
   })
 
   test("keeps the outer message when it already contains the inner one", () => {
-    const inner = new Error("syntax error at or near \"SELCT\"")
+    const inner = new Error('syntax error at or near "SELCT"')
     const outer = new Error('QueryError: query failed: syntax error at or near "SELCT"')
     expect(describeError({ message: outer.message, cause: inner })).toBe(
       'query failed: syntax error at or near "SELCT"'

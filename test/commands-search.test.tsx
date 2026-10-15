@@ -67,7 +67,11 @@ describe("command line", () => {
       platform: "linux",
       arch: "x64",
       fetchFn: (() =>
-        Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(releasePayload) })) as unknown as typeof fetch,
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(releasePayload),
+        })) as unknown as typeof fetch,
     }
     const services = await resolveTestServices(freshConfigFile(), updateDeps)
     await seedProject(services.store)
