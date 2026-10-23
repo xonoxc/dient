@@ -8,7 +8,7 @@ import { act } from "react"
 import { testRender } from "@opentui/react/test-utils"
 import { useKeyboard } from "@opentui/react"
 import type { TestRendererSetup } from "@opentui/core/testing"
-import { rowsWindow } from "@/table/data-table"
+import { rowsWindow, useColumnWidths } from "@/table/data-table"
 import { formatCell, MIN_COL_WIDTH, MAX_COL_WIDTH, useTable, type UseTableResult } from "@/table/use-table"
 import type { ColumnInfo } from "@/drivers/types"
 
@@ -85,6 +85,27 @@ describe("rowsWindow", () => {
     const { offset, rows } = rowsWindow(many(20), 0, 30)
     expect(offset).toBe(0)
     expect(rows).toHaveLength(20)
+  })
+})
+
+describe("useColumnWidths", () => {
+  test("spreads leftover pane width across the columns", async () => {
+    const setup = await renderWidthsFixture({ id: 4, name: 4 }, 40)
+    try {
+      /* two 4-cell columns plus 2-cell gutters leave 28 cells, shared 14/14 */
+      expect(setup.captureCharFrame()).toContain("id:20,name:20")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test("content wider than the pane keeps its measured widths", async () => {
+    const setup = await renderWidthsFixture({ id: 10, name: 20 }, 20)
+    try {
+      expect(setup.captureCharFrame()).toContain("id:12,name:22")
+    } finally {
+      setup.renderer.destroy()
+    }
   })
 })
 
@@ -206,6 +227,34 @@ const unsortedRows: ReadonlyArray<Record<string, unknown>> = [
   { id: 1, name: "alice" },
   { id: 2, name: "bob" },
 ]
+
+function WidthFixture({
+  baseWidths,
+  availableWidth,
+}: {
+  baseWidths: Readonly<Record<string, number>>
+  availableWidth: number
+}) {
+  const names = Object.keys(baseWidths)
+  const widthOf = useColumnWidths(
+    names.map(name => ({ name })),
+    column => baseWidths[column] ?? MIN_COL_WIDTH,
+    availableWidth
+  )
+  return <text truncate>{names.map(name => `${name}:${widthOf(name)}`).join(",")}</text>
+}
+
+async function renderWidthsFixture(
+  baseWidths: Readonly<Record<string, number>>,
+  availableWidth: number
+): Promise<TestRendererSetup> {
+  const setup = await testRender(<WidthFixture baseWidths={baseWidths} availableWidth={availableWidth} />, {
+    width: 80,
+    height: 4,
+  })
+  await setup.waitForVisualIdle()
+  return setup
+}
 
 function HookFixture({ table }: { table: UseTableResult }) {
   useKeyboard(e => {

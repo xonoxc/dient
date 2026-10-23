@@ -47,10 +47,11 @@ const ROW_LEADING = 2
 
 /**
  * Column widths for a frame: the content width from `useTable`, plus a fixed
- * gutter, plus a share of any *remaining* pane width so the grid fills the
- * terminal instead of ending at the widest value. Each column caps at
- * `MAX_COL_WIDTH`, like the content widths already do — the grid never grows
- * a column absurdly wide just because the terminal is.
+ * gutter, plus an equal share of any *remaining* pane width. The grid is
+ * always at least as wide as the pane — with few columns the leftover is
+ * spread across them instead of stopping at the content width. Content wider
+ * than the pane leaves no leftover, so those columns keep their measured
+ * widths and the grid scrolls horizontally.
  */
 export const useColumnWidths = (
   columns: ReadonlyArray<{ readonly name: string }>,
@@ -68,7 +69,7 @@ export const useColumnWidths = (
     const widths: Record<string, number> = {}
     columns.forEach((column, index) => {
       const share = per + (index < rest ? 1 : 0)
-      widths[column.name] = Math.min(base[index]! + share, MAX_COL_WIDTH) + COLUMN_GUTTER
+      widths[column.name] = base[index]! + share + COLUMN_GUTTER
     })
     return column => widths[column] ?? COLUMN_GUTTER
   }, [columns, baseWidthOf, availableWidth])
