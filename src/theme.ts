@@ -120,7 +120,7 @@ const ELEVATED_TINT_AMOUNT = 0.12
  * light ones without introducing a hardcoded gray. Content behind it stays
  * legible while the focused panel reads as a layer above the screen.
  */
-const SCRIM_ALPHA = 0.5
+const SCRIM_ALPHA = 0.56
 
 /**
  * How strongly a selected row/cursor highlight drifts off the base background.

@@ -78,6 +78,10 @@ describe("row preview", () => {
       /* The hint strip advertises the way out and the way in. */
       expect(frame).toContain("i edit")
       expect(frame).toContain("Esc close")
+      /* The table behind stays visible through the scrim instead of being
+         replaced by an opaque full-screen sheet. */
+      expect(frame).toContain("EMAIL")
+      expect(frame).toContain("bob@example.com")
       /* And the panel did not run the editor. */
       expect(frame).not.toContain("editing users in")
     } finally {

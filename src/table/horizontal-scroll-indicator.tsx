@@ -8,8 +8,10 @@
  * scroll. A terminal cell is indivisible, so no restyling makes that thinner —
  * it has to be replaced.
  *
- * This draws a single rule of `─` instead, and only when the content is
+ * This draws a half-cell `▄` bar instead, and only when the content is
  * genuinely wider than the viewport, so the common case costs no row at all.
+ * The lower block keeps the bar shorter than a full cell while still reading
+ * as a scrollbar rather than a plain rule.
  */
 import { useEffect, useState } from "react"
 import type { ScrollBoxRenderable } from "@opentui/core"
@@ -93,7 +95,7 @@ export function HorizontalScrollIndicator({ box }: { box: ScrollBoxRenderable | 
   return (
     <box height={1} flexDirection="row">
       <text fg={c.textMuted}>{" ".repeat(thumb.offset)}</text>
-      <text fg={c.textMuted}>{"─".repeat(thumb.width)}</text>
+      <text fg={c.textMuted}>{"▄".repeat(thumb.width)}</text>
     </box>
   )
 }

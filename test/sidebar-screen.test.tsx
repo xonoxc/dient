@@ -119,6 +119,28 @@ describe("sidebar tree", () => {
     }
   })
 
+  test("the sidebar divider is mixed at 80% into the background", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: "data.db" })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      const divider = setup
+        .captureSpans()
+        .lines.flatMap(line => line.spans)
+        .find(span => span.text === "│")
+      expect(divider).toBeDefined()
+
+      const colors = makeTheme("dark").colors
+      const bg = colors.bg.toInts()
+      const border = colors.border.toInts()
+      const mix = (channel: number): number =>
+        Math.round(bg[channel]! + (border[channel]! - bg[channel]!) * 0.8)
+      expect(divider!.fg.toInts()).toEqual([mix(0), mix(1), mix(2), 255])
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
   test("an empty config shows a friendly empty panel", async () => {
     const services = await resolveTestServices(freshConfigFile())
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)

@@ -15,7 +15,7 @@ import { pressKeys, renderApp } from "@test/support/render-ui"
 import { freshConfigFile, resolveTestServices, seedProject } from "@test/support/services-fixture"
 import { thumbGeometry } from "@/table/horizontal-scroll-indicator"
 
-const RULE = "─"
+const BAR = "▄"
 const BLOCK = "█"
 
 /** The indicator polls the scrollbox, so give it a tick to draw. */
@@ -107,27 +107,26 @@ describe("horizontal scroll indicator", () => {
     try {
       const rows = setup.captureCharFrame().split("\n")
       expect(rows.join("\n")).not.toContain(BLOCK)
-      expect(rows.join("\n")).not.toContain(RULE)
+      expect(rows.join("\n")).not.toContain(BAR)
     } finally {
       setup.renderer.destroy()
     }
   })
 
-  test("a table that overflows shows a thin rule, not a block bar", async () => {
+  test("a table that overflows shows a half-cell bar, not a full block bar", async () => {
     const setup = await openTable(wideOrdersFile())
     try {
       const rows = setup.captureCharFrame().split("\n")
-      const row = rows.find(line => line.includes(RULE))
+      const row = rows.find(line => line.includes(BAR))
 
-      /* Drawn at all, and as a rule. */
+      /* Drawn at all, and as a half-cell bar. */
       expect(row).toBeDefined()
       /* The old bar's fingerprint is gone. */
       expect(rows.join("\n")).not.toContain(BLOCK)
       /* One row, and it is only as wide as the thumb — not the full pane. */
-      expect(row?.includes(RULE)).toBe(true)
-      const rule = row?.match(new RegExp(`${RULE}+`))?.[0] ?? ""
-      expect(rule.length).toBeGreaterThan(0)
-      expect(rule.length).toBeLessThan(55)
+      const bar = row?.match(new RegExp(`${BAR}+`))?.[0] ?? ""
+      expect(bar.length).toBeGreaterThan(0)
+      expect(bar.length).toBeLessThan(55)
     } finally {
       setup.renderer.destroy()
     }

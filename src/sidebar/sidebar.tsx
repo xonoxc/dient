@@ -4,6 +4,7 @@
  * state — selection lives in `useSidebar`, statuses come from the explorer — so
  * this stays a pure view that is trivial to snapshot.
  */
+import { RGBA } from "@opentui/core"
 import { useTheme } from "@/theme-context"
 import type { ConnectionId } from "@/domain"
 import type { SidebarNode } from "@/sidebar/use-sidebar"
@@ -26,6 +27,25 @@ const ENGINE_BADGE: Record<string, string> = { postgres: "PG", mysql: "MY", sqli
 const INDENT_STEP = " "
 /** Prefix before a leaf label: the expand glyph and a space. */
 const GLYPH = "▸ "
+/** The divider is structural but mixed 80% into the background, so it
+    separates without drawing a hard line against the terminal. */
+const DIVIDER_ALPHA = 0.8
+
+function SidebarDivider() {
+  const c = useTheme().colors
+  /* Text foregrounds are painted opaque, so alpha cannot be handed to the
+     renderer: bake the 80% mix against the terminal background instead. */
+  const divider = RGBA.fromValues(
+    c.bg.r + (c.border.r - c.bg.r) * DIVIDER_ALPHA,
+    c.bg.g + (c.border.g - c.bg.g) * DIVIDER_ALPHA,
+    c.bg.b + (c.border.b - c.bg.b) * DIVIDER_ALPHA
+  )
+  return (
+    <box width={1} height="100%">
+      <text fg={divider}>{"│\n".repeat(100)}</text>
+    </box>
+  )
+}
 
 export function Sidebar(props: SidebarProps) {
   const theme = useTheme()
@@ -41,9 +61,7 @@ export function Sidebar(props: SidebarProps) {
           <text fg={c.textMuted}>no projects yet</text>
           <text fg={c.textMuted}>open settings to add one</text>
         </box>
-        <box width={1} height="100%">
-          <text fg={c.border}>{"│\n".repeat(100)}</text>
-        </box>
+        <SidebarDivider />
       </box>
     )
   }
@@ -58,9 +76,7 @@ export function Sidebar(props: SidebarProps) {
           <SidebarRow key={node.id} node={node} index={index} {...props} />
         ))}
       </box>
-      <box width={1} height="100%">
-        <text fg={c.border}>{"│\n".repeat(100)}</text>
-      </box>
+      <SidebarDivider />
     </box>
   )
 }

@@ -11,7 +11,9 @@
  * teaches the format the edit is about to hand over.
  *
  * The explorer owns the keyboard and the open/closed flag; this is the pure
- * view, like `FinderOverlay`.
+ * view, like `FinderOverlay`. A translucent scrim dims the table behind the
+ * panel, which uses the elevated surface so the row reads as a card on top of
+ * the data instead of replacing the screen.
  */
 import { useTheme } from "@/theme-context"
 import { formatCell } from "@/table/use-table"
@@ -78,15 +80,9 @@ export function RowPreview({
   const showTypes = columns.some(column => column.type)
 
   return (
-    <box
-      position="absolute"
-      width="100%"
-      height="100%"
-      alignItems="center"
-      justifyContent="center"
-      backgroundColor={c.bg}
-    >
-      <ModalSurface width={width} paddingY={1} maxHeight={maxHeight}>
+    <box position="absolute" top={0} bottom={0} left={0} right={0} alignItems="center" justifyContent="center">
+      <box position="absolute" top={0} bottom={0} left={0} right={0} backgroundColor={c.bgScrim} />
+      <ModalSurface width={width} paddingY={1} maxHeight={maxHeight} elevated>
         <box height={1} flexDirection="row">
           <text fg={c.textBright}>{tableName}</text>
           <text fg={c.textMuted}>
