@@ -43,7 +43,9 @@ export interface ThemeColors {
   readonly textBright: RGBA
   readonly bg: RGBA
   readonly bgSurface: RGBA
+  readonly bgElevated: RGBA
   readonly bgShadow: RGBA
+  readonly bgScrim: RGBA
   readonly bgHighlight: RGBA
   readonly grid: RGBA
   readonly border: RGBA
@@ -104,6 +106,23 @@ export const THEME_PALETTE_TIMEOUT_MS = 300
 const SURFACE_TINT_AMOUNT = 0.08
 
 /**
+ * How strongly an elevated (raised) surface drifts off the base background.
+ * Dialogs and command palettes use this so the card reads as a layer above the
+ * dimmed screen instead of a hole cut out of the content behind it. Drifting
+ * toward the foreground keeps it lighter in dark themes and darker in light
+ * ones, exactly like the row highlight.
+ */
+const ELEVATED_TINT_AMOUNT = 0.12
+
+/**
+ * How strongly a modal scrim dims what sits behind an overlay. The scrim is the
+ * terminal background at partial alpha, so it darkens dark themes and lightens
+ * light ones without introducing a hardcoded gray. Content behind it stays
+ * legible while the focused panel reads as a layer above the screen.
+ */
+const SCRIM_ALPHA = 0.5
+
+/**
  * How strongly a selected row/cursor highlight drifts off the base background.
  * Deliberately ~2.5× the surface tint so the focused row stands out from idle
  * panels while still blending with the terminal's colorscheme (blend toward the
@@ -157,7 +176,11 @@ export const makeTheme = (mode: ThemeMode, palette?: TerminalPalette): ThemeServ
     textBright: slot(15),
     bg,
     bgSurface: blend(bg, surfaceTint, SURFACE_TINT_AMOUNT),
+    bgElevated: blend(bg, text, ELEVATED_TINT_AMOUNT),
     bgShadow: blend(bg, slot(0), 0.08),
+    /* Blending is baked for surfaces; the scrim intentionally keeps its alpha
+       so OpenTUI composites it against whatever cells are already painted. */
+    bgScrim: RGBA.fromValues(bg.r, bg.g, bg.b, SCRIM_ALPHA),
     bgHighlight: highlight,
     grid: blend(bg, slot(8), 0.22),
     border: slot(8),

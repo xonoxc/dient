@@ -3,6 +3,10 @@
  * pans with the arrow keys, and jumps on Enter. The overlay is rendered as an
  * absolute strip near the top of the explorer; the explorer owns the keyboard
  * and state, this is the pure view.
+ *
+ * A translucent scrim dims the screen behind the panel, and the panel itself is
+ * an elevated card (raised surface) so it reads as a layer on top of the table
+ * rather than a hole punched through it.
  */
 import { useTerminalDimensions } from "@opentui/react"
 import { useTheme } from "@/theme-context"
@@ -37,8 +41,11 @@ export function FinderOverlay({ query, entries, cursor, loading = false }: Finde
   const matchesText = loading ? "indexing…" : `${entries.length} matches`
 
   return (
-    <box position="absolute" width="100%" alignItems="center" flexDirection="column">
-      <ModalSurface width={panelWidth} paddingY={1} marginTop={1}>
+    /* Full-bleed containing box: the panel is centered at the top while the
+       scrim below covers every cell the explorer painted behind the overlay. */
+    <box position="absolute" top={0} bottom={0} left={0} right={0} alignItems="center" flexDirection="column">
+      <box position="absolute" top={0} bottom={0} left={0} right={0} backgroundColor={c.bgScrim} />
+      <ModalSurface width={panelWidth} paddingY={1} marginTop={3} elevated>
         <box height={1} flexDirection="row" alignItems="center">
           <text fg={c.accent}>&gt; </text>
           <text fg={c.textBright}>{windowTail(query, contentWidth - 2 - 1 - matchesText.length - 1)}</text>

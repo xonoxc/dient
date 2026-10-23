@@ -79,7 +79,7 @@ export function CellViewer({
       justifyContent="center"
       backgroundColor={c.bg}
     >
-      <ModalSurface width={CELL_VIEWER_WIDTH} paddingY={1}>
+      <ModalSurface width={CELL_VIEWER_WIDTH} paddingY={1} marginTop={330}>
         <box height={1} flexDirection="row">
           <text fg={c.textBright}>
             {tableName}.{columnName}

@@ -68,6 +68,25 @@ describe("Theme tokens", () => {
     expect(bgSurface.equals(bg)).toBe(false)
   })
 
+  test("bgElevated is a raised surface above bgSurface and follows the theme polarity", () => {
+    const dark = makeTheme("dark").colors
+    const light = makeTheme("light").colors
+    expect(dark.bgElevated.intent).toBe("rgb")
+    /* dark themes raise toward white, light themes toward black */
+    expect(dark.bgElevated.toInts()[0]! > dark.bgSurface.toInts()[0]!).toBe(true)
+    expect(light.bgElevated.toInts()[0]! < light.bgSurface.toInts()[0]!).toBe(true)
+  })
+
+  test("bgScrim keeps the terminal bg color at partial alpha", () => {
+    const { bg, bgScrim } = makeTheme("dark").colors
+    expect(bgScrim.intent).toBe("rgb")
+    expect(bgScrim.toInts().slice(0, 3)).toEqual(bg.toInts().slice(0, 3))
+    /* the scrim must not be baked opaque: OpenTUI blends its alpha over the
+       cells behind the overlay instead of replacing them. */
+    expect(bgScrim.a).toBeGreaterThan(0)
+    expect(bgScrim.a).toBeLessThan(1)
+  })
+
   test("selection snaps to the blend highlight color", () => {
     const { selection, bgHighlight } = makeTheme("dark").colors
     expect(selection.intent).toBe("rgb")

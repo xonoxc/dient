@@ -22,10 +22,11 @@ import { Effect } from "effect"
 import { useConfigRevision, useDialog, useServices, useToasts } from "@/app-context"
 import { completePath, pathCandidates } from "@/fs/path-complete"
 import { parseConnectionString, type ConnectionString } from "@/connection/parse"
-import type { CreateConnectionInput } from "@/config"
-import { ConfigError } from "@/config"
-import type { Connection, Database, DatabaseId, Engine, Project, ProjectId } from "@/domain"
 import { describeError } from "@/errors/describe"
+
+import type { CreateConnectionInput } from "@/config"
+import type { ConfigError } from "@/config"
+import type { Connection, Database, DatabaseId, Engine, Project, ProjectId } from "@/domain"
 
 export type SettingsKind = "project" | "database"
 
@@ -403,10 +404,16 @@ export const useSettings = (): UseSettingsResult => {
       setDraftState(draftRef.current)
       return
     }
+
     const key = current.mode === "uri" ? "uri" : fieldsOf(current)[current.fieldIndex]
     if (!key) return
+
     const text = (current.values[key] ?? "") + char
-    const next: SettingsForm = { ...current, values: { ...current.values, [key]: text } }
+    const next: SettingsForm = {
+      ...current,
+      values: { ...current.values, [key]: text },
+    }
+
     formRef.current = next
     draftRef.current = text
     setFormState(next)
@@ -420,10 +427,16 @@ export const useSettings = (): UseSettingsResult => {
       setDraftState(draftRef.current)
       return
     }
+
     const key = current.mode === "uri" ? "uri" : fieldsOf(current)[current.fieldIndex]
     if (!key) return
+
     const text = (current.values[key] ?? "").slice(0, -1)
-    const next: SettingsForm = { ...current, values: { ...current.values, [key]: text } }
+    const next: SettingsForm = {
+      ...current,
+      values: { ...current.values, [key]: text },
+    }
+
     formRef.current = next
     draftRef.current = text
     setFormState(next)
@@ -508,12 +521,14 @@ export const useSettings = (): UseSettingsResult => {
       toasts.push("error", "a database name is required")
       return
     }
+
     if (form.engine === "sqlite") {
       const filename = values.filename?.trim() ?? ""
       if (!filename) {
         toasts.push("error", "a sqlite connection requires a filename")
         return
       }
+
       Effect.runFork(
         Effect.gen(function* () {
           if (yield* nameTaken(form.projectId, name)) {
@@ -527,16 +542,19 @@ export const useSettings = (): UseSettingsResult => {
       )
       return
     }
+
     const host = values.host?.trim() ?? ""
     if (!host) {
       toasts.push("error", "a connection requires a host")
       return
     }
+
     const port = values.port?.trim() ?? ""
     if (port && !/^\d+$/.test(port)) {
       toasts.push("error", "port must be a number")
       return
     }
+
     Effect.runFork(
       Effect.gen(function* () {
         if (yield* nameTaken(form.projectId, name)) {
@@ -603,9 +621,11 @@ export const useSettings = (): UseSettingsResult => {
       toasts.push("error", `"${database.name}" has no connection — add one from settings`)
       return
     }
+
     const label = database.name
     testingRef.current = label
     setTesting(label)
+
     Effect.runFork(
       Effect.gen(function* () {
         const ok = yield* connectionManager.pingConnection(database, connection)
