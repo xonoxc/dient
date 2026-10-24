@@ -164,8 +164,8 @@ export function SettingsScreen() {
             : form.kind === "connect"
               ? [`type ${fieldLabel}`, "Tab field", "Ctrl+n engine", "Enter add", "Esc cancel"]
               : form.kind === "connectName"
-                ? form.pending.engine === "redis"
-                  ? ["name this connection", "Enter add", "Esc cancel"]
+                ? form.suggestedName
+                  ? ["optional name", "Enter add", "Esc cancel"]
                   : ["database name missing", "Enter add", "Esc cancel"]
                 : form.kind === "rename"
                   ? ["new name", "Enter save", "Esc cancel"]
@@ -515,8 +515,10 @@ function SettingsFormDialog({
       : form.kind === "connect"
         ? `Add database · ${form.mode === "uri" ? "connection string" : form.engine}`
         : form.kind === "connectName"
-          ? form.pending.engine === "redis"
-            ? "Name this Redis connection"
+          ? form.suggestedName
+            ? form.pending.engine === "redis"
+              ? "Name this Redis connection"
+              : "Name this database"
             : "Choose a database name"
           : form.kind === "rename"
             ? "Rename database"
@@ -529,7 +531,7 @@ function SettingsFormDialog({
       ? "new database · connection string: "
       : form.kind === "connectName"
         ? form.suggestedName
-          ? "connection name: "
+          ? "name (optional): "
           : "the URL has no database name · name: "
         : form.kind === "rename"
           ? "rename to: "
@@ -599,7 +601,7 @@ function SettingsFormDialog({
             {form.kind === "connectName" && form.suggestedName ? (
               <>
                 <box height={1} />
-                <text fg={c.textMuted}>Enter keeps {form.suggestedName}</text>
+                <text fg={c.textMuted}>Enter keeps {form.suggestedName} · type a new name to rename</text>
               </>
             ) : null}
           </>
@@ -642,11 +644,13 @@ function CredentialsFields({
         const display =
           key === "password" && value ? "•".repeat(Math.min(value.length, 32)) : value || (active ? " " : "—")
         const label =
-          key === "defaultDatabase"
-            ? form.engine === "redis"
-              ? "db index"
-              : "database"
-            : (FIELD_LABEL[key as keyof typeof FIELD_LABEL] ?? key)
+          key === "name"
+            ? "name (optional)"
+            : key === "defaultDatabase"
+              ? form.engine === "redis"
+                ? "db index"
+                : "database"
+              : (FIELD_LABEL[key as keyof typeof FIELD_LABEL] ?? key)
         return (
           <box
             key={key}
@@ -655,12 +659,12 @@ function CredentialsFields({
             backgroundColor={active ? c.bgHighlight : undefined}
             paddingX={1}
           >
-            <text fg={active ? c.accent : c.textMuted} width={16}>
+            <text fg={active ? c.accent : c.textMuted} width={18}>
               {active ? "› " : "  "}
               {label}
             </text>
             <text fg={active ? c.textBright : c.text}>
-              {windowTail(display, contentWidth - 2 - 16 - (active ? 1 : 0))}
+              {windowTail(display, contentWidth - 2 - 18 - (active ? 1 : 0))}
             </text>
             {active ? <text fg={c.accent}>▍</text> : null}
           </box>

@@ -6,11 +6,11 @@
  * opens a single-line prompt where you paste a connection string — a
  * `postgres://` / `mysql://` / `redis://` URL or a filesystem path (SQLite).
  * `p` opens the same style of prompt for a new project (a project is a folder
- * onto which databases hang). The tail of
- * the string becomes the database's display name, so adding a database is one
- * paste. A credentials form (host/port/user/…) is one key away for people who
- * prefer filling fields (Ctrl+n), and when a server URL carries no database
- * name the form asks for it in a follow-up prompt.
+ * onto which databases hang). A parsed URI pauses on an optional name prompt:
+ * the tail (or Redis host:port/index) is suggested, and a typed value overrides
+ * it. A credentials form (host/port/user/…) is one key away for people who
+ * prefer filling fields (Ctrl+n); its name field is optional and falls back to
+ * the database/file stem or host:port.
  *
  * Form state is mirrored into refs: keyboard handlers fire between React
  * commits when a user (or a test pressing whole chords) types faster than a
@@ -18,6 +18,7 @@
  * closure — the same trick the shell's command line uses.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
+import { basename, extname } from "node:path"
 import { Effect } from "effect"
 import { useConfigRevision, useDialog, useServices, useToasts } from "@/app-context"
 import { completePath, pathCandidates } from "@/fs/path-complete"
@@ -63,9 +64,9 @@ export type SettingsForm =
   | {
       readonly kind: "connectName"
       readonly projectId: ProjectId
-      /** A parsed URL that still needs its display name. */
-      readonly pending: Extract<ConnectionString, { engine: "postgres" | "mysql" | "redis" }>
-      /** Redis URLs have no path name; offer host:port/index as a default. */
+      /** A parsed URL whose display name can still be changed before saving. */
+      readonly pending: ConnectionString
+      /** The parsed name: URL tail, SQLite stem, or host:port/index for Redis. */
       readonly suggestedName?: string
     }
   | { readonly kind: "rename"; readonly databaseId: DatabaseId }
@@ -85,6 +86,31 @@ export const FIELD_LABEL: Record<ConnectionFormField, string> = {
   password: "password",
   filename: "filename",
   defaultDatabase: "database",
+}
+
+const ENGINE_DEFAULT_PORT: Record<Exclude<Engine, "sqlite">, string> = {
+  postgres: "5432",
+  mysql: "3306",
+  redis: "6379",
+}
+
+const filenameStem = (filename: string): string => {
+  const base = basename(filename.trim())
+  return base.slice(0, Math.max(0, base.length - extname(base).length)) || base
+}
+
+/** A display name when the optional name field is blank. SQL uses its database
+ *  stem, SQLite the file stem, and Redis host:port plus a non-zero index. */
+export const fallbackConnectionName = (
+  engine: Engine,
+  values: Readonly<Partial<Record<ConnectionFormField | "uri", string>>>
+): string => {
+  const host = values.host?.trim() || "localhost"
+  const port = values.port?.trim() || (engine === "sqlite" ? "" : ENGINE_DEFAULT_PORT[engine])
+  const database = values.defaultDatabase?.trim()
+  if (engine === "sqlite") return filenameStem(values.filename ?? "")
+  if (engine === "redis") return `${host}:${port}${database && database !== "0" ? `/${database}` : ""}`
+  return database || `${host}:${port}`
 }
 
 export interface UseSettingsResult {
@@ -476,71 +502,32 @@ export const useSettings = (): UseSettingsResult => {
         toasts.push("error", "could not parse that connection string")
         return
       }
-      if (parsed.engine === "sqlite") {
-        Effect.runFork(
-          Effect.gen(function* () {
-            if (yield* nameTaken(form.projectId, parsed.name)) {
-              toasts.push("error", `a database named "${parsed.name}" already exists`)
-              return
-            }
-            yield* createDatabaseAndConnection(form.projectId, parsed.name, "sqlite", { filename: parsed.filename })
-            toasts.push("success", `added ${parsed.name} (${parsed.filename})`)
-            finish()
-          }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))
-        )
-        return
+      /* Every URI gets an optional naming step. The parsed tail (or Redis
+         host:port/index) is the suggestion; a typed name overrides it. */
+      const next: SettingsForm = {
+        kind: "connectName",
+        projectId: form.projectId,
+        pending: parsed,
+        suggestedName: parsed.name,
       }
-      if (parsed.engine === "redis") {
-        /* A Redis URL has no path name: its host/port/index is a good default,
-           but the user still gets to choose the sidebar label. */
-        const next: SettingsForm = {
-          kind: "connectName",
-          projectId: form.projectId,
-          pending: parsed,
-          suggestedName: parsed.name,
-        }
-        openForm(next)
-        return
-      }
-      if (!parsed.name) {
-        /* server URL with no database name — ask for it next */
-        const next: SettingsForm = { kind: "connectName", projectId: form.projectId, pending: parsed }
-        openForm(next)
-        return
-      }
-      const urlName = parsed.name
-      Effect.runFork(
-        Effect.gen(function* () {
-          if (yield* nameTaken(form.projectId, urlName)) {
-            toasts.push("error", `a database named "${urlName}" already exists`)
-            return
-          }
-          yield* createDatabaseAndConnection(form.projectId, urlName, parsed.engine, {
-            host: parsed.host,
-            port: parsed.port,
-            user: parsed.user,
-            password: parsed.password,
-            defaultDatabase: parsed.defaultDatabase ?? urlName,
-          })
-          toasts.push("success", `added ${urlName} (${parsed.engine})`)
-          finish()
-        }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))
-      )
+      openForm(next)
       return
     }
 
-    /* Credentials ("fields") mode: explicit name first, then host/port/… */
+    /* Credentials ("fields") mode: the name is optional. A blank name falls
+       back to the database stem, SQLite file stem, or Redis host:port/index. */
     const values = form.values
-    const name = values.name?.trim() ?? ""
-    if (!name) {
-      toasts.push("error", "a database name is required")
-      return
-    }
+    const explicitName = values.name?.trim() ?? ""
 
     if (form.engine === "sqlite") {
       const filename = values.filename?.trim() ?? ""
       if (!filename) {
         toasts.push("error", "a sqlite connection requires a filename")
+        return
+      }
+      const name = explicitName || fallbackConnectionName("sqlite", values)
+      if (!name) {
+        toasts.push("error", "a database name is required")
         return
       }
 
@@ -574,6 +561,7 @@ export const useSettings = (): UseSettingsResult => {
         toasts.push("error", "Redis database must be a numeric index")
         return
       }
+      const name = explicitName || fallbackConnectionName("redis", values)
 
       Effect.runFork(
         Effect.gen(function* () {
@@ -606,6 +594,7 @@ export const useSettings = (): UseSettingsResult => {
       toasts.push("error", "port must be a number")
       return
     }
+    const name = explicitName || fallbackConnectionName(form.engine, values)
 
     Effect.runFork(
       Effect.gen(function* () {
@@ -631,28 +620,42 @@ export const useSettings = (): UseSettingsResult => {
 
   const submitFollowUpName = (form: Extract<SettingsForm, { kind: "connectName" }>): void => {
     const typed = draftRef.current.trim()
-    const name = typed || (form.pending.engine === "redis" ? (form.suggestedName ?? "") : "")
+    const name = typed || form.suggestedName || ""
     if (!name) {
       toasts.push("error", "a database name is required")
       return
     }
     const parsed = form.pending
+    const input =
+      parsed.engine === "sqlite"
+        ? { filename: parsed.filename }
+        : parsed.engine === "redis"
+          ? {
+              host: parsed.host,
+              port: parsed.port,
+              user: parsed.user,
+              password: parsed.password,
+              defaultDatabase: parsed.defaultDatabase ?? "0",
+              ...(parsed.tls ? { tls: true } : {}),
+            }
+          : {
+              host: parsed.host,
+              port: parsed.port,
+              user: parsed.user,
+              password: parsed.password,
+              defaultDatabase: parsed.defaultDatabase ?? name,
+            }
     Effect.runFork(
       Effect.gen(function* () {
         if (yield* nameTaken(form.projectId, name)) {
           toastTaken(name)
           return
         }
-        yield* createDatabaseAndConnection(form.projectId, name, parsed.engine, {
-          host: parsed.host,
-          port: parsed.port,
-          user: parsed.user,
-          password: parsed.password,
-          defaultDatabase:
-            parsed.engine === "redis" ? (parsed.defaultDatabase ?? "0") : (parsed.defaultDatabase ?? name),
-          ...(parsed.engine === "redis" && parsed.tls ? { tls: true } : {}),
-        })
-        toasts.push("success", `added ${name} (${parsed.engine})`)
+        yield* createDatabaseAndConnection(form.projectId, name, parsed.engine, input)
+        toasts.push(
+          "success",
+          parsed.engine === "sqlite" ? `added ${name} (${parsed.filename})` : `added ${name} (${parsed.engine})`
+        )
         openForm(null)
         refresh()
       }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))

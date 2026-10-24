@@ -88,7 +88,13 @@ Then, in the app:
    The parser is deliberately permissive: `postgresql://`, `valkey://`,
    `valkeys://` and `file://` also work, and a bare path is taken as SQLite.
    The Redis path is a numeric database index, not a database name.
+
+   Every URI pauses on an optional name. The suggested value is the URL tail
+   (`…/shop` → `shop`), the SQLite file stem, or `host:port/index` for Redis;
+   press `Enter` to keep it or type a new name. In the field form the name is
+   also optional and falls back to the database/file stem or `host:port`.
 3. `t` tests the connection, `Enter` saves, `e` returns to the explorer.
+   On a database row, `r` renames the display name.
 4. `Enter` on a database connects and opens its first table.
 
 ## Sample Docker stack

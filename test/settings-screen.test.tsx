@@ -1,7 +1,7 @@
 /**
  * Settings screen tests — project/database CRUD driven through the real App
- * against seeded config data. Adding a database is a single connection-string
- * paste (`new.db` parses as SQLite, naming the database from the tail), so
+ * against seeded config data. A URI add pauses on an optional name (the tail
+ * is suggested), while the field form accepts a blank name and derives one, so
  * each stage (open form, type, submit) is pressed and awaited separately like
  * human input.
  */
@@ -29,6 +29,12 @@ async function expandProject(setup: Awaited<ReturnType<typeof renderApp>>) {
   await pressKeys(setup, ["RETURN"])
   await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
   await pressKeys(setup, ["j"])
+}
+
+/* URI adds pause on an optional name prompt. Enter accepts the parsed name. */
+async function acceptSuggestedName(setup: Awaited<ReturnType<typeof renderApp>>, suggestion: string) {
+  await setup.waitForFrame(f => f.includes(`Enter keeps ${suggestion}`))
+  await pressKeys(setup, ["RETURN"])
 }
 
 describe("settings screen", () => {
@@ -141,8 +147,8 @@ describe("settings screen", () => {
       await setup.waitForFrame(f => f.includes("new.db"))
 
       await pressKeys(setup, ["RETURN"])
-      /* the new row appears with its connection params (the name comes from
-         the string's tail: new.db → "new") */
+      /* The naming step offers the string's tail: new.db → "new". */
+      await acceptSuggestedName(setup, "new")
       await setup.waitForFrame(f => f.includes("added new") && f.includes("new.db"))
 
       const databases = await Effect.runPromise(services.store.listDatabases(seeded.project.id))
@@ -399,8 +405,10 @@ describe("settings screen", () => {
       expect(setup.captureCharFrame()).toContain("connection string")
 
       await pressKeys(setup, ["RETURN"])
-      /* Submitting parses the draft, so a verbatim string is the only way to
-         get these exact values back out of the config store. */
+      /* Submitting parses the draft, then the optional name step keeps the
+         tail. A verbatim string is the only way to get these exact values back
+         out of the config store. */
+      await acceptSuggestedName(setup, "game_service")
       await setup.waitForFrame(f => f.includes("game_service") && f.includes("added"))
       expect(setup.captureCharFrame()).not.toContain("2gameroot")
 
@@ -458,6 +466,7 @@ describe("settings screen", () => {
       await typeString(setup, "root:pw@localhost:3306/shop?ssl=true")
       await setup.waitForFrame(f => f.includes("localhost:3306/shop?ssl=true"))
       await pressKeys(setup, ["RETURN"])
+      await acceptSuggestedName(setup, "shop")
       await setup.waitForFrame(f => f.includes("added shop"))
 
       const databases = await Effect.runPromise(services.store.listDatabases(seeded.project.id))
@@ -513,6 +522,86 @@ describe("settings screen", () => {
     }
   })
 
+  test("a blank SQL name falls back to the database field", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    const seeded = await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: "data.db",
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await openSettings(setup)
+      await expandProject(setup)
+      await pressKeys(setup, ["a"])
+      await setup.waitForFrame(f => f.includes("host / user / password"))
+      await pressKeys(setup, ["2"])
+      await setup.waitForFrame(f => f.includes("name (optional)"))
+
+      /* Leave the first field blank; it should inherit the SQL database name. */
+      await pressKeys(setup, ["TAB"])
+      await typeString(setup, "db.internal")
+      await pressKeys(setup, ["TAB"])
+      await typeString(setup, "5432")
+      await pressKeys(setup, ["TAB"])
+      await pressKeys(setup, ["TAB"])
+      await pressKeys(setup, ["TAB"])
+      await typeString(setup, "orders")
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("added orders"))
+
+      const databases = await Effect.runPromise(services.store.listDatabases(seeded.project.id))
+      const added = databases.find(database => database.name === "orders")
+      expect(added).toMatchObject({ name: "orders", engine: "postgres" })
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test("a blank Redis name falls back to host:port", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    const seeded = await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: "data.db",
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await openSettings(setup)
+      await expandProject(setup)
+      await pressKeys(setup, ["a"])
+      await setup.waitForFrame(f => f.includes("host / user / password"))
+      await pressKeys(setup, ["2"])
+      await setup.waitForFrame(f => f.includes("name (optional)"))
+
+      /* engine order is postgres → mysql → sqlite → redis */
+      await pressKeys(setup, ["CTRL+n", "CTRL+n", "CTRL+n"])
+      await setup.waitForFrame(f => f.includes("db index"))
+
+      /* Leave the name blank, then fill host/port/index. */
+      await pressKeys(setup, ["TAB"])
+      await typeString(setup, "localhost")
+      await pressKeys(setup, ["TAB"])
+      await typeString(setup, "5173")
+      await pressKeys(setup, ["TAB"])
+      await pressKeys(setup, ["TAB"])
+      await pressKeys(setup, ["TAB"])
+      await typeString(setup, "0")
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("added localhost:5173"))
+
+      const databases = await Effect.runPromise(services.store.listDatabases(seeded.project.id))
+      const added = databases.find(database => database.name === "localhost:5173")
+      expect(added).toMatchObject({ name: "localhost:5173", engine: "redis" })
+      const connections = added ? await Effect.runPromise(services.store.listConnections(added.id)) : []
+      expect(connections[0]).toMatchObject({ host: "localhost", port: 5173, defaultDatabase: "0" })
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
   test("uppercase letters in a typed value keep their case", async () => {
     const services = await resolveTestServices(freshConfigFile())
     await seedProject(services.store, {
@@ -545,9 +634,14 @@ describe("adding a connection reveals it", () => {
      nothing". The cause was that databases are only listed under an *expanded*
      project, so a create under a collapsed project reported success while
      rendering no row at all. The add must reveal its own result. */
-  test("a real mysql URL appears in the tree without manual expanding", async () => {
+  test("a real mysql URL appears in the tree under an edited name", async () => {
     const services = await resolveTestServices(freshConfigFile())
-    await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: "data.db" })
+    const seeded = await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: "data.db",
+    })
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openSettings(setup)
@@ -558,10 +652,17 @@ describe("adding a connection reveals it", () => {
       await typeString(setup, "mysql://root:gameroot@localhost:3309/game_service")
       await pressKeys(setup, ["RETURN"])
 
+      /* The tail is the suggestion, but typing replaces it before saving. */
+      await setup.waitForFrame(f => f.includes("Enter keeps game_service"))
+      await typeString(setup, "prod-mysql")
+      await pressKeys(setup, ["RETURN"])
+
       /* Expanded, listed, and carrying the parsed connection. */
-      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("game_service"))
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("prod-mysql"))
       expect(frameText(setup)).toContain("mysql")
       expect(frameText(setup)).toContain("root@localhost:3309")
+      const databases = await Effect.runPromise(services.store.listDatabases(seeded.project.id))
+      expect(databases.find(database => database.name === "prod-mysql")).toMatchObject({ engine: "mysql" })
     } finally {
       setup.renderer.destroy()
     }

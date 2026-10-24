@@ -137,6 +137,12 @@ const seedServerProject = async (services: AppServices) => {
    count happens across several effect-driven frames. */
 const WAIT = { maxPasses: 80 }
 
+/* URI adds pause on an optional name; Enter accepts the parsed suggestion. */
+async function acceptSuggestedName(setup: Awaited<ReturnType<typeof renderApp>>, suggestion: string) {
+  await setup.waitForFrame(f => f.includes(`Enter keeps ${suggestion}`), WAIT)
+  await pressKeys(setup, ["RETURN"])
+}
+
 /* A stand-in `$EDITOR` that rewrites the row file it is handed, so the edit
    path runs for real without a human at a terminal. */
 const EDITOR_DIR = mkdtempSync(join(tmpdir(), "dient-it-editor-"))
@@ -269,6 +275,7 @@ describe("integration (real containers)", () => {
       await pressKeys(setup, ["r", "e", "p", "o", "r", "t", "s", ".", "d", "b"])
       await setup.waitForFrame(f => f.includes("reports.db"), WAIT)
       await pressKeys(setup, ["RETURN"])
+      await acceptSuggestedName(setup, "reports")
       await setup.waitForFrame(f => f.includes("added reports"), WAIT)
       await setup.waitForFrame(f => f.includes("reports.db"), WAIT)
 
@@ -336,6 +343,7 @@ describe("integration (real containers)", () => {
       await setup1.waitForFrame(f => f.includes("connection string: "), WAIT)
       await pressKeys(setup1, ["p", "e", "r", "s", "i", "s", "t", ".", "d", "b"])
       await pressKeys(setup1, ["RETURN"])
+      await acceptSuggestedName(setup1, "persist")
       await setup1.waitForFrame(f => f.includes("added persist") && f.includes("persist.db"), WAIT)
     } finally {
       setup1.renderer.destroy()
