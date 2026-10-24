@@ -301,7 +301,7 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
     })
 
   const jsonPage = (conn: ActiveConnection, info: RedisKeyInfo): Effect.Effect<RedisPage, QueryError> =>
-    command(conn, "JSON", ["GET", info.key]).pipe(
+    command(conn, "JSON.GET", [info.key]).pipe(
       Effect.map(value => {
         const raw = typeof value === "string" ? value : (JSON.stringify(value) ?? "null")
         /* RedisJSON returns compact JSON; indent it so the wrapped-text panel

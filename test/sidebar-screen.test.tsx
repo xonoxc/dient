@@ -5,6 +5,7 @@
  * children, so each expansion is awaited before the next press.
  */
 import { describe, expect, test } from "bun:test"
+import { Effect } from "effect"
 import App from "@/app"
 import { makeTheme } from "@/theme"
 import { pressKeys, renderApp } from "@test/support/render-ui"
@@ -119,6 +120,84 @@ describe("sidebar tree", () => {
     }
   })
 
+  test("engine types render as aligned colored badges", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    const seeded = await seedProject(services.store, {
+      name: "demo",
+      database: "bearly-secure",
+      engine: "mysql",
+      host: "localhost",
+      port: 3306,
+    })
+    const short = await Effect.runPromise(
+      services.store.createDatabase({
+        projectId: seeded.project.id,
+        name: "short",
+        engine: "sqlite",
+      })
+    )
+    await Effect.runPromise(
+      services.store.createConnection({
+        databaseId: short.id,
+        filename: freshSqliteDataFile("users"),
+      })
+    )
+
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(
+        f => f.includes("▾ demo") && f.includes("bearly-secu") && f.includes("short") && f.includes("MYSQL")
+      )
+
+      const badge = setup
+        .captureSpans()
+        .lines.flatMap(line => line.spans)
+        .find(span => span.text.startsWith(" [MYSQL]"))
+      expect(badge?.fg.toInts()).toEqual(makeTheme("dark").colors.warning.toInts())
+
+      const sidebarLines = setup
+        .captureCharFrame()
+        .split("\n")
+        .map(line => line.split("│")[0] ?? "")
+      const longRow = sidebarLines.find(line => line.includes("bearly-secu"))
+      const shortRow = sidebarLines.find(line => line.includes("short"))
+      expect(longRow).toBeDefined()
+      expect(shortRow).toBeDefined()
+      expect(longRow!.indexOf("[MYSQL]")).toBe(shortRow!.indexOf("[SQLite]"))
+      expect(longRow).toContain(" [MYSQL]")
+      expect(shortRow).toContain(" [SQLite]")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test("Enter on the active connection toggles its table leaves", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile("users"),
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await expandToDatabase(setup)
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("USERS") && f.includes("▸ users"))
+
+      /* The row is already the active connection, so Enter operates the
+         disclosure arrow instead of connecting again. */
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => !f.includes("▸ users"))
+
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("▸ users"))
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
   test("the sidebar divider is mixed at 80% into the background", async () => {
     const services = await resolveTestServices(freshConfigFile())
     await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: "data.db" })
@@ -133,8 +212,7 @@ describe("sidebar tree", () => {
       const colors = makeTheme("dark").colors
       const bg = colors.bg.toInts()
       const border = colors.border.toInts()
-      const mix = (channel: number): number =>
-        Math.round(bg[channel]! + (border[channel]! - bg[channel]!) * 0.8)
+      const mix = (channel: number): number => Math.round(bg[channel]! + (border[channel]! - bg[channel]!) * 0.8)
       expect(divider!.fg.toInts()).toEqual([mix(0), mix(1), mix(2), 255])
     } finally {
       setup.renderer.destroy()

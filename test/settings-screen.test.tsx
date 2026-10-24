@@ -157,7 +157,7 @@ describe("settings screen", () => {
     }
   })
 
-  test("pasting a Redis URL creates a Redis database with TLS and an index", async () => {
+  test("pasting a Redis URL asks for a name, then creates it with TLS and an index", async () => {
     const services = await resolveTestServices(freshConfigFile())
     const seeded = await seedProject(services.store, {
       name: "demo",
@@ -178,10 +178,14 @@ describe("settings screen", () => {
       await setup.waitForFrame(f => f.includes("rediss://cache:6380/2"))
 
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("cache:6380/2") && f.includes("redis"))
+      await setup.waitForFrame(f => f.includes("Name this Redis connection") && f.includes("Enter keeps cache:6380/2"))
+      await typeString(setup, "cache-prod")
+      await setup.waitForFrame(f => f.includes("cache-prod"))
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("cache-prod") && f.includes("redis"))
 
       const databases = await Effect.runPromise(services.store.listDatabases(seeded.project.id))
-      const added = databases.find(database => database.name === "cache:6380/2")
+      const added = databases.find(database => database.name === "cache-prod")
       expect(added?.engine).toBe("redis")
       const connections = added ? await Effect.runPromise(services.store.listConnections(added.id)) : []
       expect(connections).toHaveLength(1)

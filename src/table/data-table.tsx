@@ -19,11 +19,26 @@
  * span reuses that same band, so a selection reads as the cursor widened.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
+import type { RGBA, ScrollBoxRenderable } from "@opentui/core"
 import { useTheme } from "@/theme-context"
 import { HorizontalScrollIndicator } from "@/table/horizontal-scroll-indicator"
-import type { ScrollBoxRenderable } from "@opentui/core"
 import type { SelectionRange } from "@/vim/types"
-import { formatCellDisplay, MAX_COL_WIDTH, MIN_COL_WIDTH, type UseTableResult } from "@/table/use-table"
+import {
+  formatCellDisplay,
+  MAX_COL_WIDTH,
+  MIN_COL_WIDTH,
+  truncateForDisplay,
+  type UseTableResult,
+} from "@/table/use-table"
+
+/** Optional visual treatment for one cell. The generic grid stays unaware of
+    Redis; a caller supplies the label and colors for rows that read better as
+    a badge than as plain text. */
+export interface CellDecoration {
+  readonly display?: string
+  readonly fg: RGBA
+  readonly bg?: RGBA
+}
 
 export interface DataTableProps {
   readonly table: UseTableResult
@@ -36,6 +51,15 @@ export interface DataTableProps {
       cursor row itself keeps the `▶` marker so the head stays findable. */
   readonly selection?: SelectionRange | null
   readonly empty?: string
+  /** Add colored labels (or otherwise restyle) selected cells. */
+  readonly cellDecoration?: (
+    row: Readonly<Record<string, unknown>>,
+    column: string,
+    value: unknown
+  ) => CellDecoration | undefined
+  /** Width floors for columns whose decorated label is wider than the raw
+      value (for example a padded badge). */
+  readonly minWidths?: Readonly<Record<string, number>>
 }
 
 /** Trailing gap after every column so cells never butt against the next. */
@@ -56,12 +80,13 @@ const ROW_LEADING = 2
 export const useColumnWidths = (
   columns: ReadonlyArray<{ readonly name: string }>,
   baseWidthOf: (column: string) => number,
-  availableWidth?: number
+  availableWidth?: number,
+  minWidths?: Readonly<Record<string, number>>
 ): ((column: string) => number) =>
   useMemo(() => {
     const n = columns.length
     if (n === 0) return () => 0
-    const base = columns.map(column => baseWidthOf(column.name))
+    const base = columns.map(column => Math.max(baseWidthOf(column.name), minWidths?.[column.name] ?? 0))
     const fixed = base.reduce((sum, width) => sum + width, 0) + COLUMN_GUTTER * n
     const extra = Math.max(0, (availableWidth ?? fixed) - fixed)
     const per = Math.floor(extra / n)
@@ -72,7 +97,7 @@ export const useColumnWidths = (
       widths[column.name] = base[index]! + share + COLUMN_GUTTER
     })
     return column => widths[column] ?? COLUMN_GUTTER
-  }, [columns, baseWidthOf, availableWidth])
+  }, [columns, baseWidthOf, availableWidth, minWidths])
 
 export function DataTable({
   table,
@@ -83,6 +108,8 @@ export function DataTable({
   highlight,
   selection = null,
   empty,
+  cellDecoration,
+  minWidths,
 }: DataTableProps) {
   const theme = useTheme()
   const c = theme.colors
@@ -96,7 +123,7 @@ export function DataTable({
     )
   }
 
-  const widthOf = useColumnWidths(columns, table.widthOf, availableWidth)
+  const widthOf = useColumnWidths(columns, table.widthOf, availableWidth, minWidths)
   const window = rowsWindow(sortedRows, cursor, viewportRows)
   const tableWidth = Math.max(0, 2 + columns.reduce((total, column) => total + widthOf(column.name), 0))
 
@@ -169,6 +196,7 @@ export function DataTable({
                 rowIndex={rowIndex}
                 highlight={highlight}
                 tableWidth={tableWidth}
+                cellDecoration={cellDecoration}
               />
             )
           })}
@@ -251,6 +279,7 @@ function RowLine({
   activeColumn,
   columnFocus,
   highlight,
+  cellDecoration,
 }: {
   row: Record<string, unknown>
   columns: DataTableProps["table"]["columns"]
@@ -262,6 +291,7 @@ function RowLine({
   activeColumn?: string
   columnFocus: boolean
   highlight?: string
+  cellDecoration?: DataTableProps["cellDecoration"]
 }) {
   const theme = useTheme()
   const c = theme.colors
@@ -284,8 +314,10 @@ function RowLine({
         // Use display truncation to prevent vertical expansion
         const cellWidth = Math.max(1, widthOf(column.name) - 2)
         const rawFormatted = formatCellDisplay(row[column.name], cellWidth)
-        const fg = banded ? c.textBright : c.text
-        const parts = matches(rawFormatted) ? splitHighlighted(rawFormatted, highlight!) : null
+        const decoration = cellDecoration?.(row, column.name, row[column.name])
+        const display = decoration?.display ? truncateForDisplay(decoration.display, cellWidth) : rawFormatted
+        const fg = decoration?.fg ?? (banded ? c.textBright : c.text)
+        const parts = matches(display) ? splitHighlighted(display, highlight!) : null
         const last = index === columns.length - 1
         return (
           <box
@@ -300,13 +332,15 @@ function RowLine({
               {parts ? (
                 <box flexDirection="row">
                   {parts.map((part, index) => (
-                    <text key={index} fg={part.matched ? c.accent : fg} truncate>
+                    <text key={index} fg={part.matched ? c.accent : fg} bg={decoration?.bg} truncate>
                       {part.text}
                     </text>
                   ))}
                 </box>
               ) : (
-                <text fg={fg} truncate>{rawFormatted}</text>
+                <text fg={fg} bg={decoration?.bg} truncate>
+                  {display}
+                </text>
               )}
             </box>
             <text fg={c.grid}>{last ? "│" : "│ "}</text>

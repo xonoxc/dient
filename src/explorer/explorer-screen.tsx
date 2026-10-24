@@ -20,7 +20,7 @@ import {
 } from "@/app-context"
 import { Sidebar } from "@/sidebar/sidebar"
 import { SIDEBAR_WIDTH } from "@/sidebar/fit-label"
-import { DataTable } from "@/table/data-table"
+import { DataTable, type CellDecoration } from "@/table/data-table"
 import { selectionRange, useVimMode } from "@/vim"
 import { PANEL_ORDER, useExplorer } from "@/explorer/use-explorer"
 import { editRowInEditor } from "@/editor/edit-row-in-editor"
@@ -39,9 +39,41 @@ import { paneIndexForKey } from "@/ui/pane-keys"
 import { windowTail } from "@/ui/text-window"
 import { LoadingIndicator } from "@/ui/loading-indicator"
 import { RedisStreamPanel, RedisTextPanel } from "@/redis/redis-views"
-import { formatTtl, redisKeyDetail, redisLengthLabel } from "@/redis/format"
+import { formatTtl, redisKeyDetail, redisLengthLabel, redisTypeLabel, redisTypeTone } from "@/redis/format"
+import type { ThemeColors } from "@/theme"
 
 const TABLE_MOVE_KEYS = new Set(["j", "k", "g", "G"])
+
+/* A padded badge is wider than the raw Redis type/TTL text the table measures,
+   so those two columns get a floor. */
+const REDIS_KEYS_MIN_WIDTHS: Readonly<Record<string, number>> = { type: 12, ttl: 13 }
+
+const redisCellDecoration = (
+  colors: ThemeColors,
+  _row: Readonly<Record<string, unknown>>,
+  column: string,
+  value: unknown
+): CellDecoration | undefined => {
+  if (column === "type" && typeof value === "string") {
+    return {
+      display: ` ${redisTypeLabel(value)} `,
+      fg: colors.bg,
+      bg: colors[redisTypeTone(value)],
+    }
+  }
+  if (column === "ttl") {
+    const label = String(value ?? "—")
+    if (label === "no expiry") {
+      return { display: ` ${label} `, fg: colors.textMuted, bg: colors.bgSurface }
+    }
+    return {
+      display: ` ${label} `,
+      fg: colors.bg,
+      bg: label === "—" ? colors.error : colors.warning,
+    }
+  }
+  return undefined
+}
 
 /** Pane numbers are positions in `PANEL_ORDER`, so labels and keys agree. */
 const SIDEBAR_PANE = PANEL_ORDER.indexOf("sidebar") + 1
@@ -103,6 +135,7 @@ export function ExplorerScreen() {
   /* Redis keys split into three render modes: the shared data table for
      collections and the keyspace, a wrapped text panel for strings/JSON, and a
      timeline for streams. */
+  const redisKeyspace = explorer.redisView?.kind === "keys"
   const redisKeyInfo = explorer.redisView?.kind === "key" ? explorer.redisInfo : null
   const redisTextMode =
     explorer.redisView?.kind === "key" &&
@@ -138,7 +171,7 @@ export function ExplorerScreen() {
       ? `db${active?.connection.defaultDatabase || "0"} · ${(explorer.total ?? 0).toLocaleString()} keys`
       : redisKeyInfo
         ? width < 120
-          ? `${redisKeyInfo.type} · ${redisLengthLabel(redisKeyInfo)} · ${formatTtl(redisKeyInfo.ttl)}`
+          ? `${redisTypeLabel(redisKeyInfo.type)} · ${redisLengthLabel(redisKeyInfo)} · ${formatTtl(redisKeyInfo.ttl)}`
           : redisKeyDetail(redisKeyInfo)
         : null
 
@@ -875,6 +908,16 @@ export function ExplorerScreen() {
           return
       }
       if (key === "enter" || key === "return" || key === "\r") {
+        /* A connection row doubles as a tree node: once it is the active
+           connection, Enter should operate the ▾/▸ affordance instead of
+           reconnecting and resetting the open table. Connecting still happens
+           on the first Enter, when the row is not active yet. */
+        const cursor = explorer.sidebar.cursorRef.current
+        const current = explorer.sidebar.itemsRef.current[cursor]
+        if (current?.kind === "connection" && active?.connection.id === current.refId) {
+          explorer.sidebar.toggle(cursor)
+          return
+        }
         explorer.selectActive()
         return
       }
@@ -1068,11 +1111,15 @@ export function ExplorerScreen() {
               table={{ ...explorer.table, cursor: vim.cursor }}
               viewportRows={viewportRows}
               availableWidth={dataWidth}
-              empty={explorer.redisView?.kind === "keys" ? "no keys" : "no rows"}
+              empty={redisKeyspace ? "no keys" : "no rows"}
               activeColumn={explorer.table.columns[editColumn]?.name ?? explorer.table.columns[0]?.name}
               columnFocus={focus === "table"}
               highlight={explorer.search.trim() || undefined}
               selection={selectedRange}
+              minWidths={redisKeyspace ? REDIS_KEYS_MIN_WIDTHS : undefined}
+              cellDecoration={
+                redisKeyspace ? (row, column, value) => redisCellDecoration(c, row, column, value) : undefined
+              }
             />
           )
         ) : (

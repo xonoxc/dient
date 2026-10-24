@@ -2,6 +2,36 @@
  * can return raw seconds/bytes and the UI decides how to phrase them. */
 import type { RedisKeyInfo } from "@/redis/types"
 
+/** Redis module types use protocol names (`ReJSON-RL`); the UI wants the short
+ *  name a person recognises. */
+export const redisTypeLabel = (type: string): string => (type === "ReJSON-RL" || type === "json" ? "json" : type)
+
+/** Semantic theme token for a key type's badge. Kept as a token (not an RGBA)
+ *  so the view can resolve it against the active terminal palette. */
+export type RedisTypeTone = "success" | "info" | "warning" | "error" | "accent" | "accentMuted" | "textMuted"
+
+export const redisTypeTone = (type: string): RedisTypeTone => {
+  switch (type) {
+    case "string":
+      return "success"
+    case "hash":
+      return "info"
+    case "list":
+      return "warning"
+    case "set":
+      return "accent"
+    case "zset":
+      return "accentMuted"
+    case "stream":
+      return "error"
+    case "ReJSON-RL":
+    case "json":
+      return "accent"
+    default:
+      return "textMuted"
+  }
+}
+
 export const formatTtl = (seconds: number): string => {
   if (seconds === -1) return "no expiry"
   if (seconds < 0) return "—"
@@ -39,7 +69,12 @@ export const redisLengthLabel = (info: RedisKeyInfo): string => {
 }
 
 export const redisKeyDetail = (info: RedisKeyInfo): string => {
-  const parts = [info.type, redisLengthLabel(info), formatBytes(info.size), `ttl ${formatTtl(info.ttl)}`]
+  const parts = [
+    redisTypeLabel(info.type),
+    redisLengthLabel(info),
+    formatBytes(info.size),
+    `ttl ${formatTtl(info.ttl)}`,
+  ]
   if (info.encoding) parts.push(info.encoding)
   return parts.join(" · ")
 }

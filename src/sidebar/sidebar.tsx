@@ -6,10 +6,11 @@
  */
 import { RGBA } from "@opentui/core"
 import { useTheme } from "@/theme-context"
-import type { ConnectionId } from "@/domain"
+import type { ConnectionId, Engine } from "@/domain"
 import type { SidebarNode } from "@/sidebar/use-sidebar"
 import type { ConnectionStatus } from "@/connection/connection-manager"
 import type { VimMode } from "@/vim"
+import type { ThemeColors } from "@/theme"
 import { fitLabel, SIDEBAR_WIDTH } from "@/sidebar/fit-label"
 
 export interface SidebarProps {
@@ -23,7 +24,27 @@ export interface SidebarProps {
   readonly mode?: VimMode
 }
 
-const ENGINE_BADGE: Record<string, string> = { postgres: "PG", mysql: "MY", sqlite: "SQLite", redis: "Redis" }
+interface EngineBadge {
+  readonly label: string
+  readonly tone: keyof ThemeColors
+}
+
+const ENGINE_BADGES: Record<Engine, EngineBadge> = {
+  postgres: { label: "PG", tone: "accent" },
+  mysql: { label: "MYSQL", tone: "warning" },
+  sqlite: { label: "SQLite", tone: "info" },
+  redis: { label: "Redis", tone: "error" },
+}
+
+const engineBadge = (engine: Engine | undefined): EngineBadge | undefined =>
+  engine ? ENGINE_BADGES[engine] : undefined
+
+/* Reserve one fixed column for every badge. Right-aligning this block keeps the
+   opening bracket on the same vertical line even though labels differ in
+   length (`[PG]` is shorter than `[MYSQL]`). */
+const ENGINE_BADGE_COLUMN_WIDTH = Math.max(...Object.values(ENGINE_BADGES).map(badge => badge.label.length + 3))
+
+const engineBadgeWidth = (badge: EngineBadge | undefined): number => (badge ? ENGINE_BADGE_COLUMN_WIDTH : 0)
 
 /** One space of indent per depth level, so deep tables keep more label room. */
 const INDENT_STEP = " "
@@ -47,6 +68,13 @@ function SidebarDivider() {
       <text fg={divider}>{"│\n".repeat(100)}</text>
     </box>
   )
+}
+
+function EngineBadgeText({ badge }: { readonly badge?: EngineBadge }) {
+  const theme = useTheme()
+  if (!badge) return null
+  const text = ` [${badge.label}]`.padEnd(ENGINE_BADGE_COLUMN_WIDTH)
+  return <text fg={theme.colors[badge.tone]}>{text}</text>
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -116,22 +144,22 @@ function SidebarRow({
     const dot = status === "connected" ? "●" : status === "error" ? "◉" : "○"
     const dotFg = status === "connected" ? c.success : status === "error" ? c.error : c.textMuted
     const glyph = node.expanded ? "▾" : "▸"
-    /* indent + glyph + space + padded active marker, then dot, space and engine badge. */
-    const badge = ENGINE_BADGE[node.database?.engine ?? ""] ?? ""
-    const prefix = node.depth * INDENT_STEP.length + 2 + 1 + 3 + 1
+    /* Keep the active marker to one cell so the dot and name stay close. */
+    const badge = engineBadge(node.database?.engine)
+    const prefix = node.depth * INDENT_STEP.length + 2 + 1 + 1 + 1
     return (
       <box height={1} flexDirection="row" paddingX={1} backgroundColor={rowBg}>
         <text fg={rowFg} truncate>
           {indent}
-          {glyph} {active ? " ▶ " : "   "}
+          {glyph} {active ? "▶" : " "}
         </text>
         <text fg={dotFg}>{dot}</text>
         <text fg={rowFg} truncate>
           {" "}
-          {fitLabel(node.label, prefix + badge.length)}
+          {fitLabel(node.label, prefix + engineBadgeWidth(badge))}
         </text>
         <box flexGrow={1} />
-        <text fg={c.accentMuted}>{badge}</text>
+        <EngineBadgeText badge={badge} />
       </box>
     )
   }
@@ -150,13 +178,14 @@ function SidebarRow({
 
   /* A database row with no connection yet: leaf, no status, muted dot. */
   if (node.kind === "database") {
+    const badge = engineBadge(node.database?.engine)
     return (
       <box height={1} flexDirection="row" paddingX={1} backgroundColor={rowBg}>
         <text fg={rowFg} truncate>
-          {indent}○ {fitLabel(node.label, node.depth * INDENT_STEP.length + 2)}
+          {indent}○ {fitLabel(node.label, node.depth * INDENT_STEP.length + 2 + engineBadgeWidth(badge))}
         </text>
         <box flexGrow={1} />
-        <text fg={c.textMuted}>{ENGINE_BADGE[node.database?.engine ?? ""] ?? ""}</text>
+        <EngineBadgeText badge={badge} />
       </box>
     )
   }

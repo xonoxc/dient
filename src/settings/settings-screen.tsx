@@ -164,7 +164,9 @@ export function SettingsScreen() {
             : form.kind === "connect"
               ? [`type ${fieldLabel}`, "Tab field", "Ctrl+n engine", "Enter add", "Esc cancel"]
               : form.kind === "connectName"
-                ? ["database name missing", "Enter add", "Esc cancel"]
+                ? form.pending.engine === "redis"
+                  ? ["name this connection", "Enter add", "Esc cancel"]
+                  : ["database name missing", "Enter add", "Esc cancel"]
                 : form.kind === "rename"
                   ? ["new name", "Enter save", "Esc cancel"]
                   : ["type name", "Enter save", "Esc cancel"]
@@ -513,7 +515,9 @@ function SettingsFormDialog({
       : form.kind === "connect"
         ? `Add database · ${form.mode === "uri" ? "connection string" : form.engine}`
         : form.kind === "connectName"
-          ? "Choose a database name"
+          ? form.pending.engine === "redis"
+            ? "Name this Redis connection"
+            : "Choose a database name"
           : form.kind === "rename"
             ? "Rename database"
             : "New project"
@@ -524,7 +528,9 @@ function SettingsFormDialog({
     form.kind === "connect"
       ? "new database · connection string: "
       : form.kind === "connectName"
-        ? "the URL has no database name · name: "
+        ? form.suggestedName
+          ? "connection name: "
+          : "the URL has no database name · name: "
         : form.kind === "rename"
           ? "rename to: "
           : "new project: "
@@ -588,6 +594,12 @@ function SettingsFormDialog({
                     {completions.slice(0, 5).join("  ")}
                   </text>
                 ) : null}
+              </>
+            ) : null}
+            {form.kind === "connectName" && form.suggestedName ? (
+              <>
+                <box height={1} />
+                <text fg={c.textMuted}>Enter keeps {form.suggestedName}</text>
               </>
             ) : null}
           </>

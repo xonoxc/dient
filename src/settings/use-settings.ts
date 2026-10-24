@@ -63,8 +63,10 @@ export type SettingsForm =
   | {
       readonly kind: "connectName"
       readonly projectId: ProjectId
-      /** The parsed server URL that was missing a database name. */
-      readonly pending: Extract<ConnectionString, { engine: "postgres" | "mysql" }>
+      /** A parsed URL that still needs its display name. */
+      readonly pending: Extract<ConnectionString, { engine: "postgres" | "mysql" | "redis" }>
+      /** Redis URLs have no path name; offer host:port/index as a default. */
+      readonly suggestedName?: string
     }
   | { readonly kind: "rename"; readonly databaseId: DatabaseId }
 
@@ -489,25 +491,15 @@ export const useSettings = (): UseSettingsResult => {
         return
       }
       if (parsed.engine === "redis") {
-        const urlName = parsed.name
-        Effect.runFork(
-          Effect.gen(function* () {
-            if (yield* nameTaken(form.projectId, urlName)) {
-              toasts.push("error", `a database named "${urlName}" already exists`)
-              return
-            }
-            yield* createDatabaseAndConnection(form.projectId, urlName, "redis", {
-              host: parsed.host,
-              port: parsed.port,
-              user: parsed.user,
-              password: parsed.password,
-              defaultDatabase: parsed.defaultDatabase ?? "0",
-              tls: parsed.tls,
-            })
-            toasts.push("success", `added ${urlName} (redis)`)
-            finish()
-          }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))
-        )
+        /* A Redis URL has no path name: its host/port/index is a good default,
+           but the user still gets to choose the sidebar label. */
+        const next: SettingsForm = {
+          kind: "connectName",
+          projectId: form.projectId,
+          pending: parsed,
+          suggestedName: parsed.name,
+        }
+        openForm(next)
         return
       }
       if (!parsed.name) {
@@ -638,7 +630,8 @@ export const useSettings = (): UseSettingsResult => {
   const toastTaken = (name: string) => toasts.push("error", `a database named "${name}" already exists`)
 
   const submitFollowUpName = (form: Extract<SettingsForm, { kind: "connectName" }>): void => {
-    const name = draftRef.current.trim()
+    const typed = draftRef.current.trim()
+    const name = typed || (form.pending.engine === "redis" ? (form.suggestedName ?? "") : "")
     if (!name) {
       toasts.push("error", "a database name is required")
       return
@@ -655,7 +648,9 @@ export const useSettings = (): UseSettingsResult => {
           port: parsed.port,
           user: parsed.user,
           password: parsed.password,
-          defaultDatabase: parsed.defaultDatabase ?? name,
+          defaultDatabase:
+            parsed.engine === "redis" ? (parsed.defaultDatabase ?? "0") : (parsed.defaultDatabase ?? name),
+          ...(parsed.engine === "redis" && parsed.tls ? { tls: true } : {}),
         })
         toasts.push("success", `added ${name} (${parsed.engine})`)
         openForm(null)

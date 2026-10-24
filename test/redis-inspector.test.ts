@@ -133,12 +133,17 @@ describe("RedisInspector", () => {
   })
 
   test("a RedisJSON page pretty-prints the document", async () => {
-    const inspector = inspectorFor(command => {
+    const inspector = inspectorFor((command, args) => {
       if (command === "TYPE") return "ReJSON-RL"
       if (command === "TTL") return -1
       if (command === "MEMORY") return 20
       if (command === "OBJECT") return "raw"
-      if (command === "JSON") return '{"user":"alice","active":true}'
+      if (command === "JSON.GET") {
+        /* RedisJSON commands are a single dotted command name, not a `JSON`
+           command with a `GET` subcommand. */
+        expect(args).toEqual(["doc"])
+        return '{"user":"alice","active":true}'
+      }
       throw new Error(`unexpected ${command}`)
     })
 
