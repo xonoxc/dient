@@ -55,6 +55,8 @@ active connection, <code>●</code> is connection status.</sub>
 - **A terminal OpenTUI can drive.** The highlight bands want truecolor. The
   finder, settings and help panels size themselves against the terminal width;
   the confirm dialog is a fixed 60 columns.
+- **Docker + Compose (optional)** — only needed to run the sample PostgreSQL,
+  MySQL and Redis stack described below.
 
 ## Getting started
 
@@ -88,6 +90,44 @@ Then, in the app:
    The Redis path is a numeric database index, not a database name.
 3. `t` tests the connection, `Enter` saves, `e` returns to the explorer.
 4. `Enter` on a database connects and opens its first table.
+
+## Sample Docker stack
+
+A ready-to-browse stack lives in [`docker-compose.yml`](docker-compose.yml). It
+starts PostgreSQL, MySQL and Redis Stack (with RedisJSON), and seeds them with
+multiple databases and representative rows/keys.
+
+```bash
+docker compose up -d
+docker compose logs -f redis-seed   # Ctrl-C after "Redis sample data loaded"
+```
+
+| Connection | URL |
+| --- | --- |
+| PostgreSQL · `dient` | `postgres://dient:dient@localhost:55432/dient` |
+| PostgreSQL · `analytics` | `postgres://dient:dient@localhost:55432/analytics` |
+| MySQL · `shop` | `mysql://dient:dient@localhost:53306/shop` |
+| MySQL · `game_service` | `mysql://dient:dient@localhost:53306/game_service` |
+| Redis · DB 0 | `redis://localhost:56379/0` |
+| Redis · DB 1 | `redis://localhost:56379/1` |
+
+The PostgreSQL databases contain users, products, orders, and 250 JSON events
+for paging. MySQL contains a shop schema and a `game_service` schema with 250
+runs. Redis DB 0 has strings (including a 70 KB value for the truncation
+notice), a hash, list, set, sorted set, stream, TTL key, and a RedisJSON
+document; DB 1 has a separate greeting to exercise the `/1` database suffix.
+
+The seed is idempotent, so `docker compose up -d` after a normal `docker compose
+down` keeps your changes. To wipe the volumes and reseed everything:
+
+```bash
+docker compose down -v
+docker compose up -d
+```
+
+If `55432`, `53306` or `56379` is already in use, change the host side of the
+port mapping in `docker-compose.yml`. SQLite needs no service — paste an
+absolute path such as `sqlite:///absolute/path/to/file.db`.
 
 ## Scripts
 

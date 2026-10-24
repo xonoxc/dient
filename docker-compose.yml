@@ -1,0 +1,72 @@
+name: dient-samples
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dient
+      POSTGRES_PASSWORD: dient
+      POSTGRES_DB: dient
+    ports:
+      - "55432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dient -d dient"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: dient
+      MYSQL_DATABASE: shop
+      MYSQL_USER: dient
+      MYSQL_PASSWORD: dient
+    ports:
+      - "53306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/01-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -pdient --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  redis:
+    # Redis Stack includes the RedisJSON module, so the sample has every view.
+    image: redis/redis-stack-server:latest
+    ports:
+      - "56379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # One-shot seeder. It waits for Redis, then loads the sample keyspace.
+  # Re-running `docker compose up -d` skips it once the marker key exists.
+  redis-seed:
+    image: redis:7-alpine
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    volumes:
+      - ./docker/redis/seed.sh:/seed.sh:ro
+    entrypoint: ["/bin/sh", "/seed.sh"]
+    restart: "no"
+
+volumes:
+  postgres-data:
+  mysql-data:
+  redis-data:
