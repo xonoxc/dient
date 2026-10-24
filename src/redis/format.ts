@@ -6,7 +6,30 @@ import type { RedisKeyInfo } from "@/redis/types"
  *  name a person recognises. */
 export const redisTypeLabel = (type: string): string => (type === "ReJSON-RL" || type === "json" ? "json" : type)
 
-/** Semantic theme token for a key type's badge. Kept as a token (not an RGBA)
+/** A one-cell cue for the type, paired with the name in the keyspace table. */
+export const redisTypeSymbol = (type: string): string => {
+  switch (type) {
+    case "string":
+      return '"'
+    case "hash":
+      return "#"
+    case "list":
+      return "≡"
+    case "set":
+      return "∈"
+    case "zset":
+      return "↕"
+    case "stream":
+      return "»"
+    case "ReJSON-RL":
+    case "json":
+      return "{}"
+    default:
+      return "?"
+  }
+}
+
+/** Semantic theme token for a key type's label. Kept as a token (not an RGBA)
  *  so the view can resolve it against the active terminal palette. */
 export type RedisTypeTone = "success" | "info" | "warning" | "error" | "accent" | "accentMuted" | "textMuted"
 

@@ -45,12 +45,12 @@ describe("redis explorer", () => {
       await pressKeys(setup, ["j", "RETURN"])
       await setup.waitForFrame(f => f.includes("KEYS") && f.includes("greeting"))
 
-      /* Key types are rendered as colored badges, not bare cell text. */
+      /* Key types are a colored symbol + name, not a background block. */
       const typeBadge = setup
         .captureSpans()
         .lines.flatMap(line => line.spans)
-        .find(span => span.text === " string ")
-      expect(typeBadge?.bg?.toInts()).toEqual(makeTheme("dark").colors.success.toInts())
+        .find(span => span.text === '" string')
+      expect(typeBadge?.fg.toInts()).toEqual(makeTheme("dark").colors.success.toInts())
 
       await pressKeys(setup, ["2"])
       await pressKeys(setup, ["RETURN"])

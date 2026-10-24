@@ -39,14 +39,21 @@ import { paneIndexForKey } from "@/ui/pane-keys"
 import { windowTail } from "@/ui/text-window"
 import { LoadingIndicator } from "@/ui/loading-indicator"
 import { RedisStreamPanel, RedisTextPanel } from "@/redis/redis-views"
-import { formatTtl, redisKeyDetail, redisLengthLabel, redisTypeLabel, redisTypeTone } from "@/redis/format"
+import {
+  formatTtl,
+  redisKeyDetail,
+  redisLengthLabel,
+  redisTypeLabel,
+  redisTypeSymbol,
+  redisTypeTone,
+} from "@/redis/format"
 import type { ThemeColors } from "@/theme"
 
 const TABLE_MOVE_KEYS = new Set(["j", "k", "g", "G"])
 
-/* A padded badge is wider than the raw Redis type/TTL text the table measures,
-   so those two columns get a floor. */
-const REDIS_KEYS_MIN_WIDTHS: Readonly<Record<string, number>> = { type: 12, ttl: 13 }
+/* The symbol + name is wider than the raw type text the table measures, so the
+   column needs a floor. */
+const REDIS_KEYS_MIN_WIDTHS: Readonly<Record<string, number>> = { type: 9 }
 
 const redisCellDecoration = (
   colors: ThemeColors,
@@ -56,20 +63,15 @@ const redisCellDecoration = (
 ): CellDecoration | undefined => {
   if (column === "type" && typeof value === "string") {
     return {
-      display: ` ${redisTypeLabel(value)} `,
-      fg: colors.bg,
-      bg: colors[redisTypeTone(value)],
+      display: `${redisTypeSymbol(value)} ${redisTypeLabel(value)}`,
+      fg: colors[redisTypeTone(value)],
     }
   }
   if (column === "ttl") {
     const label = String(value ?? "—")
-    if (label === "no expiry") {
-      return { display: ` ${label} `, fg: colors.textMuted, bg: colors.bgSurface }
-    }
     return {
-      display: ` ${label} `,
-      fg: colors.bg,
-      bg: label === "—" ? colors.error : colors.warning,
+      display: label,
+      fg: label === "no expiry" ? colors.textMuted : label === "—" ? colors.error : colors.warning,
     }
   }
   return undefined
@@ -137,9 +139,8 @@ export function ExplorerScreen() {
      timeline for streams. */
   const redisKeyspace = explorer.redisView?.kind === "keys"
   const redisKeyInfo = explorer.redisView?.kind === "key" ? explorer.redisInfo : null
-  const redisTextMode =
-    explorer.redisView?.kind === "key" &&
-    (redisKeyInfo?.type === "string" || redisKeyInfo?.type === "ReJSON-RL" || redisKeyInfo?.type === "json")
+  const redisJsonMode = redisKeyInfo?.type === "ReJSON-RL" || redisKeyInfo?.type === "json"
+  const redisTextMode = explorer.redisView?.kind === "key" && (redisKeyInfo?.type === "string" || redisJsonMode)
   const redisStreamMode = explorer.redisView?.kind === "key" && redisKeyInfo?.type === "stream"
   const redisCustomView = redisTextMode || redisStreamMode
   const redisScrollRef = useRef<ScrollBoxRenderable | null>(null)
@@ -1099,6 +1100,7 @@ export function ExplorerScreen() {
               note={explorer.redisPage.note}
               width={dataWidth}
               scrollRef={redisScrollRef}
+              json={redisJsonMode}
             />
           ) : redisStreamMode ? (
             <RedisStreamPanel

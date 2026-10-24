@@ -11,8 +11,10 @@ import type { RefObject } from "react"
 import { useEffect } from "react"
 import type { ScrollBoxRenderable } from "@opentui/core"
 import { useTheme } from "@/theme-context"
+import type { ThemeColors } from "@/theme"
 import { formatCell } from "@/table/use-table"
 import { wrapText } from "@/explorer/cell-viewer"
+import { highlightJsonLines, type JsonTokenKind } from "@/redis/json-highlight"
 import type { RedisStreamEntry } from "@/redis/types"
 
 export interface RedisTextPanelProps {
@@ -20,6 +22,8 @@ export interface RedisTextPanelProps {
   readonly note?: string
   readonly width: number
   readonly scrollRef: RefObject<ScrollBoxRenderable | null>
+  /** JSON values get syntax colors on top of the wrapped-text layout. */
+  readonly json?: boolean
 }
 
 /* A 64 KB value can contain tens of thousands of newlines. Every rendered line
@@ -27,14 +31,34 @@ export interface RedisTextPanelProps {
    frame when someone opens a pathological string. */
 const MAX_TEXT_LINES = 4_000
 
-export function RedisTextPanel({ value, note, width, scrollRef }: RedisTextPanelProps) {
+const jsonColor = (colors: ThemeColors, kind: JsonTokenKind) => {
+  switch (kind) {
+    case "key":
+      return colors.info
+    case "string":
+      return colors.success
+    case "number":
+      return colors.warning
+    case "literal":
+      return colors.accent
+    case "punctuation":
+      return colors.textMuted
+    default:
+      return colors.text
+  }
+}
+
+export function RedisTextPanel({ value, note, width, scrollRef, json = false }: RedisTextPanelProps) {
   const { colors: c } = useTheme()
   const body = value.length > 0 ? value : "(empty string)"
-  const wrapped = wrapText(body, Math.max(8, width - 6))
-  const lines = wrapped.slice(0, MAX_TEXT_LINES)
+  const room = Math.max(8, width - 6)
+  const styled = json
+    ? highlightJsonLines(body, room)
+    : wrapText(body, room).map(line => [{ text: line, kind: "plain" as const }])
+  const lines = styled.slice(0, MAX_TEXT_LINES)
   const lineNote =
-    wrapped.length > MAX_TEXT_LINES
-      ? `showing first ${MAX_TEXT_LINES.toLocaleString()} of ${wrapped.length.toLocaleString()} wrapped lines`
+    styled.length > MAX_TEXT_LINES
+      ? `showing first ${MAX_TEXT_LINES.toLocaleString()} of ${styled.length.toLocaleString()} wrapped lines`
       : undefined
   const footer = [note, lineNote].filter(Boolean).join(" · ")
   /* A new key (or a paged value) starts at the top; the scrollbox is reused
@@ -42,7 +66,7 @@ export function RedisTextPanel({ value, note, width, scrollRef }: RedisTextPanel
   useEffect(() => {
     const box = scrollRef.current
     if (box) box.scrollTop = 0
-  }, [value, scrollRef])
+  }, [json, value, scrollRef])
   return (
     <scrollbox
       ref={scrollRef}
@@ -54,7 +78,13 @@ export function RedisTextPanel({ value, note, width, scrollRef }: RedisTextPanel
       <box flexDirection="column" paddingX={2} paddingY={1}>
         {lines.map((line, index) => (
           <text key={index} fg={c.text}>
-            {line.length > 0 ? line : " "}
+            {line.length === 0
+              ? " "
+              : line.map((segment, segmentIndex) => (
+                  <span key={segmentIndex} fg={jsonColor(c, segment.kind)}>
+                    {segment.text}
+                  </span>
+                ))}
           </text>
         ))}
         {footer ? (
