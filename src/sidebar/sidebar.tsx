@@ -18,6 +18,8 @@ export interface SidebarProps {
   readonly statuses: Readonly<Record<string, ConnectionStatus>>
   readonly activeConnectionId?: ConnectionId
   readonly focus: boolean
+  /** The pane's number in the screen's left-to-right layout (1-based). */
+  readonly paneNumber: number
   readonly mode?: VimMode
 }
 
@@ -55,7 +57,8 @@ export function Sidebar(props: SidebarProps) {
     return (
       <box width={SIDEBAR_WIDTH} height="100%" flexDirection="row" overflow="hidden">
         <box flexGrow={1} flexDirection="column" paddingX={1}>
-          <box height={1}>
+          <box height={1} flexDirection="row">
+            <text fg={props.focus ? c.accent : c.textMuted}>{props.paneNumber} </text>
             <text fg={c.textMuted}>PROJECTS</text>
           </box>
           <text fg={c.textMuted}>no projects yet</text>
@@ -69,7 +72,8 @@ export function Sidebar(props: SidebarProps) {
   return (
     <box width={SIDEBAR_WIDTH} height="100%" flexDirection="row" overflow="hidden">
       <box flexGrow={1} flexDirection="column" overflow="hidden">
-        <box height={1} paddingX={1}>
+        <box height={1} paddingX={1} flexDirection="row">
+          <text fg={props.focus ? c.accent : c.textMuted}>{props.paneNumber} </text>
           <text fg={c.textMuted}>PROJECTS</text>
         </box>
         {props.items.map((node, index) => (

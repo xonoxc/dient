@@ -325,7 +325,11 @@ describe("pane focus", () => {
       await setup.waitForFrame(f => f.includes("USERS") && f.includes("alice"))
 
       /* sidebar owns the keyboard: its hints name opening, not previewing */
-      expect(setup.captureCharFrame()).toContain("Enter open")
+      const sidebarFrame = setup.captureCharFrame()
+      expect(sidebarFrame).toContain("Enter open")
+      /* the panes wear their left-to-right numbers, so 1/2 are self-describing */
+      expect(sidebarFrame).toContain("1 PROJECTS")
+      expect(sidebarFrame).toContain("2 ▌ USERS")
 
       await pressKeys(setup, ["2"])
       await setup.waitForFrame(f => f.includes("Enter preview"))

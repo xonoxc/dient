@@ -6,18 +6,21 @@
  * key is typed text — a pasted `mysql://user:pw@host:3306/db` contains most
  * of NORMAL mode's letters. In the credentials form, Tab changes fields,
  * Ctrl+n changes engines, Ctrl+v pastes, and Esc cancels.
- * Focus lives entirely here while this screen is active.
+ * Focus lives entirely here while this screen is active; the number keys move
+ * it between the workspaces list (1) and the selection details (2).
  */
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState, type RefObject } from "react"
 import { Effect, Option } from "effect"
 import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/react"
 import { decodePasteBytes } from "@opentui/core"
+import type { ScrollBoxRenderable } from "@opentui/core"
 import { useTheme } from "@/theme-context"
 import { useRouter, useCommandLine, useSessionStatus, useTextInput, useToasts, type RoutedKey } from "@/app-context"
 import { useUpdateUi } from "@/update/update-provider"
 import { useSettings, type SettingsForm, type SettingsListItem } from "@/settings/use-settings"
 import { FIELD_LABEL, CONNECTION_FIELDS, ADD_CHOICES } from "@/settings/use-settings"
 import { normalModeKey, resolveTypedChar } from "@/ui/text-entry"
+import { paneIndexForKey } from "@/ui/pane-keys"
 import { windowTail } from "@/ui/text-window"
 import { LoadingIndicator } from "@/ui/loading-indicator"
 import { readSystemClipboard } from "@/ui/clipboard"
@@ -71,6 +74,27 @@ export function SettingsScreen() {
   const showDetails = width >= 100
   const listWidth = Math.min(48, Math.floor(width * 0.38))
 
+  /* Two panes exist only when the details column fits. Their left-to-right
+     order is the pane order: 1 is the workspaces list, 2 the selection details. */
+  const [pane, setPane] = useState<"list" | "details">("list")
+  const detailsRef = useRef<ScrollBoxRenderable | null>(null)
+  const activePane = showDetails ? pane : "list"
+
+  const detailsMaxScroll = (): number => {
+    const box = detailsRef.current
+    return box ? Math.max(0, box.scrollHeight - box.height) : 0
+  }
+  const scrollDetails = (delta: number) => {
+    const box = detailsRef.current
+    if (!box) return
+    box.scrollTop = Math.max(0, Math.min(detailsMaxScroll(), box.scrollTop + delta))
+  }
+  const scrollDetailsTo = (position: "first" | "last") => {
+    const box = detailsRef.current
+    if (!box) return
+    box.scrollTop = position === "first" ? 0 : detailsMaxScroll()
+  }
+
   const fieldLabel = field
     ? field === "uri"
       ? "connection string"
@@ -122,6 +146,7 @@ export function SettingsScreen() {
       "e explorer",
       "j/k move",
       "Enter expand",
+      ...(showDetails ? ["1/2 panes"] : []),
       "? help",
     ]
     if (update.phase === "available" && update.release) idle.unshift(`${update.release.tag} :upgrade`)
@@ -143,7 +168,7 @@ export function SettingsScreen() {
                   : ["type name", "Enter save", "Esc cancel"]
         : idle,
     })
-  }, [session.setStatus, form, field, testing, completions.length, textInput.active]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [session.setStatus, form, field, testing, completions.length, textInput.active, showDetails]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /* INSERT mode: while a form is open it is the sole keyboard owner. The app
      dispatcher routes every key here and never consults a NORMAL binding, so a
@@ -234,6 +259,16 @@ export function SettingsScreen() {
     if (router.helpOpen || commandLine.open) return
     const key = normalModeKey(e)
 
+    /* Number keys focus panes left to right: 1 = workspaces, 2 = details. The
+       second pane only exists on a wide terminal, so 2 is ignored when the
+       layout has collapsed to a single column. */
+    const paneIndex = paneIndexForKey(e, showDetails ? 2 : 1)
+    if (paneIndex !== null) {
+      e.preventDefault()
+      setPane(paneIndex === 0 ? "list" : "details")
+      return
+    }
+
     if (key === "P" && !e.ctrl && !e.meta) {
       addProject()
       return
@@ -245,15 +280,18 @@ export function SettingsScreen() {
         return
       case "j":
       case "down":
-        move(1)
+        if (activePane === "details") scrollDetails(1)
+        else move(1)
         return
       case "k":
       case "up":
-        move(-1)
+        if (activePane === "details") scrollDetails(-1)
+        else move(-1)
         return
       case "g":
       case "G":
-        jump(key === "G" ? "last" : "first")
+        if (activePane === "details") scrollDetailsTo(key === "G" ? "last" : "first")
+        else jump(key === "G" ? "last" : "first")
         return
       case "enter":
       case "return":
@@ -293,7 +331,8 @@ export function SettingsScreen() {
 
       <box flexGrow={1} flexDirection="row" overflow="hidden">
         <box width={showDetails ? listWidth : "100%"} flexDirection="column" overflow="hidden">
-          <box height={1} paddingX={1}>
+          <box height={1} paddingX={1} flexDirection="row">
+            <text fg={activePane === "list" ? c.accent : c.textMuted}>1 </text>
             <text fg={c.textMuted}>WORKSPACES</text>
           </box>
           <box flexGrow={1} flexDirection="column" paddingX={1} paddingTop={1} overflow="hidden">
@@ -311,6 +350,7 @@ export function SettingsScreen() {
                   cursor={cursor}
                   testing={testing}
                   showSummary={!showDetails}
+                  focus={activePane === "list"}
                 />
               ))
             )}
@@ -322,7 +362,12 @@ export function SettingsScreen() {
             <box width={1} height="100%">
               <text fg={c.border}>{"│\n".repeat(Math.max(1, height))}</text>
             </box>
-            <SettingsDetails item={selectedItem} projectCount={projects.length} />
+            <SettingsDetails
+              item={selectedItem}
+              projectCount={projects.length}
+              scrollRef={detailsRef}
+              focused={activePane === "details"}
+            />
           </>
         ) : null}
       </box>
@@ -345,7 +390,17 @@ export function SettingsScreen() {
   )
 }
 
-function SettingsDetails({ item, projectCount }: { item?: SettingsListItem; projectCount: number }) {
+function SettingsDetails({
+  item,
+  projectCount,
+  scrollRef,
+  focused,
+}: {
+  item?: SettingsListItem
+  projectCount: number
+  scrollRef: RefObject<ScrollBoxRenderable | null>
+  focused: boolean
+}) {
   const { colors: c } = useTheme()
   const connection = item?.connection
   const location = connection?.filename
@@ -355,48 +410,55 @@ function SettingsDetails({ item, projectCount }: { item?: SettingsListItem; proj
       : null
 
   return (
-    <box flexGrow={1} flexDirection="column" paddingX={3} paddingY={1} overflow="hidden">
-      <text fg={c.textMuted}>SELECTION</text>
-      {item ? (
-        <>
-          <box height={1} />
-          <text fg={c.textBright}>{item.label}</text>
-          <text fg={item.kind === "database" ? c.accent : c.textMuted}>
-            {item.kind === "database" ? (item.meta ?? "database").toUpperCase() : "PROJECT"}
-          </text>
-          <box height={1} />
-          {item.kind === "project" ? (
-            <>
-              <text fg={c.textMuted}>Project workspace</text>
-              <text fg={c.textMuted}>Press Enter to view its databases.</text>
-            </>
-          ) : (
-            <>
-              <text fg={c.textMuted}>{connection ? "CONNECTION" : "CONNECTION MISSING"}</text>
-              <text fg={connection ? c.text : c.warning}>{location ?? "Add connection details with a."}</text>
-              {connection?.defaultDatabase ? (
-                <text fg={c.textMuted}>default database · {connection.defaultDatabase}</text>
-              ) : null}
-            </>
-          )}
-          <box height={2} />
-          <text fg={c.textMuted}>{item.kind === "project" ? "Shift+P  create project" : "r  rename   d  remove"}</text>
-          <text fg={c.textMuted}>
-            {item.kind === "project" ? "a  add database   p  paste URI" : "t  test connection"}
-          </text>
-        </>
-      ) : (
-        <>
-          <box height={1} />
-          <text fg={c.textBright}>Your database workspaces</text>
-          <box height={1} />
-          <text fg={c.textMuted}>
-            {projectCount === 0 ? "Create a project to get started." : "Select a project or database to see details."}
-          </text>
-          <text fg={c.textMuted}>Press ? for all keyboard shortcuts.</text>
-        </>
-      )}
-    </box>
+    <scrollbox ref={scrollRef} flexGrow={1} scrollY verticalScrollbarOptions={{ visible: false }}>
+      <box flexDirection="column" paddingX={3} paddingY={1}>
+        <box height={1} flexDirection="row">
+          <text fg={focused ? c.accent : c.textMuted}>2 </text>
+          <text fg={c.textMuted}>SELECTION</text>
+        </box>
+        {item ? (
+          <>
+            <box height={1} />
+            <text fg={c.textBright}>{item.label}</text>
+            <text fg={item.kind === "database" ? c.accent : c.textMuted}>
+              {item.kind === "database" ? (item.meta ?? "database").toUpperCase() : "PROJECT"}
+            </text>
+            <box height={1} />
+            {item.kind === "project" ? (
+              <>
+                <text fg={c.textMuted}>Project workspace</text>
+                <text fg={c.textMuted}>Press Enter to view its databases.</text>
+              </>
+            ) : (
+              <>
+                <text fg={c.textMuted}>{connection ? "CONNECTION" : "CONNECTION MISSING"}</text>
+                <text fg={connection ? c.text : c.warning}>{location ?? "Add connection details with a."}</text>
+                {connection?.defaultDatabase ? (
+                  <text fg={c.textMuted}>default database · {connection.defaultDatabase}</text>
+                ) : null}
+              </>
+            )}
+            <box height={2} />
+            <text fg={c.textMuted}>
+              {item.kind === "project" ? "Shift+P  create project" : "r  rename   d  remove"}
+            </text>
+            <text fg={c.textMuted}>
+              {item.kind === "project" ? "a  add database   p  paste URI" : "t  test connection"}
+            </text>
+          </>
+        ) : (
+          <>
+            <box height={1} />
+            <text fg={c.textBright}>Your database workspaces</text>
+            <box height={1} />
+            <text fg={c.textMuted}>
+              {projectCount === 0 ? "Create a project to get started." : "Select a project or database to see details."}
+            </text>
+            <text fg={c.textMuted}>Press ? for all keyboard shortcuts.</text>
+          </>
+        )}
+      </box>
+    </scrollbox>
   )
 }
 
@@ -589,18 +651,22 @@ function SettingsRow({
   cursor,
   testing,
   showSummary,
+  focus,
 }: {
   item: SettingsListItem
   index: number
   cursor: number
   testing: string | null
   showSummary: boolean
+  focus: boolean
 }) {
   const theme = useTheme()
   const c = theme.colors
   const selected = index === cursor
   const fg = selected ? c.textBright : c.text
-  const bg = selected ? c.bgHighlight : undefined
+  /* The selection band only appears while the list owns the keyboard; when the
+     details pane has focus, bright text still marks the row without competing. */
+  const bg = selected && focus ? c.bgHighlight : undefined
   const indent = "  ".repeat(item.depth)
 
   const glyph = item.kind === "project" ? (item.expanded ? "▾ " : "▸ ") : "○ "

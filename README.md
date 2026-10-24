@@ -100,13 +100,17 @@ Then, in the app:
 `?` opens this reference in-app. The tables below mirror
 `src/ui/help-screen.tsx` — change both together.
 
+Panes are numbered left to right from `1`; pressing a pane's number focuses it.
+The rule is the same on every screen with more than one pane.
+
 ### Explorer
 
 | Key | Action |
 | --- | --- |
 | `j` / `k` (↓ / ↑) | Move down / up |
 | `gg` / `G` | First / last |
-| `h` / `l` | Focus sidebar / table |
+| `1` / `2` | Focus pane 1 (sidebar) / pane 2 (table) |
+| `h` / `l` | Scroll columns left / right |
 | ← / → | Previous / next column |
 | `Enter` | Open a table, or edit the cell under the cursor |
 | `i` | Edit the current row in `$EDITOR` |
@@ -124,6 +128,7 @@ Then, in the app:
 | Key | Action |
 | --- | --- |
 | `j` / `k` (↓ / ↑), `gg` / `G` | Move, first / last |
+| `1` / `2` | Focus pane 1 (workspaces) / pane 2 (details) |
 | `Enter` | Expand / select |
 | `a` | Add a database |
 | `p` | Paste a connection URI |

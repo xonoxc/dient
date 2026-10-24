@@ -49,6 +49,47 @@ describe("settings screen", () => {
     }
   })
 
+  test("number keys focus panes left to right on a wide screen", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: "data.db",
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />, {
+      width: 120,
+      height: 26,
+    })
+    try {
+      await openSettings(setup)
+      await expandProject(setup)
+      /* Back to the project: its details are easy to tell apart from a
+         database's ("Project workspace" vs "CONNECTION"). */
+      await pressKeys(setup, ["k"])
+      await setup.waitForFrame(f => f.includes("Project workspace"))
+      expect(setup.captureCharFrame()).toContain("1 WORKSPACES")
+      expect(setup.captureCharFrame()).toContain("2 SELECTION")
+
+      /* Pane 2 is the details column: j scrolls it and leaves the list cursor
+         where it was, so the selected project is still described. */
+      await pressKeys(setup, ["2"])
+      await pressKeys(setup, ["j"])
+      const focusedDetails = setup.captureCharFrame()
+      expect(focusedDetails).toContain("Project workspace")
+      expect(focusedDetails).not.toContain("CONNECTION")
+
+      /* Pane 1 returns focus to the list; j now moves the selection to the
+         database and the details follow it. */
+      await pressKeys(setup, ["1"])
+      await pressKeys(setup, ["j"])
+      await setup.waitForFrame(f => f.includes("CONNECTION") && f.includes("data.db"))
+      expect(setup.captureCharFrame()).toContain("CONNECTION")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
   test("the connection form validates the pasted string", async () => {
     const services = await resolveTestServices(freshConfigFile())
     const seeded = await seedProject(services.store, {

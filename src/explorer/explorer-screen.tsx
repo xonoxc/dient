@@ -21,7 +21,7 @@ import { Sidebar } from "@/sidebar/sidebar"
 import { SIDEBAR_WIDTH } from "@/sidebar/fit-label"
 import { DataTable } from "@/table/data-table"
 import { selectionRange, useVimMode } from "@/vim"
-import { useExplorer } from "@/explorer/use-explorer"
+import { PANEL_ORDER, useExplorer } from "@/explorer/use-explorer"
 import { editRowInEditor } from "@/editor/edit-row-in-editor"
 import { yankRows } from "@/editor/row-clipboard"
 import { writeSystemClipboard } from "@/ui/clipboard"
@@ -34,10 +34,15 @@ import { useUpdateUi } from "@/update/update-provider"
 import { CELL_VIEWER_TEXT_WIDTH, CellViewer, wrapText } from "@/explorer/cell-viewer"
 import { fuzzyMatch } from "@/finder/fuzzy"
 import { normalModeKey, resolveTypedChar } from "@/ui/text-entry"
+import { paneIndexForKey } from "@/ui/pane-keys"
 import { windowTail } from "@/ui/text-window"
 import { LoadingIndicator } from "@/ui/loading-indicator"
 
 const TABLE_MOVE_KEYS = new Set(["j", "k", "g", "G"])
+
+/** Pane numbers are positions in `PANEL_ORDER`, so labels and keys agree. */
+const SIDEBAR_PANE = PANEL_ORDER.indexOf("sidebar") + 1
+const TABLE_PANE = PANEL_ORDER.indexOf("table") + 1
 
 /** Rows the data pane cannot spend on rows: page top padding, table strip,
     column header, command bar, status bar. */
@@ -582,18 +587,15 @@ export function ExplorerScreen() {
     if (router.helpOpen || commandLine.open) return
     const key = normalModeKey(e)
 
-    /* Pane switching is a window command that must stay reachable even while
-       an overlay (preview / cell viewer) is open: otherwise 1/2 silently stop
-       working the moment a row is inspected, which reads as a broken shortcut.
-       Handle it before the overlay guards below. */
-    if (key === "1") {
+    /* Number keys focus panes left to right (1 = sidebar, 2 = table). A window
+       command like this must stay reachable even while an overlay (preview /
+       cell viewer) is open: otherwise the pane switch silently stops working
+       the moment a row is inspected, which reads as a broken shortcut. Handle
+       it before the overlay guards below. */
+    const paneIndex = paneIndexForKey(e, PANEL_ORDER.length)
+    if (paneIndex !== null) {
       e.preventDefault()
-      setFocus("sidebar")
-      return
-    }
-    if (key === "2") {
-      e.preventDefault()
-      setFocus("table")
+      setFocus(PANEL_ORDER[paneIndex]!)
       return
     }
 
@@ -874,6 +876,7 @@ export function ExplorerScreen() {
         statuses={explorer.statuses}
         activeConnectionId={active?.connection.id}
         focus={focus === "sidebar"}
+        paneNumber={SIDEBAR_PANE}
       />
 
       <box flexGrow={1} flexDirection="column">
@@ -881,6 +884,7 @@ export function ExplorerScreen() {
           tableName={tableName}
           loading={loading}
           focus={focus === "table"}
+          paneNumber={TABLE_PANE}
           compact={width < 120}
           offset={explorer.offset}
           rows={explorer.table.sortedRows.length}
@@ -985,6 +989,7 @@ function TableStrip({
   tableName,
   loading,
   focus,
+  paneNumber,
   compact,
   offset,
   rows,
@@ -996,6 +1001,7 @@ function TableStrip({
   tableName: string | null
   loading: boolean
   focus: boolean
+  paneNumber: number
   compact: boolean
   offset: number
   rows: number
@@ -1010,7 +1016,7 @@ function TableStrip({
   if (!tableName) {
     return (
       <box height={1} paddingX={1}>
-        <text fg={c.textMuted}>{loading ? "connecting" : "no table open"}</text>
+        <text fg={c.textMuted}>{`${paneNumber} ${loading ? "connecting" : "no table open"}`}</text>
       </box>
     )
   }
@@ -1019,7 +1025,7 @@ function TableStrip({
     <box height={1} flexDirection="row" overflow="hidden">
       <box height={1} paddingX={1} backgroundColor={c.bgHighlight}>
         <text fg={focus ? c.accent : c.textBright} truncate>
-          {"\u258c " + tableName.toUpperCase()}
+          {`${paneNumber} \u258c ${tableName.toUpperCase()}`}
         </text>
       </box>
       <box flexGrow={1} />

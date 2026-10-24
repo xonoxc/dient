@@ -22,6 +22,13 @@ import { formatCell } from "@/table/use-table"
 
 export type PanelFocus = "sidebar" | "table"
 
+/**
+ * Panes in left-to-right layout order. Number key N focuses `PANEL_ORDER[N - 1]`,
+ * so the numbering always follows what the user sees rather than a separate
+ * id table.
+ */
+export const PANEL_ORDER = ["sidebar", "table"] as const satisfies ReadonlyArray<PanelFocus>
+
 export interface ActiveExplorer {
   readonly id: ConnectionId
   readonly connection: Connection

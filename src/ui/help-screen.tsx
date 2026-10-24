@@ -31,6 +31,7 @@ const SETTINGS: ReadonlyArray<Binding> = [
   ["j / ↓", "move down"],
   ["k / ↑", "move up"],
   ["gg / G", "first / last"],
+  ["1 / 2", "focus workspaces / details"],
   ["Enter", "expand / select"],
   ["a", "add database"],
   ["p", "paste connection URI"],
