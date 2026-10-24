@@ -227,6 +227,7 @@ function HeaderRow({
             <text
               fg={activeColumn === column.name ? c.textBright : c.accent}
               width={Math.max(1, widthOf(column.name) - 2)}
+              truncate
             >
               {column.name.toUpperCase()}
               {marker}
@@ -299,13 +300,13 @@ function RowLine({
               {parts ? (
                 <box flexDirection="row">
                   {parts.map((part, index) => (
-                    <text key={index} fg={part.matched ? c.accent : fg}>
+                    <text key={index} fg={part.matched ? c.accent : fg} truncate>
                       {part.text}
                     </text>
                   ))}
                 </box>
               ) : (
-                <text fg={fg}>{rawFormatted}</text>
+                <text fg={fg} truncate>{rawFormatted}</text>
               )}
             </box>
             <text fg={c.grid}>{last ? "│" : "│ "}</text>

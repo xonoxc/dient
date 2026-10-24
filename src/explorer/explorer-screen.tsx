@@ -39,12 +39,6 @@ import { LoadingIndicator } from "@/ui/loading-indicator"
 
 const TABLE_MOVE_KEYS = new Set(["j", "k", "g", "G"])
 
-const isCtrlH = (name: string, ctrl: boolean, shift: boolean): boolean =>
-  !shift && ((ctrl && name.toLowerCase() === "h") || name.toLowerCase() === "ctrl+h" || name === "backspace")
-
-const isCtrlL = (name: string, ctrl: boolean, shift: boolean): boolean =>
-  !shift && ((ctrl && name.toLowerCase() === "l") || name.toLowerCase() === "ctrl+l")
-
 /** Rows the data pane cannot spend on rows: page top padding, table strip,
     column header, command bar, status bar. */
 const DATA_PANE_CHROME_ROWS = 5
@@ -457,7 +451,7 @@ export function ExplorerScreen() {
         "j/k move",
         "Enter open",
         "space jump",
-        "Ctrl+H/L panels",
+        "1/2 panes",
         "q quit",
         "? help",
       ]
@@ -476,7 +470,7 @@ export function ExplorerScreen() {
       "space jump",
       "gg/G jump",
       "/ search",
-      "Ctrl+H/L panels",
+      "1/2 panes",
       "q quit",
       "? help",
     ]
@@ -588,6 +582,21 @@ export function ExplorerScreen() {
     if (router.helpOpen || commandLine.open) return
     const key = normalModeKey(e)
 
+    /* Pane switching is a window command that must stay reachable even while
+       an overlay (preview / cell viewer) is open: otherwise 1/2 silently stop
+       working the moment a row is inspected, which reads as a broken shortcut.
+       Handle it before the overlay guards below. */
+    if (key === "1") {
+      e.preventDefault()
+      setFocus("sidebar")
+      return
+    }
+    if (key === "2") {
+      e.preventDefault()
+      setFocus("table")
+      return
+    }
+
     /* The full-value viewer sits above everything (table or preview) while it
        is open and owns the keyboard the same way the preview does: `j`/`k`
        scroll its wrapped lines, and anything else either closes it or stops
@@ -672,20 +681,6 @@ export function ExplorerScreen() {
       return
     }
 
-    /* Ctrl+H is encoded as Backspace by terminals using the legacy control
-       byte. Keep the pane chords symmetric and check them before focus-specific
-       navigation so they work from either pane. */
-    if (isCtrlH(key, e.ctrl === true, e.shift === true)) {
-      e.preventDefault()
-      setFocus("sidebar")
-      return
-    }
-    if (isCtrlL(key, e.ctrl === true, e.shift === true)) {
-      e.preventDefault()
-      setFocus("table")
-      return
-    }
-
     /* `q` quits, but only from NORMAL with nothing modal open — the guards
        above already returned for a text field, the help overlay, and the
        command line. Without a VISUAL check `q` would quit out from under an
@@ -747,8 +742,8 @@ export function ExplorerScreen() {
         explorer.selectActive()
         return
       }
-      /* Pane switching is a Ctrl chord (vim-style window command): plain `l`
-         stays unbound here so the switch reads the same from both panes. */
+      /* The right arrow also moves from the sidebar into the table; the
+         numbered pane commands (1/2) work from either pane. */
       if (key === "right") {
         setFocus("table")
         return

@@ -37,7 +37,7 @@ async function connect(setup: Awaited<ReturnType<typeof renderApp>>) {
   await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
   await pressKeys(setup, ["j", "RETURN"])
   await setup.waitForFrame(f => f.includes("USERS") && f.includes("alice"))
-  await pressKeys(setup, ["CTRL+l"])
+  await pressKeys(setup, ["2"])
 }
 
 describe("command line", () => {

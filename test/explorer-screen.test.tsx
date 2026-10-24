@@ -87,7 +87,7 @@ describe("explorer screen", () => {
       await expandToConnection(setup)
       /* Focus must land on the table before the selection keys are read, so this
          is two dispatches: the handler in one batch still sees the old focus. */
-      await pressKeys(setup, ["CTRL+l"])
+      await pressKeys(setup, ["2"])
       await pressKeys(setup, ["SHIFT+v"])
       await setup.waitForFrame(f => f.includes("VISUAL"))
 
@@ -137,7 +137,7 @@ describe("explorer screen", () => {
     try {
       await expandToConnection(setup)
       /* Focus must land on the table before the selection keys are read. */
-      await pressKeys(setup, ["CTRL+l"])
+      await pressKeys(setup, ["2"])
       await pressKeys(setup, ["SHIFT+v"])
       await setup.waitForFrame(f => f.includes("VISUAL"))
       await pressKeys(setup, ["j"])
@@ -281,7 +281,7 @@ describe("row paging", () => {
     try {
       expect(setup.captureCharFrame()).toContain("1-200 of 450")
 
-      await pressKeys(setup, ["CTRL+l"])
+      await pressKeys(setup, ["2"])
       await pressKeys(setup, ["CTRL+f"])
       await setup.waitForFrame(f => f.includes("201-400 of 450"))
 
@@ -305,7 +305,7 @@ describe("row paging", () => {
   test("page turns sent in one batch do not collapse onto the same page", async () => {
     const setup = await openPaged(900)
     try {
-      await pressKeys(setup, ["CTRL+l"])
+      await pressKeys(setup, ["2"])
       await pressKeys(setup, ["CTRL+f", "CTRL+f", "CTRL+f", "CTRL+f"])
       await setup.waitForFrame(f => f.includes("801-900 of 900"))
     } finally {
@@ -415,7 +415,7 @@ describe("list navigation", () => {
       await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
       await pressKeys(setup, ["j", "RETURN"])
       await setup.waitForFrame(f => f.includes("▌ ITEMS") && f.includes("echo"))
-      await pressKeys(setup, ["CTRL+l"])
+      await pressKeys(setup, ["2"])
 
       /* The cursor starts on the first row, not the last. */
       expect(lineWith(setup.captureCharFrame(), "echo")).not.toContain("▶")
@@ -482,7 +482,7 @@ describe("list navigation", () => {
       )
       try {
         await expandToConnection(setup)
-        await pressKeys(setup, ["CTRL+l"])
+        await pressKeys(setup, ["2"])
         await pressKeys(setup, ["SHIFT+v"])
         await setup.waitForFrame(f => f.includes("VISUAL"))
 

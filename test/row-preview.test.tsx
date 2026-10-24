@@ -63,7 +63,7 @@ describe("row preview", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openUsers(setup)
-      await pressKeys(setup, ["CTRL+l"])
+      await pressKeys(setup, ["2"])
       await pressKeys(setup, ["RETURN"])
 
       const frame = await waitForFrameDriven(setup, f => f.includes("row 1 of 3"))
@@ -96,7 +96,7 @@ describe("row preview", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openUsers(setup)
-      await pressKeys(setup, ["CTRL+l"])
+      await pressKeys(setup, ["2"])
       await pressKeys(setup, ["RETURN"])
       await waitForFrameDriven(setup, f => f.includes("row 1 of 3"))
 
@@ -124,7 +124,7 @@ describe("row preview", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openUsers(setup)
-      await pressKeys(setup, ["CTRL+l"])
+      await pressKeys(setup, ["2"])
       await pressKeys(setup, ["RETURN"])
       await waitForFrameDriven(setup, f => f.includes("row 1 of 3"))
 
@@ -149,7 +149,7 @@ describe("row preview", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openUsers(setup)
-      await pressKeys(setup, ["CTRL+l"])
+      await pressKeys(setup, ["2"])
       await pressKeys(setup, ["RETURN"])
       await waitForFrameDriven(setup, f => f.includes("row 1 of 3"))
 

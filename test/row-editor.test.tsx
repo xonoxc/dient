@@ -146,7 +146,7 @@ describe("$EDITOR row editing", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openUsers(setup)
-      await pressKeys(setup, ["CTRL+l"])
+      await pressKeys(setup, ["2"])
       /* A literal space opens the finder: "SPACE" is not in the mock's key
          table, so it would type S/P/A/C/E as garbage instead. */
       await pressKeys(setup, [" ", "ESCAPE"])
@@ -177,7 +177,7 @@ describe("$EDITOR row editing", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openUsers(setup)
-      await pressKeys(setup, ["CTRL+l"])
+      await pressKeys(setup, ["2"])
       await pressKeys(setup, ["i"])
       await waitForFrameDriven(setup, f => f.includes("set $EDITOR"))
 
@@ -204,7 +204,7 @@ describe("$EDITOR row editing", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openUsers(setup)
-      await pressKeys(setup, ["CTRL+l"])
+      await pressKeys(setup, ["2"])
       /* Select ids 2-3; the cursor ends on the second of them, so `i` edits
          id 3. */
       await pressKeys(setup, ["j", "V", "j"])
@@ -256,7 +256,7 @@ describe("editing a paged table", () => {
       await setup.waitForFrame(f => f.includes("▌ GAMES") && f.includes("1-200 of 450"))
 
       /* Page to page 3 (rows 401-450) and move onto row id 402. */
-      await pressKeys(setup, ["CTRL+l"])
+      await pressKeys(setup, ["2"])
       await pressKeys(setup, ["CTRL+f", "CTRL+f"])
       await setup.waitForFrame(f => f.includes("401-450 of 450"))
       await pressKeys(setup, ["j"])

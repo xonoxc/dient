@@ -5,7 +5,8 @@
  * a 160-character name is only ever a hint that there is more. This panel
  * shows the whole value, hard-wrapped to the modal width and scrolled with
  * `j`/`k` when it runs past the visible rows. Pure view, like `RowPreview`:
- * the explorer owns the open flag, the scroll offset, and the keyboard.
+ * the explorer owns the open flag, the scroll offset, and the keyboard. A
+ * translucent scrim dims the table behind the elevated card.
  */
 import { useTheme } from "@/theme-context"
 import { ModalSurface } from "@/ui/modal-surface"
@@ -71,15 +72,9 @@ export function CellViewer({
   const scrollable = lines.length > room
 
   return (
-    <box
-      position="absolute"
-      width="100%"
-      height="100%"
-      alignItems="center"
-      justifyContent="center"
-      backgroundColor={c.bg}
-    >
-      <ModalSurface width={CELL_VIEWER_WIDTH} paddingY={1} marginTop={330}>
+    <box position="absolute" top={0} bottom={0} left={0} right={0} alignItems="center" justifyContent="center">
+      <box position="absolute" top={0} bottom={0} left={0} right={0} backgroundColor={c.bgScrim} />
+      <ModalSurface width={CELL_VIEWER_WIDTH} paddingY={1} elevated>
         <box height={1} flexDirection="row">
           <text fg={c.textBright}>
             {tableName}.{columnName}

@@ -10,7 +10,7 @@ type Binding = readonly [string, string]
 const EXPLORER: ReadonlyArray<Binding> = [
   ["j / k (↓ / ↑)", "move down / up"],
   ["gg / G", "first / last"],
-  ["Ctrl+H / Ctrl+L", "focus sidebar / table"],
+  ["1 / 2", "focus sidebar / table"],
   ["h / l", "scroll columns left / right"],
   ["← / →", "previous / next col"],
   ["Enter", "preview the row"],

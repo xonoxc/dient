@@ -1,6 +1,6 @@
 /**
  * Data table screen tests — the table area as rendered by the real App against
- * a seeded SQLite file. Driving the table needs the Ctrl+L focus switch after
+ * a seeded SQLite file. Driving the table needs the `2` focus switch after
  * connecting, since Enter on a connection leaves focus on the sidebar. Each
  * tree step is an async DB round-trip, so the presses are staged like human
  * input.
@@ -21,7 +21,7 @@ async function openTable(setup: Awaited<ReturnType<typeof renderApp>>, waitLine:
   await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
   await pressKeys(setup, ["j", "RETURN"])
   await setup.waitForFrame(f => f.includes(waitLine))
-  await pressKeys(setup, ["CTRL+l"])
+  await pressKeys(setup, ["2"])
   return setup.captureCharFrame()
 }
 
@@ -304,7 +304,7 @@ describe("cell viewer", () => {
 })
 
 describe("pane focus", () => {
-  test("CTRL+l moves focus sidebar to table and CTRL+h moves it back", async () => {
+  test("2 moves focus sidebar to table and 1 moves it back", async () => {
     const services = await resolveTestServices(freshConfigFile())
     await seedProject(services.store, {
       name: "demo",
@@ -327,10 +327,10 @@ describe("pane focus", () => {
       /* sidebar owns the keyboard: its hints name opening, not previewing */
       expect(setup.captureCharFrame()).toContain("Enter open")
 
-      await pressKeys(setup, ["CTRL+l"])
+      await pressKeys(setup, ["2"])
       await setup.waitForFrame(f => f.includes("Enter preview"))
 
-      await pressKeys(setup, ["CTRL+h"])
+      await pressKeys(setup, ["1"])
       await setup.waitForFrame(f => f.includes("Enter open"))
       expect(setup.captureCharFrame()).not.toContain("Enter preview")
     } finally {
@@ -368,7 +368,7 @@ describe("pane focus", () => {
     }
   })
 
-  test("Backspace (the legacy-terminal encoding of CTRL+h) returns focus to the sidebar", async () => {
+  test("Backspace no longer steals pane focus", async () => {
     const services = await resolveTestServices(freshConfigFile())
     await seedProject(services.store, {
       name: "demo",
@@ -386,11 +386,14 @@ describe("pane focus", () => {
       await openTable(setup, "alice")
       await setup.waitForFrame(f => f.includes("Enter preview"))
 
-      /* a legacy terminal reports CTRL+h as a bare backspace byte (0x08),
-         with no ctrl flag — the app cannot tell it from Backspace, and
-         Backspace is unbound in NORMAL mode, so it switches panes. */
+      /* Pane switching now belongs to the number keys, so Backspace — which a
+         legacy terminal encodes as the old CTRL+h byte — stays unbound and
+         leaves focus on the table. */
       await pressKeys(setup, ["BACKSPACE"])
-      await setup.waitForFrame(f => f.includes("Enter open"))
+      await setup.waitForVisualIdle()
+      const frame = setup.captureCharFrame()
+      expect(frame).toContain("Enter preview")
+      expect(frame).not.toContain("Enter open")
     } finally {
       setup.renderer.destroy()
     }
