@@ -17,10 +17,19 @@ import type { Connection, ConnectionId, Database, ProjectId } from "@/domain"
 import type { ActiveConnection, ColumnInfo } from "@/drivers/types"
 import type { TableInfo } from "@/inspector/types"
 import { cleanIdentifier } from "@/query/identifier"
+import { formatTtl } from "@/redis/format"
+import type { RedisKeyInfo, RedisPage } from "@/redis/types"
 import { useTable, type UseTableResult } from "@/table/use-table"
 import { formatCell } from "@/table/use-table"
 
 export type PanelFocus = "sidebar" | "table"
+
+/**
+ * Where a Redis connection currently is: the keyspace browser, or one open key.
+ * The key's Redis type lives in `redisInfo`; string/stream/JSON keys render
+ * their own panels while the collection types share the data table.
+ */
+export type RedisView = { readonly kind: "keys" } | { readonly kind: "key"; readonly key: string }
 
 /**
  * Panes in left-to-right layout order. Number key N focuses `PANEL_ORDER[N - 1]`,
@@ -48,6 +57,16 @@ export interface UseExplorerResult {
   readonly table: UseTableResult
   readonly tableInfo: TableInfo | null
   readonly total: number | null
+  /** Redis keyspace/key view, or null for SQL connections. */
+  readonly redisView: RedisView | null
+  /** Metadata for the open Redis key (null in the keyspace browser). */
+  readonly redisInfo: RedisKeyInfo | null
+  /** The open Redis value page, with text/stream payloads for custom views. */
+  readonly redisPage: RedisPage | null
+  /** Open a key from the keyspace table by name. */
+  readonly openRedisKey: (key: string) => void
+  /** Return from an open key to the Redis keyspace. */
+  readonly backToRedisKeys: () => void
   /** Milliseconds the last page fetch took, or null before the first one. */
   readonly lastQueryMs: number | null
   /** Row offset of the page currently loaded. */
@@ -99,7 +118,7 @@ export const rowMatches = (row: Record<string, unknown>, query: string): boolean
 }
 
 export const useExplorer = (): UseExplorerResult => {
-  const { configStore, connectionManager, schemaInspector, queryExecutor, errorLog } = useServices()
+  const { configStore, connectionManager, schemaInspector, redisInspector, queryExecutor, errorLog } = useServices()
   const toasts = useToasts()
   const dialog = useDialog()
 
@@ -112,6 +131,22 @@ export const useExplorer = (): UseExplorerResult => {
   const [columns, setColumns] = useState<ReadonlyArray<ColumnInfo>>([])
   const [tableInfo, setTableInfo] = useState<TableInfo | null>(null)
   const [total, setTotal] = useState<number | null>(null)
+  const [redisView, setRedisView] = useState<RedisView | null>(null)
+  const [redisInfo, setRedisInfo] = useState<RedisKeyInfo | null>(null)
+  const [redisPage, setRedisPage] = useState<RedisPage | null>(null)
+  const [redisNextToken, setRedisNextToken] = useState<string | null>(null)
+  const [redisPageIndex, setRedisPageIndex] = useState(0)
+  const redisViewRef = useRef<RedisView | null>(null)
+  const redisNextTokenRef = useRef<string | null>(null)
+  const redisPageIndexRef = useRef(0)
+  const redisTokensRef = useRef<Array<string | null>>([null])
+  /** Snapshot of the keyspace page a drill-down key was opened from, so Esc
+   *  returns to the same SCAN cursor instead of jumping back to page one. */
+  const redisKeysReturnRef = useRef<{
+    readonly token: string | null
+    readonly pageIndex: number
+    readonly tokens: ReadonlyArray<string | null>
+  } | null>(null)
   /* Rows are paged in the database, not in the view: one `SELECT ... LIMIT n
      OFFSET m` per page, so opening a table on a large production database never
      pulls the whole table into memory. */
@@ -188,6 +223,167 @@ export const useExplorer = (): UseExplorerResult => {
     toasts.push("error", message)
   }
 
+  const updateRedisView = (view: RedisView | null): void => {
+    redisViewRef.current = view
+    setRedisView(view)
+  }
+  const updateRedisNextToken = (token: string | null): void => {
+    redisNextTokenRef.current = token
+    setRedisNextToken(token)
+  }
+  const updateRedisPageIndex = (index: number): void => {
+    redisPageIndexRef.current = index
+    setRedisPageIndex(index)
+  }
+  const resetRedis = (): void => {
+    updateRedisView(null)
+    setRedisInfo(null)
+    setRedisPage(null)
+    updateRedisNextToken(null)
+    updateRedisPageIndex(0)
+    redisTokensRef.current = [null]
+    redisKeysReturnRef.current = null
+  }
+
+  /** Load a keyspace page. SCAN cursors are opaque and one page may contain
+   * fewer keys than requested, so the cursor — not an offset — decides whether
+   * another page exists. */
+  const loadRedisKeys = (token: string | null, pageIndex: number): void => {
+    const explorer = activeExplorer.current
+    const handle = activeHandle.current
+    if (!explorer || explorer.database.engine !== "redis" || !handle) return
+    const gen = ++generation.current
+    setLoading(true)
+    setError(null)
+    setRedisInfo(null)
+    setRedisPage(null)
+    updateRedisNextToken(null)
+    const pageOffset = pageIndex * PAGE_SIZE
+    offsetRef.current = pageOffset
+    setOffset(pageOffset)
+    const startedAt = performance.now()
+
+    Effect.runFork(
+      Effect.gen(function* () {
+        const page = yield* redisInspector.listKeys(handle, { token, count: PAGE_SIZE })
+        if (gen !== generation.current) return
+        updateRedisView({ kind: "keys" })
+        setRedisInfo(null)
+        setRedisPage(null)
+        setColumns([{ name: "key" }, { name: "type" }, { name: "ttl" }])
+        setRows(page.rows.map(row => ({ key: row.key, type: row.type, ttl: formatTtl(row.ttl) })))
+        setTableName("keys")
+        setTableInfo(null)
+        setTotal(page.total)
+        updateRedisNextToken(page.nextToken)
+        updateRedisPageIndex(pageIndex)
+        setLoading(false)
+        noteQueryMs(startedAt)
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            if (gen !== generation.current) return
+            setLoading(false)
+            reportError("explorer.redisKeys", describeError(cause), cause)
+          })
+        )
+      )
+    )
+  }
+
+  /** Load one key. The inspector returns a type-specific page: a table for
+   * hashes/lists/sets/zsets, plus text or stream entries for the custom views. */
+  const loadRedisKey = (key: string, token: string | null, pageIndex: number): void => {
+    const explorer = activeExplorer.current
+    const handle = activeHandle.current
+    if (!explorer || explorer.database.engine !== "redis" || !handle) return
+    const gen = ++generation.current
+    setLoading(true)
+    setError(null)
+    setRedisInfo(null)
+    setRedisPage(null)
+    updateRedisNextToken(null)
+    const pageOffset = pageIndex * PAGE_SIZE
+    offsetRef.current = pageOffset
+    setOffset(pageOffset)
+    const startedAt = performance.now()
+
+    Effect.runFork(
+      Effect.gen(function* () {
+        const page = yield* redisInspector.loadValue(handle, key, { token, count: PAGE_SIZE })
+        if (gen !== generation.current) return
+        updateRedisView({ kind: "key", key })
+        setRedisInfo(page.info)
+        setRedisPage(page)
+        setColumns(page.columns)
+        setRows(page.rows)
+        setTableName(key)
+        setTableInfo(null)
+        setTotal(page.total)
+        updateRedisNextToken(page.nextToken)
+        updateRedisPageIndex(pageIndex)
+        setLoading(false)
+        noteQueryMs(startedAt)
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            if (gen !== generation.current) return
+            setLoading(false)
+            reportError("explorer.redisKey", describeError(cause), cause)
+          })
+        )
+      )
+    )
+  }
+
+  const openRedisKeys = (): void => {
+    setSearch("")
+    redisKeysReturnRef.current = null
+    redisTokensRef.current = [null]
+    updateRedisPageIndex(0)
+    updateRedisView({ kind: "keys" })
+    setTableName("keys")
+    setTableInfo(null)
+    loadRedisKeys(null, 0)
+  }
+
+  const openRedisKey = (key: string): void => {
+    /* Remember the keyspace page this key came from before resetting the
+       per-view cursor stack. A key opened from a command/finder may not have a
+       keyspace snapshot; Esc then starts at the first keys page. */
+    if (redisViewRef.current?.kind === "keys") {
+      const pageIndex = redisPageIndexRef.current
+      redisKeysReturnRef.current = {
+        token: redisTokensRef.current[pageIndex] ?? null,
+        pageIndex,
+        tokens: [...redisTokensRef.current],
+      }
+    }
+    setSearch("")
+    redisTokensRef.current = [null]
+    updateRedisPageIndex(0)
+    updateRedisView({ kind: "key", key })
+    setTableName(key)
+    setTableInfo(null)
+    loadRedisKey(key, null, 0)
+  }
+
+  const backToRedisKeys = (): void => {
+    const saved = redisKeysReturnRef.current
+    redisKeysReturnRef.current = null
+    if (!saved) {
+      openRedisKeys()
+      return
+    }
+    setSearch("")
+    redisTokensRef.current = [...saved.tokens]
+    updateRedisPageIndex(saved.pageIndex)
+    updateRedisView({ kind: "keys" })
+    setTableName("keys")
+    setTableInfo(null)
+    loadRedisKeys(saved.token, saved.pageIndex)
+  }
+
   /** Load one page of `name` at `pageOffset`. The count is only re-read when
       `withCount` is set: paging does not change it, and re-counting a large
       table on every page turn is exactly the load we are trying to avoid. */
@@ -244,13 +440,32 @@ export const useExplorer = (): UseExplorerResult => {
     /* A new table invalidates the old page and any active filter, which only
        ever matched rows on the page that was loaded. */
     setSearch("")
+    if (activeExplorer.current?.database.engine === "redis") {
+      if (name === "keys") openRedisKeys()
+      else openRedisKey(name)
+      return
+    }
     loadPage(name, 0, true)
   }
 
-  const hasNextPage = total !== null && offset + rows.length < total
-  const hasPrevPage = offset > 0
+  const redisActive = active?.database.engine === "redis"
+  const hasNextPage = redisActive ? redisNextToken !== null : total !== null && offset + rows.length < total
+  const hasPrevPage = redisActive ? redisPageIndex > 0 : offset > 0
 
   const nextPage = (): void => {
+    if (activeExplorer.current?.database.engine === "redis") {
+      const next = redisNextTokenRef.current
+      if (!next) return
+      const nextIndex = redisPageIndexRef.current + 1
+      const tokens = redisTokensRef.current
+      if (tokens.length <= nextIndex) tokens.push(next)
+      const token = tokens[nextIndex] ?? next
+      setSearch("")
+      const view = redisViewRef.current
+      if (view?.kind === "key") loadRedisKey(view.key, token, nextIndex)
+      else loadRedisKeys(token, nextIndex)
+      return
+    }
     const from = offsetRef.current
     if (!tableName || total === null || from + PAGE_SIZE >= total) return
     /* Filter matches are page-local, so a page turn starts clean. */
@@ -259,6 +474,16 @@ export const useExplorer = (): UseExplorerResult => {
   }
 
   const prevPage = (): void => {
+    if (activeExplorer.current?.database.engine === "redis") {
+      const previousIndex = redisPageIndexRef.current - 1
+      if (previousIndex < 0) return
+      const token = redisTokensRef.current[previousIndex] ?? null
+      setSearch("")
+      const view = redisViewRef.current
+      if (view?.kind === "key") loadRedisKey(view.key, token, previousIndex)
+      else loadRedisKeys(token, previousIndex)
+      return
+    }
     const from = offsetRef.current
     if (!tableName || from <= 0) return
     setSearch("")
@@ -293,6 +518,7 @@ export const useExplorer = (): UseExplorerResult => {
     const gen = ++generation.current
     setLoading(true)
     setError(null)
+    resetRedis()
 
     const connectStartedAt = performance.now()
     const previous = activeExplorer.current
@@ -323,10 +549,12 @@ export const useExplorer = (): UseExplorerResult => {
         /* Surface the tables under this connection right away. */
         sidebar.expandConnection(node.refId as ConnectionId)
 
-        const tableList = yield* schemaInspector.listTables(handle)
+        const tableList = handle.engine === "redis" ? ["keys"] : yield* schemaInspector.listTables(handle)
         if (gen !== generation.current) return
         setTables(tableList)
-        if (tableList.length > 0) {
+        if (handle.engine === "redis") {
+          openRedisKeys()
+        } else if (tableList.length > 0) {
           openTable(tableList[0]!)
         } else {
           setTableName(null)
@@ -349,6 +577,7 @@ export const useExplorer = (): UseExplorerResult => {
             setColumns([])
             setTotal(null)
             setLoading(false)
+            resetRedis()
             setStatusPoll(poll => poll + 1)
             reportError("explorer.connect", `connect failed: ${describeError(cause)}`, cause)
             /* Offer a retry so a transient failure (container still booting, host
@@ -423,6 +652,10 @@ export const useExplorer = (): UseExplorerResult => {
       toasts.push("error", "nothing open to edit")
       return
     }
+    if (explorer.database.engine === "redis") {
+      toasts.push("info", "Redis browsing is read-only")
+      return
+    }
     if (!tableInfo) {
       toasts.push("error", `no schema info for ${tableName}`)
       return
@@ -487,6 +720,11 @@ export const useExplorer = (): UseExplorerResult => {
       table,
       tableInfo,
       total,
+      redisView,
+      redisInfo,
+      redisPage,
+      openRedisKey,
+      backToRedisKeys,
       lastQueryMs,
       offset,
       pageSize: PAGE_SIZE,
@@ -515,6 +753,11 @@ export const useExplorer = (): UseExplorerResult => {
       table,
       tableInfo,
       total,
+      redisView,
+      redisInfo,
+      redisPage,
+      redisNextToken,
+      redisPageIndex,
       lastQueryMs,
       offset,
       hasNextPage,

@@ -1,10 +1,10 @@
 /**
  * ConnectionManager owns the lifecycle of every open database connection.
  *
- * It is the only component that talks to `DatabaseDriver` on the app's behalf:
- * screens and hooks ask the manager to "connect this connection id" and then
- * run queries through it, so exactly one place caches live connections and
- * knows which engine each belongs to.
+ * It is the only component that talks to `DatabaseDriver` or `RedisDriver` on
+ * the app's behalf: screens and hooks ask the manager to "connect this
+ * connection id" and then run queries through it, so exactly one place caches
+ * live connections and knows which engine each belongs to.
  *
  * Lifecycle rules:
  *   - `connect` is lazy and idempotent (an already-open connection is reused).
@@ -16,6 +16,7 @@
  */
 import { ConfigStore, ConfigError } from "@/config"
 import { DatabaseDriver } from "@/drivers/database-driver"
+import { RedisDriver } from "@/drivers/redis"
 import { ConnectionError, QueryError } from "@/drivers/types"
 import { resolveConnectionConfig } from "@/connection/config"
 import { Context, Effect, Layer, Ref, Schedule } from "effect"
@@ -81,11 +82,12 @@ const findByDatabase = (
 type ConfigStoreServiceRef = import("@/config").ConfigStoreService
 
 export namespace ConnectionManager {
-  export const layer: Layer.Layer<ConnectionManager, never, ConfigStore | DatabaseDriver> = Layer.effect(
+  export const layer: Layer.Layer<ConnectionManager, never, ConfigStore | DatabaseDriver | RedisDriver> = Layer.effect(
     ConnectionManager,
     Effect.gen(function* () {
       const store = yield* ConfigStore
       const driver = yield* DatabaseDriver
+      const redis = yield* RedisDriver
       const slots = yield* Ref.make(emptySlots())
 
       const open = (id: ConnectionId) =>
@@ -95,7 +97,10 @@ export namespace ConnectionManager {
           /* drivers mint their own internal scope; connect only needs an ambient
              scope for the construction itself, so this stays runnable from
              hooks (`Effect.runPromise`) that live outside any scope. */
-          const active = yield* Effect.scoped(driver.connect(config))
+          const active =
+            config.engine === "redis"
+              ? yield* Effect.scoped(redis.connect(config))
+              : yield* Effect.scoped(driver.connect(config))
           yield* Ref.update(slots, s => {
             s.active.set(id, { id, connection: found.connection, database: found.database, active })
             s.failed.delete(id)
@@ -129,7 +134,8 @@ export namespace ConnectionManager {
             Effect.map(s => s.active.get(id))
           )
           if (current) {
-            yield* driver.disconnect(current.active).pipe(Effect.catchAll(() => Effect.void))
+            const close = current.active.engine === "redis" ? redis.disconnect : driver.disconnect
+            yield* close(current.active).pipe(Effect.catchAll(() => Effect.void))
           }
           yield* Ref.update(slots, s => {
             s.active.delete(id)
@@ -147,7 +153,8 @@ export namespace ConnectionManager {
             Effect.flatMap(s => {
               const entry = s.active.get(id)
               if (!entry) return Effect.succeed(false)
-              return driver.isConnected(entry.active).pipe(Effect.catchAll(() => Effect.succeed(false)))
+              const check = entry.active.engine === "redis" ? redis.isConnected : driver.isConnected
+              return check(entry.active).pipe(Effect.catchAll(() => Effect.succeed(false)))
             })
           ),
 
@@ -159,15 +166,19 @@ export namespace ConnectionManager {
               const entry = s.active.get(id)
               if (!entry) return Effect.succeed("disconnected" as const)
               /* the entry is live; a dead session is reported as an error so a retry replaces it */
-              return driver
-                .isConnected(entry.active)
-                .pipe(Effect.map(ok => (ok ? "connected" : "error") as ConnectionStatus))
+              const check = entry.active.engine === "redis" ? redis.isConnected : driver.isConnected
+              return check(entry.active).pipe(Effect.map(ok => (ok ? "connected" : "error") as ConnectionStatus))
             })
           ),
 
         query: (id, sql, params) =>
           Effect.gen(function* () {
             const active = yield* connect(id)
+            if (active.engine === "redis") {
+              return yield* Effect.fail(
+                new QueryError({ engine: "redis", message: "SQL queries are not supported on a Redis connection" })
+              )
+            }
             return yield* driver.query(active, sql, params).pipe(Effect.mapError(e => e as QueryError))
           }),
 
@@ -176,10 +187,14 @@ export namespace ConnectionManager {
             const config = yield* resolveConnectionConfig(database, connection)
             const attempt = Effect.scoped(
               Effect.gen(function* () {
-                const active = yield* driver.connect(config)
+                const active = config.engine === "redis" ? yield* redis.connect(config) : yield* driver.connect(config)
                 /* close the probe session; the app's real connections live in
                    the open-slot cache, not in pings */
-                yield* driver.disconnect(active).pipe(Effect.catchAll(() => Effect.void))
+                if (config.engine === "redis") {
+                  yield* redis.disconnect(active).pipe(Effect.catchAll(() => Effect.void))
+                } else {
+                  yield* driver.disconnect(active).pipe(Effect.catchAll(() => Effect.void))
+                }
                 return true
               })
             )
@@ -187,7 +202,6 @@ export namespace ConnectionManager {
               .pipe(Effect.retry(Schedule.intersect(Schedule.recurs(2), Schedule.exponential("500 millis"))))
               .pipe(Effect.timeout("6 seconds"))
             return outcome
-            // this is just an empty line to make the diff cleaner, so the closing parens line up with the opening ones
           }).pipe(Effect.catchAll(() => Effect.succeed(false))),
 
         activeConnections: () =>

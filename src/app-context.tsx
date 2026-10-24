@@ -2,16 +2,17 @@
  * React contexts that glue the Effect services into the TUI.
  *
  * `ServicesProvider` feeds the resolved service instances (ConfigStore,
- * ConnectionManager, SchemaInspector, QueryExecutor) to every screen. Pieces
- * that need real configuration, keyboard routing, or life in the frame loop
- * live in the contexts below so tests can seed them with mocks and drive key
- * events through the real renderer.
+ * ConnectionManager, SchemaInspector, RedisInspector, QueryExecutor) to every
+ * screen. Pieces that need real configuration, keyboard routing, or life in the
+ * frame loop live in the contexts below so tests can seed them with mocks and
+ * drive key events through the real renderer.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import type { ConfigStoreService } from "@/config"
 import type { ConnectionManagerService } from "@/connection/connection-manager"
 import type { QueryExecutorService } from "@/query/query-executor"
 import type { SchemaInspectorService } from "@/inspector"
+import type { RedisInspectorService } from "@/redis/redis-inspector"
 import type { Engine } from "@/domain"
 import type { VimMode } from "@/vim"
 import type { ErrorLog } from "@/log/error-log"
@@ -21,6 +22,7 @@ export interface AppServices {
   readonly configStore: ConfigStoreService
   readonly connectionManager: ConnectionManagerService
   readonly schemaInspector: SchemaInspectorService
+  readonly redisInspector: RedisInspectorService
   readonly queryExecutor: QueryExecutorService
   readonly updateChecker: UpdateCheckerService
   readonly errorLog: ErrorLog

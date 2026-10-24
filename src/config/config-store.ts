@@ -78,6 +78,7 @@ export interface CreateConnectionInput {
   readonly password?: string
   readonly filename?: string
   readonly defaultDatabase?: string
+  readonly tls?: boolean
 }
 
 export interface UpdateConnectionInput {
@@ -87,6 +88,7 @@ export interface UpdateConnectionInput {
   readonly password?: string
   readonly filename?: string
   readonly defaultDatabase?: string
+  readonly tls?: boolean
 }
 
 /** The operations callers can run against the store. */
@@ -181,7 +183,14 @@ const onError = <A>(effect: Effect.Effect<A, unknown>): Effect.Effect<A, ConfigE
 
 const decodeProject = decodeRow(ProjectSchema)
 const decodeDatabase = decodeRow(DatabaseSchema)
-const decodeConnection = decodeRow(ConnectionSchema)
+/**
+ * SQLite has no boolean type, so `tls` comes back as 0/1. Fold it before the
+ * Effect Schema decode; leaving it numeric would reject a perfectly valid row.
+ */
+const decodeConnection = (row: Record<string, unknown>): Connection => {
+  const tls = row.tls === 1 || row.tls === true ? true : row.tls === 0 || row.tls === false ? false : row.tls
+  return decodeRow(ConnectionSchema)({ ...row, tls })
+}
 
 const makeConfigStore = (sql: SqliteClient.SqliteClient): ConfigStoreService => ({
   createProject: ({ name }) =>
@@ -278,7 +287,7 @@ const makeConfigStore = (sql: SqliteClient.SqliteClient): ConfigStoreService => 
     onError(
       Effect.gen(function* () {
         const rows =
-          yield* sql`SELECT id, database_id, host, port, user, password, filename, default_database FROM connections WHERE database_id = ${databaseId}`
+          yield* sql`SELECT id, database_id, host, port, user, password, filename, default_database, tls FROM connections WHERE database_id = ${databaseId}`
         return rows.map(decodeConnection)
       })
     ),
@@ -290,7 +299,7 @@ const makeConfigStore = (sql: SqliteClient.SqliteClient): ConfigStoreService => 
           yield* sql`UPDATE connections SET ${sql.update(compact(input as Record<string, unknown>))} WHERE id = ${id}`
         }
         const rows =
-          yield* sql`SELECT id, database_id, host, port, user, password, filename, default_database FROM connections WHERE id = ${id}`
+          yield* sql`SELECT id, database_id, host, port, user, password, filename, default_database, tls FROM connections WHERE id = ${id}`
         return decodeConnection(rows[0]!)
       })
     ),

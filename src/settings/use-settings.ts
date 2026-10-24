@@ -4,9 +4,9 @@
  *
  * The model is deliberately flat: a database *is* its connection. Pressing `a`
  * opens a single-line prompt where you paste a connection string — a
- * `postgres://` / `mysql://` URL or a filesystem path (SQLite). `p` opens the
- * same style of prompt for a new project (a project is a folder onto which
- * databases hang). The tail of
+ * `postgres://` / `mysql://` / `redis://` URL or a filesystem path (SQLite).
+ * `p` opens the same style of prompt for a new project (a project is a folder
+ * onto which databases hang). The tail of
  * the string becomes the database's display name, so adding a database is one
  * paste. A credentials form (host/port/user/…) is one key away for people who
  * prefer filling fields (Ctrl+n), and when a server URL carries no database
@@ -72,6 +72,7 @@ export const CONNECTION_FIELDS: Record<Engine, readonly ConnectionFormField[]> =
   sqlite: ["filename"],
   postgres: ["host", "port", "user", "password", "defaultDatabase"],
   mysql: ["host", "port", "user", "password", "defaultDatabase"],
+  redis: ["host", "port", "user", "password", "defaultDatabase"],
 }
 
 export const FIELD_LABEL: Record<ConnectionFormField, string> = {
@@ -177,11 +178,11 @@ export const buildSettingsTree = (
 /** The two add-database choices, in render order. Exported so the menu render
     and the key handler cannot drift apart. */
 export const ADD_CHOICES = [
-  { label: "paste connection string", hint: "mysql://user:pass@host:3306/db" },
+  { label: "paste connection string", hint: "postgres://…  mysql://…  redis://…" },
   { label: "host / user / password", hint: "name, host, port, user, password, database" },
 ] as const
 
-const ENGINES: ReadonlyArray<Engine> = ["postgres", "mysql", "sqlite"]
+const ENGINES: ReadonlyArray<Engine> = ["postgres", "mysql", "sqlite", "redis"]
 
 export const useSettings = (): UseSettingsResult => {
   const { configStore, connectionManager, errorLog } = useServices()
@@ -487,6 +488,28 @@ export const useSettings = (): UseSettingsResult => {
         )
         return
       }
+      if (parsed.engine === "redis") {
+        const urlName = parsed.name
+        Effect.runFork(
+          Effect.gen(function* () {
+            if (yield* nameTaken(form.projectId, urlName)) {
+              toasts.push("error", `a database named "${urlName}" already exists`)
+              return
+            }
+            yield* createDatabaseAndConnection(form.projectId, urlName, "redis", {
+              host: parsed.host,
+              port: parsed.port,
+              user: parsed.user,
+              password: parsed.password,
+              defaultDatabase: parsed.defaultDatabase ?? "0",
+              tls: parsed.tls,
+            })
+            toasts.push("success", `added ${urlName} (redis)`)
+            finish()
+          }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))
+        )
+        return
+      }
       if (!parsed.name) {
         /* server URL with no database name — ask for it next */
         const next: SettingsForm = { kind: "connectName", projectId: form.projectId, pending: parsed }
@@ -537,6 +560,43 @@ export const useSettings = (): UseSettingsResult => {
           }
           yield* createDatabaseAndConnection(form.projectId, name, "sqlite", { filename })
           toasts.push("success", `added ${name} (${filename})`)
+          finish()
+        }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))
+      )
+      return
+    }
+
+    if (form.engine === "redis") {
+      const host = values.host?.trim() ?? ""
+      if (!host) {
+        toasts.push("error", "a Redis connection requires a host")
+        return
+      }
+      const port = values.port?.trim() ?? ""
+      if (port && (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535)) {
+        toasts.push("error", "port must be a number between 1 and 65535")
+        return
+      }
+      const db = values.defaultDatabase?.trim() ?? "0"
+      if (!/^\d+$/.test(db)) {
+        toasts.push("error", "Redis database must be a numeric index")
+        return
+      }
+
+      Effect.runFork(
+        Effect.gen(function* () {
+          if (yield* nameTaken(form.projectId, name)) {
+            toastTaken(name)
+            return
+          }
+          yield* createDatabaseAndConnection(form.projectId, name, "redis", {
+            host,
+            ...(port ? { port: Number(port) } : {}),
+            ...(values.user?.trim() ? { user: values.user.trim() } : {}),
+            ...(values.password?.trim() ? { password: values.password.trim() } : {}),
+            defaultDatabase: db,
+          })
+          toasts.push("success", `added ${name} (redis)`)
           finish()
         }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))
       )

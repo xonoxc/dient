@@ -157,6 +157,45 @@ describe("settings screen", () => {
     }
   })
 
+  test("pasting a Redis URL creates a Redis database with TLS and an index", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    const seeded = await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: "data.db",
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await openSettings(setup)
+      await expandProject(setup)
+
+      await pressKeys(setup, ["a"])
+      await setup.waitForFrame(f => f.includes("Enter open"))
+      await pressKeys(setup, ["1"])
+      await setup.waitForFrame(f => f.includes("new database"))
+      await typeString(setup, "rediss://cache:6380/2")
+      await setup.waitForFrame(f => f.includes("rediss://cache:6380/2"))
+
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("cache:6380/2") && f.includes("redis"))
+
+      const databases = await Effect.runPromise(services.store.listDatabases(seeded.project.id))
+      const added = databases.find(database => database.name === "cache:6380/2")
+      expect(added?.engine).toBe("redis")
+      const connections = added ? await Effect.runPromise(services.store.listConnections(added.id)) : []
+      expect(connections).toHaveLength(1)
+      expect(connections[0]).toMatchObject({
+        host: "cache",
+        port: 6380,
+        defaultDatabase: "2",
+        tls: true,
+      })
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
   test("deleting a database asks for confirmation and removes it", async () => {
     const services = await resolveTestServices(freshConfigFile())
     const seeded = await seedProject(services.store, {

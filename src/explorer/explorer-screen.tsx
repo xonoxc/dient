@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Effect, Option } from "effect"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
+import type { ScrollBoxRenderable } from "@opentui/core"
 import { useTheme } from "@/theme-context"
 import {
   useRouter,
@@ -37,6 +38,8 @@ import { normalModeKey, resolveTypedChar } from "@/ui/text-entry"
 import { paneIndexForKey } from "@/ui/pane-keys"
 import { windowTail } from "@/ui/text-window"
 import { LoadingIndicator } from "@/ui/loading-indicator"
+import { RedisStreamPanel, RedisTextPanel } from "@/redis/redis-views"
+import { formatTtl, redisKeyDetail, redisLengthLabel } from "@/redis/format"
 
 const TABLE_MOVE_KEYS = new Set(["j", "k", "g", "G"])
 
@@ -97,6 +100,31 @@ export function ExplorerScreen() {
      padding is absorbed by the flexible content box and costs no row. */
   const { height, width } = useTerminalDimensions()
   const viewportRows = Math.max(1, height - DATA_PANE_CHROME_ROWS)
+  /* Redis keys split into three render modes: the shared data table for
+     collections and the keyspace, a wrapped text panel for strings/JSON, and a
+     timeline for streams. */
+  const redisKeyInfo = explorer.redisView?.kind === "key" ? explorer.redisInfo : null
+  const redisTextMode =
+    explorer.redisView?.kind === "key" &&
+    (redisKeyInfo?.type === "string" || redisKeyInfo?.type === "ReJSON-RL" || redisKeyInfo?.type === "json")
+  const redisStreamMode = explorer.redisView?.kind === "key" && redisKeyInfo?.type === "stream"
+  const redisCustomView = redisTextMode || redisStreamMode
+  const redisScrollRef = useRef<ScrollBoxRenderable | null>(null)
+
+  const redisScrollMax = (): number => {
+    const box = redisScrollRef.current
+    return box ? Math.max(0, box.scrollHeight - box.height) : 0
+  }
+  const scrollRedis = (delta: number) => {
+    const box = redisScrollRef.current
+    if (!box) return
+    box.scrollTop = Math.max(0, Math.min(redisScrollMax(), box.scrollTop + delta))
+  }
+  const jumpRedis = (position: "first" | "last") => {
+    const box = redisScrollRef.current
+    if (!box) return
+    box.scrollTop = position === "first" ? 0 : redisScrollMax()
+  }
   /* The area the grid gets for its columns: terminal width less the app page
      padding, the sidebar, the leading cursor glyph, and row padding.
      The sidebar width is read from the sidebar rather than repeated here — the
@@ -105,6 +133,14 @@ export function ExplorerScreen() {
      was always cut off and a scrollbar was always on screen. */
   const dataWidth = Math.max(0, width - 2 - SIDEBAR_WIDTH - 3)
   const previewWidth = Math.max(24, Math.min(96, width - 8))
+  const redisDetail =
+    explorer.redisView?.kind === "keys"
+      ? `db${active?.connection.defaultDatabase || "0"} · ${(explorer.total ?? 0).toLocaleString()} keys`
+      : redisKeyInfo
+        ? width < 120
+          ? `${redisKeyInfo.type} · ${redisLengthLabel(redisKeyInfo)} · ${formatTtl(redisKeyInfo.ttl)}`
+          : redisKeyDetail(redisKeyInfo)
+        : null
 
   /* Never leave the keyboard claimed if the screen goes away mid-edit. */
   useEffect(() => releaseText, [])
@@ -337,7 +373,8 @@ export function ExplorerScreen() {
     help: ":refresh — reload the current table",
     match: text => text.trim() === "refresh",
     run: () => {
-      if (explorer.tableName) explorer.openTable(explorer.tableName)
+      if (explorer.redisView?.kind === "key") explorer.openRedisKey(explorer.redisView.key)
+      else if (explorer.tableName) explorer.openTable(explorer.tableName)
       else toasts.push("info", "no table open to refresh")
     },
   })
@@ -364,6 +401,10 @@ export function ExplorerScreen() {
   const editCurrentRow = () => {
     if (!tableName || !active) {
       toasts.push("error", "no table open to edit")
+      return
+    }
+    if (active.database.engine === "redis") {
+      toasts.push("info", "Redis browsing is read-only")
       return
     }
     if (!tableInfo || tableInfo.primaryKey.length === 0) {
@@ -413,7 +454,9 @@ export function ExplorerScreen() {
       toasts.push("error", "no table open to copy from")
       return
     }
-    const columns = tableInfo?.columns ?? []
+    const columns =
+      tableInfo?.columns ??
+      explorer.table.columns.map(column => ({ name: column.name, type: column.type ?? "text", nullable: true }))
     const yank = yankRows(columns, explorer.table.sortedRows, vim.cursor, vim.selection)
     if (!yank) {
       toasts.push("error", columns.length > 0 ? "no rows to copy" : `table ${tableName} has no columns to copy`)
@@ -448,6 +491,47 @@ export function ExplorerScreen() {
        so it stays discoverable after the toast expires. */
     const pending: string[] = update.phase === "available" && update.release ? [`${update.release.tag} :upgrade`] : []
 
+    if (focus === "table" && redisCustomView) {
+      return [
+        ...paging,
+        ...pending,
+        "s settings",
+        "j/k scroll",
+        "g/G ends",
+        "Esc keys",
+        "space jump",
+        "1/2 panes",
+        "q quit",
+      ]
+    }
+    if (focus === "table" && explorer.redisView?.kind === "keys") {
+      return [
+        ...paging,
+        ...pending,
+        "s settings",
+        "Enter open key",
+        "j/k move",
+        "V select",
+        "space jump",
+        "1/2 panes",
+        "q quit",
+      ]
+    }
+    if (focus === "table" && explorer.redisView?.kind === "key") {
+      return [
+        ...paging,
+        ...pending,
+        "s settings",
+        "Enter preview",
+        "e full value",
+        "j/k move",
+        "h/l cols",
+        "Esc keys",
+        "space jump",
+        "1/2 panes",
+        "q quit",
+      ]
+    }
     if (focus === "sidebar") {
       return [
         ...paging,
@@ -485,6 +569,8 @@ export function ExplorerScreen() {
     explorer.searchCount,
     explorer.hasNextPage,
     explorer.hasPrevPage,
+    redisCustomView,
+    explorer.redisView,
     vimMode,
     update.phase,
     update.release,
@@ -692,6 +778,54 @@ export function ExplorerScreen() {
       return
     }
 
+    /* Strings and streams are not tables: j/k scroll the panel and Enter has
+       no row to inspect. The explicit guard keeps table-only keys (i, e, V, /)
+       from acting on a page whose rows are a rendering detail, not a cursor. */
+    if (focus === "table" && redisCustomView) {
+      if (e.ctrl === true && key === "f") {
+        explorer.nextPage()
+        return
+      }
+      if (e.ctrl === true && key === "b") {
+        explorer.prevPage()
+        return
+      }
+      if (key === "j" || key === "down") {
+        scrollRedis(1)
+        return
+      }
+      if (key === "k" || key === "up") {
+        scrollRedis(-1)
+        return
+      }
+      if (key === "g") {
+        jumpRedis("first")
+        return
+      }
+      if (key === "G") {
+        jumpRedis("last")
+        return
+      }
+      if (key === "s") {
+        router.setScreen("settings")
+        return
+      }
+      if (key === " " || key === "space") {
+        openFinder(e)
+        return
+      }
+      if (key === "tab") {
+        explorer.cycleConnection()
+        return
+      }
+      if (key === "\u001b" || key === "Escape" || key === "escape") {
+        explorer.backToRedisKeys()
+        return
+      }
+      e.preventDefault()
+      return
+    }
+
     if (focus === "sidebar") {
       switch (key) {
         /* Paging works from either panel, so a connection can be paged through
@@ -756,6 +890,11 @@ export function ExplorerScreen() {
          edit key, here and in VISUAL mode alike, so one muscle memory covers
          both. */
       if (key === "return" || key === "enter" || key === "\r") {
+        if (explorer.redisView?.kind === "keys") {
+          const key = explorer.table.sortedRows[vim.cursor]?.key
+          if (typeof key === "string") explorer.openRedisKey(key)
+          return
+        }
         setPreviewOpen(true)
         return
       }
@@ -846,6 +985,10 @@ export function ExplorerScreen() {
         return
       }
       if (key === "\u001b" || key === "Escape" || key === "escape") {
+        if (explorer.redisView?.kind === "key") {
+          explorer.backToRedisKeys()
+          return
+        }
         vim.pressKey(key)
         return
       }
@@ -882,6 +1025,8 @@ export function ExplorerScreen() {
       <box flexGrow={1} flexDirection="column">
         <TableStrip
           tableName={tableName}
+          rawTitle={explorer.redisView?.kind === "key"}
+          detail={redisDetail}
           loading={loading}
           focus={focus === "table"}
           paneNumber={TABLE_PANE}
@@ -905,16 +1050,31 @@ export function ExplorerScreen() {
             <LoadingIndicator label={tableName ? `loading ${tableName}…` : "connecting…"} />
           </box>
         ) : active ? (
-          <DataTable
-            table={{ ...explorer.table, cursor: vim.cursor }}
-            viewportRows={viewportRows}
-            availableWidth={dataWidth}
-            empty="no rows"
-            activeColumn={explorer.table.columns[editColumn]?.name ?? explorer.table.columns[0]?.name}
-            columnFocus={focus === "table"}
-            highlight={explorer.search.trim() || undefined}
-            selection={selectedRange}
-          />
+          redisTextMode && explorer.redisPage?.text !== undefined ? (
+            <RedisTextPanel
+              value={explorer.redisPage.text}
+              note={explorer.redisPage.note}
+              width={dataWidth}
+              scrollRef={redisScrollRef}
+            />
+          ) : redisStreamMode ? (
+            <RedisStreamPanel
+              entries={explorer.redisPage?.entries ?? []}
+              width={dataWidth}
+              scrollRef={redisScrollRef}
+            />
+          ) : (
+            <DataTable
+              table={{ ...explorer.table, cursor: vim.cursor }}
+              viewportRows={viewportRows}
+              availableWidth={dataWidth}
+              empty={explorer.redisView?.kind === "keys" ? "no keys" : "no rows"}
+              activeColumn={explorer.table.columns[editColumn]?.name ?? explorer.table.columns[0]?.name}
+              columnFocus={focus === "table"}
+              highlight={explorer.search.trim() || undefined}
+              selection={selectedRange}
+            />
+          )
         ) : (
           <box flexGrow={1} alignItems="center" justifyContent="center">
             <text fg={c.textMuted}>select a connection in the sidebar to start browsing</text>
@@ -937,6 +1097,7 @@ export function ExplorerScreen() {
           width={previewWidth}
           maxHeight={Math.max(8, height - 2)}
           truncated={explorer.table.columns.length > previewMaxRows}
+          readOnly={active?.database.engine === "redis"}
         />
       ) : null}
       {viewerOpen && viewerRow && viewerColumn && viewerValue !== null ? (
@@ -987,6 +1148,8 @@ function SearchBar({ query, matches, availableWidth }: { query: string; matches:
  */
 function TableStrip({
   tableName,
+  rawTitle = false,
+  detail,
   loading,
   focus,
   paneNumber,
@@ -999,6 +1162,10 @@ function TableStrip({
   hasNextPage,
 }: {
   tableName: string | null
+  /** Redis keys are case-sensitive and can contain any character. */
+  rawTitle?: boolean
+  /** Extra context (Redis type/length/TTL, keyspace DB) shown before paging. */
+  detail?: string | null
   loading: boolean
   focus: boolean
   paneNumber: number
@@ -1025,10 +1192,17 @@ function TableStrip({
     <box height={1} flexDirection="row" overflow="hidden">
       <box height={1} paddingX={1} backgroundColor={c.bgHighlight}>
         <text fg={focus ? c.accent : c.textBright} truncate>
-          {`${paneNumber} \u258c ${tableName.toUpperCase()}`}
+          {`${paneNumber} \u258c ${rawTitle ? tableName : tableName.toUpperCase()}`}
         </text>
       </box>
       <box flexGrow={1} />
+      {detail ? (
+        <box height={1} paddingX={1} flexShrink={1} overflow="hidden">
+          <text fg={c.textMuted} truncate>
+            {detail}
+          </text>
+        </box>
+      ) : null}
       {total !== null && total > pageSize ? (
         <box height={1} flexDirection="row" alignItems="center" paddingX={1}>
           <text fg={c.textMuted}>

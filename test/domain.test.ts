@@ -157,6 +157,18 @@ describe("ConnectionConfig (discriminated union by engine)", () => {
     expect(encoded(ConnectionConfig, decoded)).toEqual(input)
   })
 
+  test("decodes and encodes a valid redis config", () => {
+    const input = {
+      engine: "redis" as const,
+      host: "cache",
+      port: 6379,
+      defaultDatabase: "2",
+      tls: true,
+    }
+    const decoded = S.decodeSync(ConnectionConfig)(input)
+    expect(encoded(ConnectionConfig, decoded)).toEqual(input)
+  })
+
   test("rejects an invalid engine at runtime", () => {
     expect(() =>
       S.decodeSync(ConnectionConfig)(

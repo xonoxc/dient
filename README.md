@@ -1,7 +1,7 @@
 # dient
 
 <p align="center">
-  <strong>A terminal database client for MySQL, PostgreSQL and SQLite — with Vim-style keys.</strong>
+  <strong>A terminal database client for MySQL, PostgreSQL, SQLite and Redis — with Vim-style keys.</strong>
 </p>
 
 <p align="center">
@@ -13,8 +13,8 @@
 ---
 
 A project is a **group of databases**; a database carries exactly one connection
-and its tables. The sidebar is that tree, the grid is the table, and the keyboard
-never leaves them.
+and its tables (or keyspace, for Redis). The sidebar is that tree, the grid is
+the table, and the keyboard never leaves them.
 
 ```text
 ┌ PROJECTS ────────────────┐┌ ORDERS ────────────────────────────────────┐
@@ -33,8 +33,8 @@ active connection, <code>●</code> is connection status.</sub>
 
 - **Fuzzy finder** — `Space` searches every project, database and table at once;
   jumping to a database expands and connects it in a single keystroke.
-- **In-place editing** — `Enter` edits the cell under the cursor, with the value
-  typed against the column's SQL type.
+- **In-place inspection** — `Enter` previews the row under the cursor; `e`
+  expands a truncated cell without leaving the table.
 - **`$EDITOR` round-trip** — `i` writes the current row to a temp file as
   `column: value` pairs and reads the edits back on save.
 - **Linewise yank** — `V` then `j`/`k` then `y` copies whole rows to the system
@@ -43,6 +43,9 @@ active connection, <code>●</code> is connection status.</sub>
   filters the page, `n`/`N` walk the matches.
 - **Connection management** — projects, databases and connections, with a live
   "test connection" probe and a confirmation before any delete.
+- **Redis browsing** — `SCAN`-based keyspace, type-aware key views: strings and
+  RedisJSON as wrapped text, hashes/lists/sets/sorted sets as tables, and
+  streams as timestamped cards. Read-only by design.
 
 ---
 
@@ -76,10 +79,13 @@ Then, in the app:
    postgres://user:pass@host:5432/database
    mysql://user:pass@host:3306/database
    sqlite:///absolute/path/to/file.db
+   redis://user:pass@host:6379/0
+   rediss://user:pass@host:6380/0       # TLS
    ```
 
-   The parser is deliberately permissive: `postgresql://` and `file://` also
-   work, and a bare path is taken as SQLite.
+   The parser is deliberately permissive: `postgresql://`, `valkey://`,
+   `valkeys://` and `file://` also work, and a bare path is taken as SQLite.
+   The Redis path is a numeric database index, not a database name.
 3. `t` tests the connection, `Enter` saves, `e` returns to the explorer.
 4. `Enter` on a database connects and opens its first table.
 
@@ -107,13 +113,14 @@ The rule is the same on every screen with more than one pane.
 
 | Key | Action |
 | --- | --- |
-| `j` / `k` (↓ / ↑) | Move down / up |
-| `gg` / `G` | First / last |
+| `j` / `k` (↓ / ↑) | Move down / up; scroll a Redis string or stream |
+| `gg` / `G` | First / last; top / bottom of a Redis value |
 | `1` / `2` | Focus pane 1 (sidebar) / pane 2 (table) |
 | `h` / `l` | Scroll columns left / right |
 | ← / → | Previous / next column |
-| `Enter` | Open a table, or edit the cell under the cursor |
-| `i` | Edit the current row in `$EDITOR` |
+| `Enter` | Open a Redis key, or preview the row |
+| `Esc` | Leave an open Redis key for the keyspace |
+| `i` | Edit the current row in `$EDITOR` (SQL only) |
 | `V` | Start a row selection |
 | `y` | Copy the selection to the clipboard |
 | `/` | Filter the current page |
@@ -122,6 +129,18 @@ The rule is the same on every screen with more than one pane.
 | `Tab` | Next connection |
 | `Space` | Open the quick finder |
 | `s` | Settings |
+
+### Redis
+
+A Redis connection opens on a `keys` table. `Enter` drills into the key under
+the cursor: strings and RedisJSON values open in a wrapped text panel; streams
+open as cards of field/value pairs; hashes, lists, sets and sorted sets use the
+normal table (with `field/value`, `index/value`, `member`, and
+`rank/score/member` columns). Paging uses `SCAN` cursors for keys, hashes and
+sets, offsets for lists and sorted sets, and entry IDs for streams. Nothing in
+the Redis path writes. The driver is standalone (no Cluster/Sentinel) and
+understands the core Redis types plus RedisJSON; module-specific types without
+a dedicated view fall back to a metadata row.
 
 ### Settings
 
@@ -183,8 +202,10 @@ src/
 │
 ├── config/          ConfigStore       SQLite-backed, tagged ConfigError
 ├── drivers/         DatabaseDriver    Postgres / MySQL / SQLite behind one port
+│                    RedisDriver       raw Redis commands, Bun's client
 ├── connection/      ConnectionManager connect, query, status, retry-with-backoff
 ├── inspector/       SchemaInspector   listTables, describeTable
+├── redis/           RedisInspector    SCAN + type-aware key pages, read-only
 ├── query/           QueryExecutor     parameter binding, identifier quoting
 │
 ├── sidebar/         the project → database → table tree
@@ -209,10 +230,11 @@ React surface that drives it fire-and-forget.
 These are rules the codebase already follows, not aspirations.
 
 - **Effect owns the service layer.** Every method on `ConfigStore`,
-  `DatabaseDriver`, `ConnectionManager`, `SchemaInspector` and `QueryExecutor`
-  returns an `Effect`, built as a full `Effect.gen` pipeline. Dependencies are
-  wired explicitly with `Layer.provide` in `src/runtime.ts`, so the assembled
-  graph needs nothing from the environment.
+  `DatabaseDriver`, `RedisDriver`, `ConnectionManager`, `SchemaInspector`,
+  `RedisInspector` and `QueryExecutor` returns an `Effect`, built as a full
+  `Effect.gen` pipeline. Dependencies are wired explicitly with `Layer.provide`
+  in `src/runtime.ts`, so the assembled graph needs nothing from the
+  environment.
 - **Failures are typed, never thrown.** Use `Data.TaggedError` and
   `Effect.mapError` — see `ConfigError`, `ConnectionError`, `QueryError`.
   `onError` in `src/config/config-store.ts` is the reference: fold every

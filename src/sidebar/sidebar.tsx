@@ -23,7 +23,7 @@ export interface SidebarProps {
   readonly mode?: VimMode
 }
 
-const ENGINE_BADGE: Record<string, string> = { postgres: "PG", mysql: "MY", sqlite: "SQLite" }
+const ENGINE_BADGE: Record<string, string> = { postgres: "PG", mysql: "MY", sqlite: "SQLite", redis: "Redis" }
 
 /** One space of indent per depth level, so deep tables keep more label room. */
 const INDENT_STEP = " "

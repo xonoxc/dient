@@ -6,7 +6,7 @@ import { DatabaseDriver } from "@/drivers/database-driver"
 import { SchemaInspector } from "@/inspector"
 import type { SchemaInspectorService, TableInfo } from "@/inspector"
 import type { ActiveConnection, QueryError } from "@/drivers/types"
-import type { ConnectionConfig } from "@/domain"
+import type { SqlConnectionConfig } from "@/domain"
 import type { PostgresConnectionConfig, MysqlConnectionConfig, SqliteConnectionConfig } from "@/domain"
 
 /*
@@ -78,7 +78,7 @@ const runInspector = <A, E>(
 
 /* Connect, run `program`, and disconnect when the scope closes. */
 const withConnection = <A, E>(
-  config: ConnectionConfig,
+  config: SqlConnectionConfig,
   program: (conn: ActiveConnection) => Effect.Effect<A, E, Scope.Scope | DatabaseDriver>
 ) =>
   Effect.gen(function* () {

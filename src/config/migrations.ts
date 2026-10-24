@@ -56,6 +56,11 @@ export const migrations: ReadonlyArray<Migration> = [
         )`
       }),
   },
+  {
+    id: 2,
+    name: "add-redis-tls",
+    up: sql => sql`ALTER TABLE connections ADD COLUMN tls INTEGER`,
+  },
 ]
 
 /**

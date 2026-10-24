@@ -1,5 +1,5 @@
 import { Data, type Effect, type Scope } from "effect"
-import type { ConnectionConfig, Engine } from "@/domain"
+import type { Engine, SqlConnectionConfig } from "@/domain"
 
 /**
  * Metadata about one column of a query result. The name always comes from the
@@ -58,15 +58,16 @@ export class QueryError extends Data.TaggedError("QueryError")<{
 }> {}
 
 /**
- * The service contract every engine driver implements. The facade
+ * The service contract every SQL engine driver implements. The facade
  * `DatabaseDriver` exposes the same shape, dispatching to the matching engine's
- * driver based on `config.engine` / `conn.engine`.
+ * driver based on `config.engine` / `conn.engine`. Redis has a separate
+ * command-oriented contract in `@/drivers/redis`.
  *
  * `connect` hands back the handle inside the caller's scope: the caller (or the
  * scope that wraps the `connect` effect) owns the lifecycle and must eventually
  * call `disconnect`, otherwise the connection leaks.
  */
-export interface DriverService<TConfig extends ConnectionConfig = ConnectionConfig> {
+export interface DriverService<TConfig extends SqlConnectionConfig = SqlConnectionConfig> {
   readonly connect: (config: TConfig) => Effect.Effect<ActiveConnection, ConnectionError, Scope.Scope>
   readonly query: (
     conn: ActiveConnection,

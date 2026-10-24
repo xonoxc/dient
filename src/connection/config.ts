@@ -33,6 +33,25 @@ export const resolveConnectionConfig = (
         }
         return { engine: "sqlite", filename } as ConnectionConfig
       }
+      case "redis": {
+        const db = connection.defaultDatabase?.trim() || "0"
+        if (!/^\d+$/.test(db)) {
+          return yield* Effect.fail(
+            new ConfigError({
+              message: `connection ${connection.id} has an invalid Redis database index: ${connection.defaultDatabase}`,
+            })
+          )
+        }
+        return {
+          engine: "redis",
+          host: connection.host,
+          port: connection.port,
+          user: connection.user,
+          password: connection.password,
+          defaultDatabase: db,
+          tls: connection.tls,
+        } as ConnectionConfig
+      }
     }
   })
 

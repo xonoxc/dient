@@ -38,7 +38,7 @@ export type ConnectionId = S.Schema.Type<typeof ConnectionId>
  * unsupported engine value fails validation at runtime instead of silently
  * reaching a driver that doesn't know it.
  */
-export const Engine = S.Literal("postgres", "mysql", "sqlite")
+export const Engine = S.Literal("postgres", "mysql", "sqlite", "redis")
 export type Engine = S.Schema.Type<typeof Engine>
 
 export const ProjectSchema = S.Struct({
@@ -64,6 +64,8 @@ export const ConnectionSchema = S.Struct({
   password: S.optional(S.String),
   filename: S.optional(S.String),
   defaultDatabase: S.optional(S.String),
+  /** TLS for Redis; ignored by the SQL engines. */
+  tls: S.optional(S.Boolean),
 })
 export type Connection = S.Schema.Type<typeof ConnectionSchema>
 
@@ -104,5 +106,30 @@ export const SqliteConnectionConfig = S.Struct({
 })
 export type SqliteConnectionConfig = S.Schema.Type<typeof SqliteConnectionConfig>
 
-export const ConnectionConfig = S.Union(PostgresConnectionConfig, MysqlConnectionConfig, SqliteConnectionConfig)
+/**
+ * Redis is key/value, not relational. It still uses the same stored
+ * host/port/user/password fields; `defaultDatabase` is the logical DB index
+ * (`0`–`15` by default) and `tls` is derived from `rediss://` or the form.
+ */
+export const RedisConnectionConfig = S.Struct({
+  engine: S.Literal("redis"),
+  host: S.optional(S.String),
+  port: S.optional(S.Number),
+  user: S.optional(S.String),
+  password: S.optional(S.String),
+  defaultDatabase: S.optional(S.String),
+  tls: S.optional(S.Boolean),
+})
+export type RedisConnectionConfig = S.Schema.Type<typeof RedisConnectionConfig>
+
+/** The SQL engines' config union, used by `DatabaseDriver`. */
+export const SqlConnectionConfig = S.Union(PostgresConnectionConfig, MysqlConnectionConfig, SqliteConnectionConfig)
+export type SqlConnectionConfig = S.Schema.Type<typeof SqlConnectionConfig>
+
+export const ConnectionConfig = S.Union(
+  PostgresConnectionConfig,
+  MysqlConnectionConfig,
+  SqliteConnectionConfig,
+  RedisConnectionConfig
+)
 export type ConnectionConfig = S.Schema.Type<typeof ConnectionConfig>

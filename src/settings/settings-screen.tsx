@@ -98,7 +98,9 @@ export function SettingsScreen() {
   const fieldLabel = field
     ? field === "uri"
       ? "connection string"
-      : (FIELD_LABEL[field as keyof typeof FIELD_LABEL] ?? "value")
+      : field === "defaultDatabase" && settings.engine === "redis"
+        ? "db index"
+        : (FIELD_LABEL[field as keyof typeof FIELD_LABEL] ?? "value")
     : ""
 
   const pasteConnectionString = () => {
@@ -403,10 +405,13 @@ function SettingsDetails({
 }) {
   const { colors: c } = useTheme()
   const connection = item?.connection
+  const isRedis = item?.meta === "redis"
   const location = connection?.filename
     ? connection.filename
     : connection
-      ? `${connection.user ? `${connection.user}@` : ""}${connection.host ?? "localhost"}${connection.port ? `:${connection.port}` : ""}`
+      ? `${connection.user ? `${connection.user}@` : ""}${connection.host ?? "localhost"}${connection.port ? `:${connection.port}` : ""}${
+          isRedis ? `/${connection.defaultDatabase || "0"}` : ""
+        }`
       : null
 
   return (
@@ -433,9 +438,12 @@ function SettingsDetails({
               <>
                 <text fg={c.textMuted}>{connection ? "CONNECTION" : "CONNECTION MISSING"}</text>
                 <text fg={connection ? c.text : c.warning}>{location ?? "Add connection details with a."}</text>
-                {connection?.defaultDatabase ? (
-                  <text fg={c.textMuted}>default database · {connection.defaultDatabase}</text>
+                {connection && (connection.defaultDatabase || isRedis) ? (
+                  <text fg={c.textMuted}>
+                    {isRedis ? "db index" : "default database"} · {connection.defaultDatabase || "0"}
+                  </text>
                 ) : null}
+                {isRedis && connection?.tls ? <text fg={c.textMuted}>TLS · enabled</text> : null}
               </>
             )}
             <box height={2} />
@@ -621,7 +629,12 @@ function CredentialsFields({
         const value = active ? draft : (form.values[key as keyof typeof form.values] ?? "")
         const display =
           key === "password" && value ? "•".repeat(Math.min(value.length, 32)) : value || (active ? " " : "—")
-        const label = key === "defaultDatabase" ? "database" : (FIELD_LABEL[key as keyof typeof FIELD_LABEL] ?? key)
+        const label =
+          key === "defaultDatabase"
+            ? form.engine === "redis"
+              ? "db index"
+              : "database"
+            : (FIELD_LABEL[key as keyof typeof FIELD_LABEL] ?? key)
         return (
           <box
             key={key}

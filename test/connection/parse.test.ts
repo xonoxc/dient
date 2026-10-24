@@ -74,3 +74,56 @@ describe("parseConnectionString", () => {
     expect(parseConnectionString("mongodb://host/db")).toBeNull()
   })
 })
+
+type RedisString = Extract<ReturnType<typeof parseConnectionString>, { engine: "redis" }>
+
+describe("parseConnectionString redis", () => {
+  test("a redis URL carries host, port, and a logical database index", () => {
+    const parsed = parseConnectionString("redis://localhost:6379/2") as RedisString
+    expect(parsed?.engine).toBe("redis")
+    expect(parsed?.host).toBe("localhost")
+    expect(parsed?.port).toBe(6379)
+    expect(parsed?.defaultDatabase).toBe("2")
+    expect(parsed?.name).toBe("localhost:6379/2")
+    expect(parsed?.tls).toBeUndefined()
+  })
+
+  test("rediss enables TLS and decodes credentials", () => {
+    const parsed = parseConnectionString("rediss://user:p%40ss@cache.example.com:6380/0") as RedisString
+    expect(parsed?.engine).toBe("redis")
+    expect(parsed?.tls).toBe(true)
+    expect(parsed?.user).toBe("user")
+    expect(parsed?.password).toBe("p@ss")
+    expect(parsed?.defaultDatabase).toBe("0")
+    expect(parsed?.name).toBe("cache.example.com:6380")
+  })
+
+  test("valkey and valkeys are accepted as Redis", () => {
+    expect(parseConnectionString("valkey://cache:6379")?.engine).toBe("redis")
+    const secure = parseConnectionString("valkeys://cache:6379/3") as RedisString
+    expect(secure?.tls).toBe(true)
+    expect(secure?.defaultDatabase).toBe("3")
+  })
+
+  test("a password-only URL is accepted", () => {
+    const parsed = parseConnectionString("redis://:secret@host") as RedisString
+    expect(parsed?.password).toBe("secret")
+    expect(parsed?.user).toBeUndefined()
+  })
+
+  test("a malformed percent escape does not crash the parser", () => {
+    const parsed = parseConnectionString("redis://user:p%zz@host/0") as RedisString
+    expect(parsed?.engine).toBe("redis")
+    expect(parsed?.password).toBe("p%zz")
+  })
+
+  test("a non-numeric Redis path is rejected", () => {
+    expect(parseConnectionString("redis://host/cache")).toBeNull()
+  })
+
+  test("a Redis URL with no path still has a display name", () => {
+    const parsed = parseConnectionString("redis://host") as RedisString
+    expect(parsed?.name).toBe("host:6379")
+    expect(parsed?.defaultDatabase).toBeUndefined()
+  })
+})

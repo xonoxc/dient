@@ -6,6 +6,14 @@
 export { DatabaseDriver } from "@/drivers/database-driver"
 export { connectMysql, disconnectMysql, isConnectedMysql, MysqlDriver, queryMysql } from "@/drivers/mysql"
 export { connectPg, disconnectPg, isConnectedPg, PgDriver, queryPg } from "@/drivers/pg"
+export {
+  commandRedis,
+  connectRedis,
+  disconnectRedis,
+  isConnectedRedis,
+  RedisDriver,
+  type RedisDriverService,
+} from "@/drivers/redis"
 export { connectSqlite, disconnectSqlite, isConnectedSqlite, querySqlite, SqliteDriver } from "@/drivers/sqlite"
 export type { ActiveConnection, ColumnInfo, DriverService, QueryResult } from "@/drivers/types"
 export { ConnectionError, QueryError } from "@/drivers/types"

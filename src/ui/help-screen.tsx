@@ -8,13 +8,14 @@ import { normalModeKey } from "@/ui/text-entry"
 type Binding = readonly [string, string]
 
 const EXPLORER: ReadonlyArray<Binding> = [
-  ["j / k (↓ / ↑)", "move down / up"],
-  ["gg / G", "first / last"],
+  ["j / k (↓ / ↑)", "move / scroll value"],
+  ["gg / G", "first / last (or value ends)"],
   ["1 / 2", "focus sidebar / table"],
   ["h / l", "scroll columns left / right"],
   ["← / →", "previous / next col"],
-  ["Enter", "preview the row"],
-  ["i", "edit row in $EDITOR"],
+  ["Enter", "open key / preview row"],
+  ["Esc", "back to Redis keys"],
+  ["i", "edit row in $EDITOR (SQL)"],
   ["e", "view full cell value"],
   ["V", "start row selection"],
   ["y", "copy the selection"],

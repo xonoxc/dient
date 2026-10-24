@@ -8,6 +8,7 @@ import { UpdateChecker } from "@/update/update-checker"
 import { ConfigStore, type ConfigStoreService } from "@/config"
 import { DatabaseDriver } from "@/drivers/database-driver"
 import { SchemaInspector } from "@/inspector"
+import { RedisInspector } from "@/redis/redis-inspector"
 import { ConnectionManager } from "@/connection/connection-manager"
 import { QueryExecutor } from "@/query/query-executor"
 import { makeErrorLog } from "@/log/error-log"
@@ -47,6 +48,7 @@ export const buildTestServices = (configPath: string, updateDeps?: UpdateChecker
         configStore: Context.get(context, ConfigStore),
         connectionManager: Context.get(context, ConnectionManager),
         schemaInspector: Context.get(context, SchemaInspector),
+        redisInspector: Context.get(context, RedisInspector),
         queryExecutor: Context.get(context, QueryExecutor),
         updateChecker: Context.get(context, UpdateChecker),
         errorLog: makeErrorLog(`${configPath}.error.log`),
@@ -105,6 +107,7 @@ export const seedProject = (
     user?: string
     password?: string
     defaultDatabase?: string
+    tls?: boolean
   } = {
     name: "demo",
     database: "main",
@@ -128,6 +131,7 @@ export const seedProject = (
         user: input.user,
         password: input.password,
         defaultDatabase: input.defaultDatabase,
+        tls: input.tls,
       })
       return { project, database, connection }
     })

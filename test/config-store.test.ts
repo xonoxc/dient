@@ -162,6 +162,28 @@ describe("Connections CRUD", () => {
     )
   })
 
+  test("createConnection persists Redis TLS and db index", async () => {
+    await run(
+      freshDb(),
+      Effect.gen(function* () {
+        const store = yield* ConfigStore
+        const project = yield* store.createProject({ name: "p" })
+        const db = yield* store.createDatabase({ projectId: project.id, name: "cache", engine: "redis" })
+        const conn = yield* store.createConnection({
+          databaseId: db.id,
+          host: "cache",
+          port: 6380,
+          defaultDatabase: "2",
+          tls: true,
+        })
+        expect(conn.tls).toBe(true)
+        expect(conn.defaultDatabase).toBe("2")
+        const [listed] = yield* store.listConnections(db.id)
+        expect(listed?.tls).toBe(true)
+      })
+    )
+  })
+
   test("listConnections scoped to database", async () => {
     await run(
       freshDb(),
