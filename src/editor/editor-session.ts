@@ -83,6 +83,18 @@ export const runEditorSession = (options: EditorSessionOptions): void => {
 
   const program = command.split(/\s+/).filter(Boolean)
   const bin = program[0]
+  /* GUI editors (VS Code, Sublime, Atom, ...) fork and exit immediately, so
+     the session would read the file before the user saves. Append a blocking
+     flag for the ones we recognise so the process stays alive until close. */
+  const waitFlag = (() => {
+    const base = (bin ?? "").split(/[\\/]/).pop()?.toLowerCase() ?? ""
+    if (base === "code" || base === "code-insiders" || base === "atom") return "--wait"
+    if (base === "subl") return "-w"
+    return null
+  })()
+  const args = [...program.slice(1)]
+  if (waitFlag && !program.includes(waitFlag)) args.push(waitFlag)
+  args.push(file)
   /* `$EDITOR` is frequently set to an empty string by a shell profile. That
      parses to an empty argv, and `spawn` would throw on the missing binary —
      inside a keypress handler, with the renderer already suspended and the
@@ -97,7 +109,7 @@ export const runEditorSession = (options: EditorSessionOptions): void => {
 
   let child: ChildProcess
   try {
-    child = spawn(bin, [...program.slice(1), file], {
+    child = spawn(bin, args, {
       stdio: "inherit",
       env: process.env,
     })
