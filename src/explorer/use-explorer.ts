@@ -18,7 +18,7 @@ import type { ActiveConnection, ColumnInfo } from "@/drivers/types"
 import type { TableInfo } from "@/inspector/types"
 import { cleanIdentifier } from "@/query/identifier"
 import { formatTtl } from "@/redis/format"
-import type { RedisKeyInfo, RedisPage } from "@/redis/types"
+import type { RedisKeyInfo, RedisPage, RedisRowUpdate } from "@/redis/types"
 import { useTable, type UseTableResult } from "@/table/use-table"
 import { formatCell } from "@/table/use-table"
 
@@ -94,6 +94,14 @@ export interface UseExplorerResult {
     row: Record<string, unknown>,
     updates: ReadonlyArray<{ readonly column: string; readonly param: unknown }>
   ) => void
+  /** Rename the open key (or a key selected in the keyspace). */
+  readonly renameRedisKey: (oldKey: string, newKey: string) => void
+  /** Read the whole string/JSON value before handing it to `$EDITOR`. */
+  readonly readRedisText: (onReady: (text: string) => void, onError?: () => void) => void
+  /** Replace a string/RedisJSON value and refresh the open view. */
+  readonly saveRedisText: (text: string) => void
+  /** Apply changed fields of a collection row and refresh the open page. */
+  readonly saveRedisRow: (row: Record<string, unknown>, updates: ReadonlyArray<RedisRowUpdate>) => void
 }
 
 const PAGE_SIZE = 200
@@ -334,6 +342,17 @@ export const useExplorer = (): UseExplorerResult => {
         )
       )
     )
+  }
+
+  /** Reload the keyspace page or open key at the same cursor, so a save or a
+   *  rename does not send the reader back to page one. */
+  const reloadRedisCurrent = (): void => {
+    const view = redisViewRef.current
+    if (!view) return
+    const pageIndex = redisPageIndexRef.current
+    const token = redisTokensRef.current[pageIndex] ?? null
+    if (view.kind === "key") loadRedisKey(view.key, token, pageIndex)
+    else loadRedisKeys(token, pageIndex)
   }
 
   const openRedisKeys = (): void => {
@@ -641,6 +660,134 @@ export const useExplorer = (): UseExplorerResult => {
      Vim mode, so we advertise the vim cursor (0 default) as the active row. */
   const table = useTable(searchedRows, columns)
 
+  /* Read the whole value, not the 64 KB preview, so editing a large string does
+     not silently save only the visible prefix. */
+  const readRedisText = (onReady: (text: string) => void, onError?: () => void): void => {
+    const explorer = activeExplorer.current
+    const handle = activeHandle.current
+    if (!explorer || explorer.database.engine !== "redis" || !handle || !redisInfo) {
+      toasts.push("error", "no Redis value open to edit")
+      onError?.()
+      return
+    }
+    const info = redisInfo
+    Effect.runFork(
+      Effect.gen(function* () {
+        const value = yield* redisInspector.readValueText(handle, info)
+        yield* Effect.sync(() => onReady(value))
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            errorLog.append("explorer.redisRead", cause)
+            toasts.push("error", `could not read ${info.key}: ${describeError(cause)}`)
+            onError?.()
+          })
+        )
+      )
+    )
+  }
+
+  /* Replace a string/JSON value and reload the same view; the key and its TTL
+     stay in place. */
+  const saveRedisText = (value: string): void => {
+    const explorer = activeExplorer.current
+    const handle = activeHandle.current
+    if (!explorer || explorer.database.engine !== "redis" || !handle || !redisInfo) {
+      toasts.push("error", "no Redis value open to save")
+      return
+    }
+    const info = redisInfo
+    Effect.runFork(
+      Effect.gen(function* () {
+        yield* redisInspector.updateText(handle, info, value)
+        yield* Effect.sync(() => {
+          toasts.push("success", `saved ${info.key}`)
+          reloadRedisCurrent()
+        })
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            errorLog.append("explorer.redisSaveText", cause)
+            toasts.push("error", `save failed: ${describeError(cause)}`)
+          })
+        )
+      )
+    )
+  }
+
+  /* Apply the changed fields of a hash/list/set/zset row. Field and member
+     renames are handled by the inspector as remove-old + add-new. */
+  const saveRedisRow = (row: Record<string, unknown>, updates: ReadonlyArray<RedisRowUpdate>): void => {
+    const explorer = activeExplorer.current
+    const handle = activeHandle.current
+    if (!explorer || explorer.database.engine !== "redis" || !handle || !redisInfo) {
+      toasts.push("error", "no Redis value open to save")
+      return
+    }
+    if (updates.length === 0) {
+      toasts.push("info", "no changes to save")
+      return
+    }
+    const info = redisInfo
+    Effect.runFork(
+      Effect.gen(function* () {
+        yield* redisInspector.updateRow(handle, info, row, updates)
+        const changed = updates.length === 1 ? updates[0]!.column : `${updates.length} fields`
+        yield* Effect.sync(() => {
+          toasts.push("success", `saved ${info.key}.${changed}`)
+          reloadRedisCurrent()
+        })
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            errorLog.append("explorer.redisSaveRow", cause)
+            toasts.push("error", `save failed: ${describeError(cause)}`)
+          })
+        )
+      )
+    )
+  }
+
+  /* Rename from the keyspace. `RENAMENX` on the driver side refuses to clobber
+     an existing key; the view reloads at the same cursor on success. */
+  const renameRedisKey = (oldKey: string, newKey: string): void => {
+    const explorer = activeExplorer.current
+    const handle = activeHandle.current
+    if (!explorer || explorer.database.engine !== "redis" || !handle) {
+      toasts.push("error", "no Redis connection open to rename a key")
+      return
+    }
+    if (oldKey === newKey) {
+      toasts.push("info", "no changes to save")
+      return
+    }
+    const view = redisViewRef.current
+    const pageIndex = redisPageIndexRef.current
+    const token = redisTokensRef.current[pageIndex] ?? null
+    Effect.runFork(
+      Effect.gen(function* () {
+        yield* redisInspector.renameKey(handle, oldKey, newKey)
+        yield* Effect.sync(() => {
+          toasts.push("success", `renamed ${oldKey} → ${newKey}`)
+          if (view?.kind === "key" && view.key === oldKey) {
+            updateRedisView({ kind: "key", key: newKey })
+            setTableName(newKey)
+            loadRedisKey(newKey, token, pageIndex)
+          } else {
+            loadRedisKeys(token, pageIndex)
+          }
+        })
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            errorLog.append("explorer.redisRenameKey", cause)
+            toasts.push("error", `rename failed: ${describeError(cause)}`)
+          })
+        )
+      )
+    )
+  }
+
   /* Persist a whole edited row: one UPDATE with a SET clause per changed
      field, always keyed on the primary key from the schema inspector. */
   const saveRow = (
@@ -653,7 +800,13 @@ export const useExplorer = (): UseExplorerResult => {
       return
     }
     if (explorer.database.engine === "redis") {
-      toasts.push("info", "Redis browsing is read-only")
+      saveRedisRow(
+        row,
+        updates.map(update => ({
+          column: update.column,
+          param: update.param === null || update.param === undefined ? "" : String(update.param),
+        }))
+      )
       return
     }
     if (!tableInfo) {
@@ -740,6 +893,10 @@ export const useExplorer = (): UseExplorerResult => {
       cycleConnection,
       jumpToConnection,
       saveRow,
+      renameRedisKey,
+      readRedisText,
+      saveRedisText,
+      saveRedisRow,
     }),
     [
       sidebar,
@@ -764,6 +921,10 @@ export const useExplorer = (): UseExplorerResult => {
       hasPrevPage,
       searchedRows.length,
       saveRow,
+      renameRedisKey,
+      readRedisText,
+      saveRedisText,
+      saveRedisRow,
     ]
   )
 

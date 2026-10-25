@@ -2,7 +2,9 @@
  * End-to-end Redis coverage: a real Redis container through the app's real
  * config store, ConnectionManager, RedisDriver, and RedisInspector. This is
  * where Bun's actual reply shapes (notably ZRANGE WITHSCORES and XRANGE) meet
- * the code that maps them into explorer pages.
+ * the code that maps them into explorer pages, and where the write commands
+ * (SET KEEPTTL, HDEL/HSET, LSET, SREM/SADD, ZADD/ZREM, RENAMENX) run against a
+ * real server.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Effect } from "effect"
@@ -116,5 +118,81 @@ describe("Redis connection", () => {
 
     const connected = await Effect.runPromise(services.services.connectionManager.isConnected(seeded.connection.id))
     expect(connected).toBe(false)
+  }, 30_000)
+
+  test("edits strings, collection rows, and key names without losing TTL", async () => {
+    const client = new Bun.RedisClient(`redis://${redisHost()}:${redisPort()}/0`)
+    await client.connect()
+    await client.send("FLUSHALL", [])
+    await client.send("SET", ["greeting", "hello redis", "EX", "60"])
+    await client.send("HSET", ["user:1", "name", "alice"])
+    await client.send("RPUSH", ["jobs", "one"])
+    await client.send("SADD", ["tags", "red"])
+    await client.send("ZADD", ["board", "10", "alice"])
+
+    const services = await resolveTestServices(freshConfigFile())
+    const seeded = await seedProject(services.store, {
+      name: "redis-edit",
+      database: "cache",
+      engine: "redis",
+      host: redisHost(),
+      port: redisPort(),
+      defaultDatabase: "0",
+    })
+    const conn = await Effect.runPromise(services.services.connectionManager.connect(seeded.connection.id))
+    try {
+      const inspector = services.services.redisInspector
+
+      const greeting = await Effect.runPromise(inspector.describeKey(conn, "greeting"))
+      expect(await Effect.runPromise(inspector.readValueText(conn, greeting))).toBe("hello redis")
+      await Effect.runPromise(inspector.updateText(conn, greeting, "edited value"))
+      await Effect.runPromise(inspector.renameKey(conn, "greeting", "welcome"))
+
+      const welcome = await Effect.runPromise(inspector.describeKey(conn, "welcome"))
+      expect(welcome.type).toBe("string")
+      expect(welcome.ttl).toBeGreaterThan(0)
+      const string = await Effect.runPromise(inspector.loadValue(conn, "welcome", { token: null, count: 200 }))
+      expect(string.text).toBe("edited value")
+
+      const hashInfo = await Effect.runPromise(inspector.describeKey(conn, "user:1"))
+      await Effect.runPromise(
+        inspector.updateRow(conn, hashInfo, { field: "name", value: "alice" }, [
+          { column: "field", param: "display_name" },
+          { column: "value", param: "Alice" },
+        ])
+      )
+      const hash = await Effect.runPromise(inspector.loadValue(conn, "user:1", { token: null, count: 200 }))
+      expect(hash.rows).toEqual([{ field: "display_name", value: "Alice" }])
+
+      const listInfo = await Effect.runPromise(inspector.describeKey(conn, "jobs"))
+      await Effect.runPromise(
+        inspector.updateRow(conn, listInfo, { index: 0, value: "one" }, [{ column: "value", param: "uno" }])
+      )
+      const list = await Effect.runPromise(inspector.loadValue(conn, "jobs", { token: null, count: 200 }))
+      expect(list.rows).toEqual([{ index: 0, value: "uno" }])
+
+      const setInfo = await Effect.runPromise(inspector.describeKey(conn, "tags"))
+      await Effect.runPromise(
+        inspector.updateRow(conn, setInfo, { member: "red" }, [{ column: "member", param: "crimson" }])
+      )
+      const set = await Effect.runPromise(inspector.loadValue(conn, "tags", { token: null, count: 200 }))
+      expect(set.rows).toEqual([{ member: "crimson" }])
+
+      const zsetInfo = await Effect.runPromise(inspector.describeKey(conn, "board"))
+      await Effect.runPromise(
+        inspector.updateRow(conn, zsetInfo, { rank: 1, score: "10", member: "alice" }, [
+          { column: "score", param: "99" },
+          { column: "member", param: "bob" },
+        ])
+      )
+      const zset = await Effect.runPromise(inspector.loadValue(conn, "board", { token: null, count: 200 }))
+      expect(zset.rows).toEqual([{ rank: 1, score: "99", member: "bob" }])
+
+      const renamed = await Effect.runPromiseExit(inspector.loadValue(conn, "greeting", { token: null, count: 200 }))
+      expect(renamed._tag).toBe("Failure")
+    } finally {
+      client.close()
+      await Effect.runPromise(services.services.connectionManager.disconnect(seeded.connection.id))
+    }
   }, 30_000)
 })

@@ -53,6 +53,13 @@ export interface RedisKeysPage {
   readonly nextToken: string | null
 }
 
+/** One changed field in a Redis collection row. Redis values are strings, so
+ *  the editor never produces numbers or NULL. */
+export interface RedisRowUpdate {
+  readonly column: string
+  readonly param: string
+}
+
 export interface RedisPageRequest {
   readonly token: string | null
   readonly count: number

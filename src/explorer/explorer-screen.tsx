@@ -24,6 +24,7 @@ import { DataTable, type CellDecoration } from "@/table/data-table"
 import { selectionRange, useVimMode } from "@/vim"
 import { PANEL_ORDER, useExplorer } from "@/explorer/use-explorer"
 import { editRowInEditor } from "@/editor/edit-row-in-editor"
+import { editTextInEditor, stripEditorNewline } from "@/editor/edit-text-in-editor"
 import { yankRows } from "@/editor/row-clipboard"
 import { writeSystemClipboard } from "@/ui/clipboard"
 import { formatCell } from "@/table/use-table"
@@ -32,6 +33,7 @@ import { buildFinderIndex, type FinderEntry } from "@/finder/finder"
 import { FinderOverlay } from "@/finder/finder-overlay"
 import { RowPreview } from "@/explorer/row-preview"
 import { useUpdateUi } from "@/update/update-provider"
+import { describeError } from "@/errors/describe"
 import { CELL_VIEWER_TEXT_WIDTH, CellViewer, wrapText } from "@/explorer/cell-viewer"
 import { fuzzyMatch } from "@/finder/fuzzy"
 import { normalModeKey, resolveTypedChar } from "@/ui/text-entry"
@@ -39,6 +41,7 @@ import { paneIndexForKey } from "@/ui/pane-keys"
 import { windowTail } from "@/ui/text-window"
 import { LoadingIndicator } from "@/ui/loading-indicator"
 import { RedisStreamPanel, RedisTextPanel } from "@/redis/redis-views"
+import { parseRedisRow, redisRowShape, serializeRedisRow } from "@/redis/editing"
 import {
   formatTtl,
   redisKeyDetail,
@@ -432,13 +435,150 @@ export function ExplorerScreen() {
     },
   })
 
+  const editRedisCurrent = () => {
+    const view = explorer.redisView
+    const info = explorer.redisInfo
+    const row = explorer.table.sortedRows[vim.cursor]
+    if (!active || !view) {
+      toasts.push("error", "no Redis value open to edit")
+      return
+    }
+
+    if (view.kind === "keys") {
+      const key = typeof row?.key === "string" ? row.key : null
+      if (!key) {
+        toasts.push("info", "no keys to rename")
+        return
+      }
+      editorBusyRef.current = true
+      editTextInEditor({
+        renderer,
+        label: `key "${key}"`,
+        filename: `key-${key}`,
+        content: key,
+        callbacks: {
+          notice: message => toasts.push("info", message),
+          error: message => toasts.push("error", message),
+          onSave: edited => {
+            const next = stripEditorNewline(edited, key)
+            if (next.trim() === "") {
+              toasts.push("error", "key name cannot be empty")
+              return
+            }
+            if (next === key) {
+              toasts.push("info", "no changes to save")
+              return
+            }
+            explorer.renameRedisKey(key, next)
+          },
+          done: () => {
+            editorBusyRef.current = false
+          },
+        },
+      })
+      return
+    }
+
+    if (!info) {
+      toasts.push("error", "no Redis value open to edit")
+      return
+    }
+
+    const isJson = info.type === "ReJSON-RL" || info.type === "json"
+    if (info.type === "string" || isJson) {
+      editorBusyRef.current = true
+      explorer.readRedisText(
+        text => {
+          editTextInEditor({
+            renderer,
+            label: info.key,
+            filename: info.key,
+            extension: isJson ? ".json" : ".txt",
+            content: text,
+            callbacks: {
+              notice: message => toasts.push("info", message),
+              error: message => toasts.push("error", message),
+              onSave: edited => {
+                const value = stripEditorNewline(edited, text)
+                if (isJson) {
+                  const trimmed = value.trim()
+                  try {
+                    JSON.parse(trimmed)
+                  } catch (cause) {
+                    toasts.push("error", `invalid JSON: ${describeError(cause)}`)
+                    return
+                  }
+                  if (trimmed === text) {
+                    toasts.push("info", "no changes to save")
+                    return
+                  }
+                  explorer.saveRedisText(trimmed)
+                  return
+                }
+                if (value === text) {
+                  toasts.push("info", "no changes to save")
+                  return
+                }
+                explorer.saveRedisText(value)
+              },
+              done: () => {
+                editorBusyRef.current = false
+              },
+            },
+          })
+        },
+        () => {
+          editorBusyRef.current = false
+        }
+      )
+      return
+    }
+
+    const shape = redisRowShape(info.type)
+    if (!shape) {
+      toasts.push("info", `editing ${info.type} values is not supported`)
+      return
+    }
+    if (!row) {
+      toasts.push("info", "no rows to edit")
+      return
+    }
+    editorBusyRef.current = true
+    editTextInEditor({
+      renderer,
+      label: info.key,
+      filename: info.key,
+      content: serializeRedisRow(shape.columns, row),
+      callbacks: {
+        notice: message => toasts.push("info", message),
+        error: message => toasts.push("error", message),
+        onSave: edited => {
+          const parsed = parseRedisRow(edited, shape.columns, shape.primaryKey, row)
+          if (!parsed.ok) {
+            toasts.push("error", parsed.error)
+            return
+          }
+          if (parsed.updates.length === 0) {
+            toasts.push("info", "no changes to save")
+            return
+          }
+          explorer.saveRedisRow(row, parsed.updates)
+        },
+        done: () => {
+          editorBusyRef.current = false
+        },
+      },
+    })
+  }
+
   const editCurrentRow = () => {
     if (!tableName || !active) {
       toasts.push("error", "no table open to edit")
       return
     }
+    if (editorBusyRef.current) return
     if (active.database.engine === "redis") {
-      toasts.push("info", "Redis browsing is read-only")
+      editRedisCurrent()
       return
     }
     if (!tableInfo || tableInfo.primaryKey.length === 0) {
@@ -450,7 +590,6 @@ export function ExplorerScreen() {
       toasts.push("info", "no rows to edit")
       return
     }
-    if (editorBusyRef.current) return
     editorBusyRef.current = true
     editRowInEditor({
       renderer,
@@ -512,7 +651,16 @@ export function ExplorerScreen() {
   const hints = useMemo(() => {
     /* While a selection is open those are the only live keys, so the hints name
        them and nothing else — the normal bindings are inert until it closes. */
-    if (vimMode === "visual") return ["y copy", "i edit row", "Enter preview", "j/k extend", "gg/G ends", "Esc cancel"]
+    if (vimMode === "visual") {
+      return [
+        "y copy",
+        explorer.redisView?.kind === "keys" ? "i rename key" : "i edit row",
+        "Enter preview",
+        "j/k extend",
+        "gg/G ends",
+        "Esc cancel",
+      ]
+    }
 
     /* Paging leads the hint list. Hints get a third of the strip, so one buried
        at the end of ten others is never seen — and paging is the one action a
@@ -529,10 +677,11 @@ export function ExplorerScreen() {
       return [
         ...paging,
         ...pending,
-        "s settings",
+        ...(redisTextMode ? ["i edit value"] : []),
         "j/k scroll",
         "g/G ends",
         "Esc keys",
+        "s settings",
         "space jump",
         "1/2 panes",
         "q quit",
@@ -542,10 +691,11 @@ export function ExplorerScreen() {
       return [
         ...paging,
         ...pending,
-        "s settings",
         "Enter open key",
+        "i rename key",
         "j/k move",
         "V select",
+        "s settings",
         "space jump",
         "1/2 panes",
         "q quit",
@@ -555,12 +705,13 @@ export function ExplorerScreen() {
       return [
         ...paging,
         ...pending,
-        "s settings",
         "Enter preview",
+        "i edit row",
         "e full value",
         "j/k move",
         "h/l cols",
         "Esc keys",
+        "s settings",
         "space jump",
         "1/2 panes",
         "q quit",
@@ -604,6 +755,7 @@ export function ExplorerScreen() {
     explorer.hasNextPage,
     explorer.hasPrevPage,
     redisCustomView,
+    redisTextMode,
     explorer.redisView,
     vimMode,
     update.phase,
@@ -813,9 +965,13 @@ export function ExplorerScreen() {
     }
 
     /* Strings and streams are not tables: j/k scroll the panel and Enter has
-       no row to inspect. The explicit guard keeps table-only keys (i, e, V, /)
-       from acting on a page whose rows are a rendering detail, not a cursor. */
+       no row to inspect. `i` is still the edit key: strings/JSON open in
+       `$EDITOR`, while streams report that Redis entries are append-only. */
     if (focus === "table" && redisCustomView) {
+      if (key === "i") {
+        editCurrentRow()
+        return
+      }
       if (e.ctrl === true && key === "f") {
         explorer.nextPage()
         return
@@ -1146,7 +1302,6 @@ export function ExplorerScreen() {
           width={previewWidth}
           maxHeight={Math.max(8, height - 2)}
           truncated={explorer.table.columns.length > previewMaxRows}
-          readOnly={active?.database.engine === "redis"}
         />
       ) : null}
       {viewerOpen && viewerRow && viewerColumn && viewerValue !== null ? (

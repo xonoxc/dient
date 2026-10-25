@@ -1,13 +1,15 @@
 /**
- * Redis inspector parsing tests. The driver is faked: these tests pin the
- * mapping from raw Redis replies (including Bun's nested `ZRANGE WITHSCORES`
- * shape) to the pages the explorer draws, without requiring a server.
+ * Redis inspector parsing and write-planning tests. The driver is faked: these
+ * tests pin the mapping from raw Redis replies (including Bun's nested
+ * `ZRANGE WITHSCORES` shape) to the pages the explorer draws, and the exact
+ * command sequence each edit emits, without requiring a server.
  */
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { ActiveConnection } from "@/drivers/types"
 import type { RedisDriverService } from "@/drivers/redis"
-import { makeRedisInspector } from "@/redis/redis-inspector"
+import { makeRedisInspector, MAX_EDIT_BYTES } from "@/redis/redis-inspector"
+import type { RedisKeyInfo } from "@/redis/types"
 
 const conn = { id: "redis-test", engine: "redis" } as unknown as ActiveConnection
 
@@ -159,6 +161,138 @@ describe("RedisInspector", () => {
     })
 
     const exit = await Effect.runPromiseExit(inspector.loadValue(conn, "gone", { token: null, count: 20 }))
+    expect(exit._tag).toBe("Failure")
+  })
+
+  test("reads the whole string for editing and refuses an over-limit value", async () => {
+    const commands: Array<string> = []
+    const inspector = inspectorFor(command => {
+      commands.push(command)
+      if (command === "GET") return "whole value\nwith lines"
+      throw new Error(`unexpected ${command}`)
+    })
+    const info: RedisKeyInfo = {
+      key: "greeting",
+      type: "string",
+      ttl: -1,
+      size: 20,
+      encoding: "raw",
+      length: 20,
+    }
+    expect(await Effect.runPromise(inspector.readValueText(conn, info))).toBe("whole value\nwith lines")
+    expect(commands).toEqual(["GET"])
+
+    const tooBig = { ...info, length: MAX_EDIT_BYTES + 1 }
+    const exit = await Effect.runPromiseExit(inspector.readValueText(conn, tooBig))
+    expect(exit._tag).toBe("Failure")
+  })
+
+  test("reads JSON verbatim so large integers survive an edit round trip", async () => {
+    const inspector = inspectorFor(command => {
+      if (command === "JSON.GET") return '{"id":9007199254740993}'
+      throw new Error(`unexpected ${command}`)
+    })
+    const info: RedisKeyInfo = {
+      key: "doc",
+      type: "ReJSON-RL",
+      ttl: -1,
+      size: null,
+      encoding: null,
+      length: null,
+    }
+    expect(await Effect.runPromise(inspector.readValueText(conn, info))).toBe('{"id":9007199254740993}')
+  })
+
+  test("string writes preserve TTL and JSON writes validate first", async () => {
+    const commands: Array<readonly [string, ReadonlyArray<string | number>]> = []
+    const inspector = inspectorFor((command, args) => {
+      commands.push([command, args])
+      return 1
+    })
+    const stringInfo: RedisKeyInfo = {
+      key: "greeting",
+      type: "string",
+      ttl: 60,
+      size: 5,
+      encoding: "raw",
+      length: 5,
+    }
+    const jsonInfo: RedisKeyInfo = { ...stringInfo, key: "doc", type: "ReJSON-RL" }
+
+    await Effect.runPromise(inspector.updateText(conn, stringInfo, "hello"))
+    expect(commands).toEqual([["SET", ["greeting", "hello", "KEEPTTL"]]])
+
+    commands.length = 0
+    await Effect.runPromise(inspector.updateText(conn, jsonInfo, '{"user":"alice"}'))
+    expect(commands[0]).toEqual(["JSON.SET", ["doc", "$", '{"user":"alice"}']])
+
+    const exit = await Effect.runPromiseExit(inspector.updateText(conn, jsonInfo, "{"))
+    expect(exit._tag).toBe("Failure")
+    expect(commands).toHaveLength(1)
+  })
+
+  test("collection updates rename/remove the identifying field before writing", async () => {
+    const commands: Array<readonly [string, ReadonlyArray<string | number>]> = []
+    const inspector = inspectorFor((command, args) => {
+      commands.push([command, args])
+      return 1
+    })
+    const base = {
+      ttl: -1,
+      size: 1,
+      encoding: "listpack",
+      length: 1,
+    } as const
+
+    await Effect.runPromise(
+      inspector.updateRow(conn, { ...base, key: "user:1", type: "hash" }, { field: "name", value: "alice" }, [
+        { column: "field", param: "display_name" },
+      ])
+    )
+    expect(commands).toEqual([
+      ["HDEL", ["user:1", "name"]],
+      ["HSET", ["user:1", "display_name", "alice"]],
+    ])
+
+    commands.length = 0
+    await Effect.runPromise(
+      inspector.updateRow(conn, { ...base, key: "jobs", type: "list" }, { index: 0, value: "one" }, [
+        { column: "value", param: "uno" },
+      ])
+    )
+    expect(commands).toEqual([["LSET", ["jobs", 0, "uno"]]])
+
+    commands.length = 0
+    await Effect.runPromise(
+      inspector.updateRow(conn, { ...base, key: "tags", type: "set" }, { member: "red" }, [
+        { column: "member", param: "crimson" },
+      ])
+    )
+    expect(commands).toEqual([
+      ["SREM", ["tags", "red"]],
+      ["SADD", ["tags", "crimson"]],
+    ])
+
+    commands.length = 0
+    await Effect.runPromise(
+      inspector.updateRow(conn, { ...base, key: "board", type: "zset" }, { rank: 1, score: "10", member: "alice" }, [
+        { column: "score", param: "25" },
+      ])
+    )
+    expect(commands).toEqual([["ZADD", ["board", "25", "alice"]]])
+  })
+
+  test("rename uses RENAMENX and reports a collision", async () => {
+    const commands: Array<string> = []
+    const inspector = inspectorFor((command, args) => {
+      commands.push(`${command} ${args.join(" ")}`)
+      return 1
+    })
+    await Effect.runPromise(inspector.renameKey(conn, "old", "new"))
+    expect(commands).toEqual(["RENAMENX old new"])
+
+    const collision = inspectorFor(() => 0)
+    const exit = await Effect.runPromiseExit(collision.renameKey(conn, "old", "taken"))
     expect(exit._tag).toBe("Failure")
   })
 })

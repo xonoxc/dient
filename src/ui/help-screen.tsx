@@ -15,7 +15,7 @@ const EXPLORER: ReadonlyArray<Binding> = [
   ["← / →", "previous / next col"],
   ["Enter", "open key / preview row"],
   ["Esc", "back to Redis keys"],
-  ["i", "edit row in $EDITOR (SQL)"],
+  ["i", "edit row/value; rename Redis key"],
   ["e", "view full cell value"],
   ["V", "start row selection"],
   ["y", "copy the selection"],

@@ -1,18 +1,22 @@
 /**
- * Redis inspection layer. It turns raw Redis commands into the small typed
- * pages the explorer draws. No React or UI code lives here.
+ * Redis inspection and editing layer. It turns raw Redis commands into the
+ * small typed pages the explorer draws, and applies the small set of writes the
+ * explorer exposes. No React or UI code lives here.
  *
  * Safety choices:
  *   - Keys are discovered with SCAN, never KEYS.
  *   - Every page is bounded by a caller-supplied count.
  *   - Strings are read with GETRANGE so a multi-megabyte value cannot stall the
  *     TUI; the page reports that it was truncated.
- *   - Only read commands are issued from this module.
+ *   - Edits are narrowly scoped: SET KEEPTTL / JSON.SET for values, HDEL+HSET /
+ *     LSET / SREM+SADD / ZADD+ZREM for collection rows, and RENAMENX for keys.
  */
 import { Context, Effect, Layer } from "effect"
 import type { ActiveConnection, ColumnInfo } from "@/drivers/types"
 import { QueryError } from "@/drivers/types"
 import { RedisDriver, type RedisDriverService } from "@/drivers/redis"
+import { describeError } from "@/errors/describe"
+import { isRedisScore } from "@/redis/format"
 import type {
   RedisKeyInfo,
   RedisKeyRow,
@@ -20,6 +24,7 @@ import type {
   RedisKeysRequest,
   RedisPage,
   RedisPageRequest,
+  RedisRowUpdate,
   RedisStreamEntry,
 } from "@/redis/types"
 
@@ -27,6 +32,10 @@ const ENGINE = "redis" as const
 
 /** How many bytes of a string view are fetched at once. */
 export const MAX_VALUE_BYTES = 64_000
+
+/** A full value can be opened in `$EDITOR`; beyond this, editing is refused so
+ *  a giant value cannot freeze the terminal or the editor. */
+export const MAX_EDIT_BYTES = 1_000_000
 
 export interface RedisInspectorService {
   readonly listKeys: (conn: ActiveConnection, request: RedisKeysRequest) => Effect.Effect<RedisKeysPage, QueryError>
@@ -36,6 +45,19 @@ export interface RedisInspectorService {
     key: string,
     request: RedisPageRequest
   ) => Effect.Effect<RedisPage, QueryError>
+  /** Read the whole string/JSON value for editing (not the 64 KB preview). */
+  readonly readValueText: (conn: ActiveConnection, info: RedisKeyInfo) => Effect.Effect<string, QueryError>
+  /** Replace a string or RedisJSON value, preserving the key's TTL. */
+  readonly updateText: (conn: ActiveConnection, info: RedisKeyInfo, value: string) => Effect.Effect<void, QueryError>
+  /** Apply the changed fields of one collection row. */
+  readonly updateRow: (
+    conn: ActiveConnection,
+    info: RedisKeyInfo,
+    row: Readonly<Record<string, unknown>>,
+    updates: ReadonlyArray<RedisRowUpdate>
+  ) => Effect.Effect<void, QueryError>
+  /** Rename a key without overwriting an existing destination. */
+  readonly renameKey: (conn: ActiveConnection, key: string, next: string) => Effect.Effect<void, QueryError>
 }
 
 export class RedisInspector extends Context.Tag("RedisInspector")<RedisInspector, RedisInspectorService>() {}
@@ -371,7 +393,162 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
       }
     })
 
-  return { listKeys, describeKey, loadValue }
+  const readValueText = (conn: ActiveConnection, info: RedisKeyInfo): Effect.Effect<string, QueryError> =>
+    Effect.gen(function* () {
+      if (info.type === "string") {
+        if (info.length !== null && info.length > MAX_EDIT_BYTES) {
+          return yield* Effect.fail(
+            queryError(
+              `value is too large to edit: ${info.length.toLocaleString()} bytes (limit ${MAX_EDIT_BYTES.toLocaleString()})`
+            )
+          )
+        }
+        const body = text(yield* command(conn, "GET", [info.key]))
+        if (body.length > MAX_EDIT_BYTES) {
+          return yield* Effect.fail(
+            queryError(
+              `value is too large to edit: ${body.length.toLocaleString()} characters (limit ${MAX_EDIT_BYTES.toLocaleString()})`
+            )
+          )
+        }
+        return body
+      }
+      if (info.type === "ReJSON-RL" || info.type === "json") {
+        const raw = yield* command(conn, "JSON.GET", [info.key])
+        /* Edit the raw document, not a JSON.parse/stringify round trip: that
+           round trip silently rounds integers above 2^53 even when the user
+           only changes a harmless character elsewhere in the document. */
+        const body = typeof raw === "string" ? raw : (JSON.stringify(raw) ?? "null")
+        if (body.length > MAX_EDIT_BYTES) {
+          return yield* Effect.fail(
+            queryError(
+              `value is too large to edit: ${body.length.toLocaleString()} characters (limit ${MAX_EDIT_BYTES.toLocaleString()})`
+            )
+          )
+        }
+        return body
+      }
+      return yield* Effect.fail(queryError(`editing Redis type "${info.type}" is not supported`))
+    }).pipe(
+      Effect.mapError(cause =>
+        cause instanceof QueryError ? cause : queryError(`could not read ${info.key}: ${describeError(cause)}`, cause)
+      )
+    )
+
+  const updateText = (conn: ActiveConnection, info: RedisKeyInfo, value: string): Effect.Effect<void, QueryError> =>
+    Effect.gen(function* () {
+      if (info.type === "string") {
+        yield* command(conn, "SET", [info.key, value, "KEEPTTL"])
+        return
+      }
+      if (info.type === "ReJSON-RL" || info.type === "json") {
+        /* Validate locally so the toast names the problem before a command is
+           sent. Parse only; the edited text is stored verbatim so large numbers
+           do not lose precision on a JSON.parse/JSON.stringify round trip. */
+        yield* Effect.try({
+          try: () => JSON.parse(value) as unknown,
+          catch: cause => queryError(`invalid JSON: ${describeError(cause)}`, cause),
+        })
+        yield* command(conn, "JSON.SET", [info.key, "$", value])
+        return
+      }
+      return yield* Effect.fail(queryError(`editing Redis type "${info.type}" is not supported`))
+    }).pipe(
+      Effect.mapError(cause =>
+        cause instanceof QueryError ? cause : queryError(`could not save ${info.key}: ${describeError(cause)}`, cause)
+      )
+    )
+
+  const updateRow = (
+    conn: ActiveConnection,
+    info: RedisKeyInfo,
+    row: Readonly<Record<string, unknown>>,
+    updates: ReadonlyArray<RedisRowUpdate>
+  ): Effect.Effect<void, QueryError> => {
+    if (updates.length === 0) return Effect.void
+    const changed = (column: string): string | undefined => updates.find(update => update.column === column)?.param
+
+    switch (info.type) {
+      case "hash":
+        return Effect.gen(function* () {
+          const oldField = text(row.field)
+          const field = changed("field") ?? oldField
+          const value = changed("value") ?? text(row.value)
+          if (field !== oldField) yield* command(conn, "HDEL", [info.key, oldField])
+          yield* command(conn, "HSET", [info.key, field, value])
+        }).pipe(
+          Effect.mapError(cause =>
+            cause instanceof QueryError
+              ? cause
+              : queryError(`could not save ${info.key}: ${describeError(cause)}`, cause)
+          )
+        )
+      case "list":
+        return Effect.gen(function* () {
+          const value = changed("value")
+          if (value === undefined) return
+          yield* command(conn, "LSET", [info.key, number(row.index), value])
+        }).pipe(
+          Effect.mapError(cause =>
+            cause instanceof QueryError
+              ? cause
+              : queryError(`could not save ${info.key}: ${describeError(cause)}`, cause)
+          )
+        )
+      case "set":
+        return Effect.gen(function* () {
+          const oldMember = text(row.member)
+          const member = changed("member") ?? oldMember
+          if (member === oldMember) return
+          yield* command(conn, "SREM", [info.key, oldMember])
+          yield* command(conn, "SADD", [info.key, member])
+        }).pipe(
+          Effect.mapError(cause =>
+            cause instanceof QueryError
+              ? cause
+              : queryError(`could not save ${info.key}: ${describeError(cause)}`, cause)
+          )
+        )
+      case "zset":
+        return Effect.gen(function* () {
+          const oldMember = text(row.member)
+          const member = changed("member") ?? oldMember
+          const score = changed("score") ?? text(row.score)
+          if (score.trim() === "" || !Number.isFinite(Number(score))) {
+            return yield* Effect.fail(queryError(`"score" expects a number`))
+          }
+          /* Add/update the destination first, then remove the old member: a
+             rename that collides with an existing member keeps the typed score
+             instead of deleting the row being moved. */
+          yield* command(conn, "ZADD", [info.key, score, member])
+          if (member !== oldMember) yield* command(conn, "ZREM", [info.key, oldMember])
+        }).pipe(
+          Effect.mapError(cause =>
+            cause instanceof QueryError
+              ? cause
+              : queryError(`could not save ${info.key}: ${describeError(cause)}`, cause)
+          )
+        )
+      default:
+        return Effect.fail(queryError(`editing ${info.type} rows is not supported`))
+    }
+  }
+
+  const renameKey = (conn: ActiveConnection, key: string, next: string): Effect.Effect<void, QueryError> =>
+    Effect.gen(function* () {
+      if (next.trim() === "") return yield* Effect.fail(queryError("key name cannot be empty"))
+      if (next === key) return
+      const result = yield* command(conn, "RENAMENX", [key, next])
+      if (number(result) !== 1) {
+        return yield* Effect.fail(queryError(`could not rename "${key}": "${next}" already exists or "${key}" is gone`))
+      }
+    }).pipe(
+      Effect.mapError(cause =>
+        cause instanceof QueryError ? cause : queryError(`could not rename ${key}: ${describeError(cause)}`, cause)
+      )
+    )
+
+  return { listKeys, describeKey, loadValue, readValueText, updateText, updateRow, renameKey }
 }
 
 export namespace RedisInspector {

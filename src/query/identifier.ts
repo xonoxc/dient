@@ -17,6 +17,7 @@ export const isSafeName = (name: string): boolean => /^[A-Za-z_][A-Za-z0-9_$]*$/
 
 export const cleanIdentifier = (engine: Engine, name: string): Effect.Effect<string, IdentifierError> => {
   if (!isSafeName(name)) return Effect.fail(new IdentifierError({ name }))
+
   switch (engine) {
     case "mysql":
       return Effect.succeed("`" + name + "`")

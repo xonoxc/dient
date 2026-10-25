@@ -6,6 +6,12 @@ import type { RedisKeyInfo } from "@/redis/types"
  *  name a person recognises. */
 export const redisTypeLabel = (type: string): string => (type === "ReJSON-RL" || type === "json" ? "json" : type)
 
+/** A sorted-set score as Redis parses it: `strtod` accepts leading signs,
+ *  `.5`/`1.`, and exponents, plus the `inf` sentinels. The SQL numeric rule is
+ *  narrower and would reject valid ZADD scores. */
+export const isRedisScore = (value: string): boolean =>
+  /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value) || /^[+-]?inf$/i.test(value)
+
 /** A one-cell cue for the type, paired with the name in the keyspace table. */
 export const redisTypeSymbol = (type: string): string => {
   switch (type) {

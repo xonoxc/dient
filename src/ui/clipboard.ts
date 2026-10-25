@@ -19,10 +19,12 @@ export const readSystemClipboard: Effect.Effect<Option.Option<string>, Clipboard
     try: () => createHostClipboard({ maxReadBytes: 256 * 1024, timeoutMs: 1000 }),
     catch: cause => new ClipboardError({ message: "could not open the clipboard", cause }),
   })
+
   const text = yield* Effect.tryPromise({
     try: () => clipboard.read({ preferredTypes: ["text/plain"] }).finally(() => clipboard.dispose()),
     catch: cause => new ClipboardError({ message: "could not read the clipboard", cause }),
   })
+
   if (text.status !== "read") return Option.none()
   const singleLine = new TextDecoder()
     .decode(text.representation.bytes)

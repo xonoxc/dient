@@ -43,9 +43,10 @@ active connection, <code>●</code> is connection status.</sub>
   filters the page, `n`/`N` walk the matches.
 - **Connection management** — projects, databases and connections, with a live
   "test connection" probe and a confirmation before any delete.
-- **Redis browsing** — `SCAN`-based keyspace, type-aware key views: strings and
-  RedisJSON as wrapped text, hashes/lists/sets/sorted sets as tables, and
-  streams as timestamped cards. Read-only by design.
+- **Redis browsing and editing** — `SCAN`-based keyspace, type-aware key views:
+  strings and RedisJSON as wrapped text, hashes/lists/sets/sorted sets as
+  tables, and streams as timestamped cards. `i` renames keys, edits string and
+  JSON values, and edits collection fields/members/scores.
 
 ---
 
@@ -166,7 +167,7 @@ The rule is the same on every screen with more than one pane.
 | ← / → | Previous / next column |
 | `Enter` | Open a Redis key, or preview the row |
 | `Esc` | Leave an open Redis key for the keyspace |
-| `i` | Edit the current row in `$EDITOR` (SQL only) |
+| `i` | Edit the current row/value in `$EDITOR` (Redis: rename a key in the keyspace) |
 | `V` | Start a row selection |
 | `y` | Copy the selection to the clipboard |
 | `/` | Filter the current page |
@@ -183,10 +184,21 @@ the cursor: strings and RedisJSON values open in a wrapped text panel; streams
 open as cards of field/value pairs; hashes, lists, sets and sorted sets use the
 normal table (with `field/value`, `index/value`, `member`, and
 `rank/score/member` columns). Paging uses `SCAN` cursors for keys, hashes and
-sets, offsets for lists and sorted sets, and entry IDs for streams. Nothing in
-the Redis path writes. The driver is standalone (no Cluster/Sentinel) and
-understands the core Redis types plus RedisJSON; module-specific types without
-a dedicated view fall back to a metadata row.
+sets, offsets for lists and sorted sets, and entry IDs for streams.
+
+`i` edits what is under the cursor. In the keyspace it renames the key
+(`RENAMENX`, so an existing destination is never clobbered). On a string or
+RedisJSON key it opens the whole value in `$EDITOR`; string writes use
+`SET … KEEPTTL`, and RedisJSON writes use `JSON.SET`. On a hash, list, set or
+sorted set it opens the row as `column: value` fields: hash fields and set/zset
+members can be renamed, list values and zset scores can be changed, and the
+list `index` / zset `rank` columns are fixed identifiers. Collection commands
+preserve TTL naturally. Stream entries are Redis-append-only, so the stream
+card view remains a reader; its key can still be renamed from the keyspace.
+
+The driver is standalone (no Cluster/Sentinel) and understands the core Redis
+types plus RedisJSON; module-specific types without a dedicated view fall back
+to a metadata row.
 
 ### Settings
 
@@ -251,7 +263,7 @@ src/
 │                    RedisDriver       raw Redis commands, Bun's client
 ├── connection/      ConnectionManager connect, query, status, retry-with-backoff
 ├── inspector/       SchemaInspector   listTables, describeTable
-├── redis/           RedisInspector    SCAN + type-aware key pages, read-only
+├── redis/           RedisInspector    SCAN + type-aware key pages and writes
 ├── query/           QueryExecutor     parameter binding, identifier quoting
 │
 ├── sidebar/         the project → database → table tree

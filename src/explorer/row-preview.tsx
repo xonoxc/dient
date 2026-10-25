@@ -38,8 +38,6 @@ export interface RowPreviewProps {
   readonly maxHeight: number
   /** True when columns were dropped to fit — otherwise the truncation is silent. */
   readonly truncated: boolean
-  /** Redis rows are inspectable but not editable; omit the edit hint. */
-  readonly readOnly?: boolean
 }
 
 const TYPE_WIDTH = 16
@@ -71,7 +69,6 @@ export function RowPreview({
   width,
   maxHeight,
   truncated,
-  readOnly = false,
 }: RowPreviewProps) {
   const theme = useTheme()
   const c = theme.colors
@@ -128,15 +125,9 @@ export function RowPreview({
         ) : null}
         <box height={1} />
         <box height={1} flexDirection="row">
-          {readOnly ? (
-            <text fg={c.textMuted}> read-only Redis value · h/l field · e expand · j/k row · Esc close </text>
-          ) : (
-            <>
-              <text fg={c.textMuted}> i edit </text>
-              <text fg={c.success}>$EDITOR</text>
-              <text fg={c.textMuted}> · h/l field · e expand · j/k row · Esc close </text>
-            </>
-          )}
+          <text fg={c.textMuted}> i edit </text>
+          <text fg={c.success}>$EDITOR</text>
+          <text fg={c.textMuted}> · h/l field · e expand · j/k row · Esc close </text>
         </box>
       </ModalSurface>
     </box>
