@@ -7,7 +7,7 @@
  */
 import { spawn } from "node:child_process"
 import type { ChildProcess } from "node:child_process"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, watch as fsWatch } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describeError } from "@/errors/describe"
@@ -38,6 +38,9 @@ export interface EditorSessionOptions {
   readonly callbacks: EditorCallbacks
   /** Receives the edited file text once the editor exits successfully. */
   readonly onSave: (text: string) => void
+  /** When true, re-run `onSave` whenever the file is saved while the editor
+      stays open, instead of only on exit. */
+  readonly watch?: boolean
 }
 
 /** The editor program, honouring `$EDITOR` first, then `$VISUAL`, then `vi`. */
@@ -55,7 +58,7 @@ const cleanDir = (dir: string): void => {
 
 /** Run one editor session over `content` and report the edited text to `onSave`. */
 export const runEditorSession = (options: EditorSessionOptions): void => {
-  const { renderer, label, filename, extension, content, callbacks, onSave } = options
+  const { renderer, label, filename, extension, content, callbacks, onSave, watch } = options
   const command = editorCommand()
 
   let dir: string
@@ -79,6 +82,34 @@ export const runEditorSession = (options: EditorSessionOptions): void => {
   } catch (cause) {
     abandon(`could not stage the file for editing: ${describeError(cause)}`)
     return
+  }
+
+  let lastContent = content
+  let watcher: ReturnType<typeof fsWatch> | null = null
+  const readAndSave = (): void => {
+    let edited: string
+    try {
+      edited = readFileSync(file, "utf8")
+    } catch {
+      return
+    }
+    if (edited === lastContent) return
+    lastContent = edited
+    try {
+      onSave(edited)
+    } catch (cause) {
+      callbacks.error(`could not apply the edit: ${describeError(cause)}`)
+    }
+  }
+  if (watch) {
+    try {
+      watcher = fsWatch(file, () => {
+        // Debounce: editors often write in multiple steps.
+        setTimeout(readAndSave, 200)
+      })
+    } catch {
+      /* watching is best-effort */
+    }
   }
 
   const program = command.split(/\s+/).filter(Boolean)
@@ -123,15 +154,26 @@ export const runEditorSession = (options: EditorSessionOptions): void => {
   child.on("error", err => {
     if (handled) return
     handled = true
+    if (watcher) { try { watcher.close() } catch { /* ignore */ } watcher = null }
     renderer.resume()
     abandon(`could not start "${command}": ${err.message}`)
   })
   child.on("exit", code => {
     if (handled) return
     handled = true
+    if (watcher) {
+      try { watcher.close() } catch { /* ignore */ }
+      watcher = null
+    }
     renderer.resume()
     if (code !== 0) {
       abandon(`editor exited with code ${code} — no changes taken back`)
+      return
+    }
+    if (watch) {
+      readAndSave()
+      cleanDir(dir)
+      callbacks.done()
       return
     }
     let edited: string

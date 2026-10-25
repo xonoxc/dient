@@ -11,6 +11,7 @@ export interface EditTextOptions {
   readonly label: string
   readonly filename: string
   readonly extension?: string
+  readonly watch?: boolean
   readonly content: string
   readonly callbacks: EditorCallbacks & {
     readonly onSave: (text: string) => void
@@ -19,8 +20,8 @@ export interface EditTextOptions {
 
 /** Launch `$EDITOR` over `content` and hand the edited text to `callbacks.onSave`. */
 export const editTextInEditor = (options: EditTextOptions): void => {
-  const { callbacks, extension, ...rest } = options
-  runEditorSession({ ...rest, callbacks, onSave: callbacks.onSave, extension })
+  const { callbacks, extension, watch, ...rest } = options
+  runEditorSession({ ...rest, callbacks, onSave: callbacks.onSave, extension, watch })
 }
 
 /**

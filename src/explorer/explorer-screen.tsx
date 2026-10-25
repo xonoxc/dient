@@ -494,6 +494,7 @@ export function ExplorerScreen() {
             label: info.key,
             filename: info.key,
             extension: isJson ? ".json" : ".txt",
+            watch: true,
             content: text,
             callbacks: {
               notice: message => toasts.push("info", message),
@@ -509,14 +510,12 @@ export function ExplorerScreen() {
                     return
                   }
                   if (trimmed === text) {
-                    toasts.push("info", "no changes to save")
                     return
                   }
                   explorer.saveRedisText(trimmed)
                   return
                 }
                 if (value === text) {
-                  toasts.push("info", "no changes to save")
                   return
                 }
                 explorer.saveRedisText(value)
