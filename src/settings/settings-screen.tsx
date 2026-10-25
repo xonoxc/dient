@@ -279,7 +279,7 @@ export function SettingsScreen() {
     }
 
     switch (key) {
-      case "e":
+      case "E":
         router.setScreen("explorer")
         return
       case "j":

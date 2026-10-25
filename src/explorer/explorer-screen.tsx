@@ -995,7 +995,7 @@ export function ExplorerScreen() {
         jumpRedis("last")
         return
       }
-      if (key === "s") {
+      if (key === "S") {
         router.setScreen("settings")
         return
       }
@@ -1051,7 +1051,7 @@ export function ExplorerScreen() {
         case "space":
           openFinder()
           return
-        case "s":
+        case "S":
           router.setScreen("settings")
           return
         case "i":
@@ -1139,7 +1139,7 @@ export function ExplorerScreen() {
         setEditColumn(current => Math.min(Math.max(explorer.table.columns.length - 1, 0), current + 1))
         return
       }
-      if (key === "s") {
+      if (key === "S") {
         router.setScreen("settings")
         return
       }
