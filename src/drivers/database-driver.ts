@@ -43,9 +43,12 @@ export namespace DatabaseDriver {
               ? mysql.connect(config)
               : sqlite.connect(config),
         query: (conn: ActiveConnection, sql: string, params?: ReadonlyArray<unknown>) => {
-          if (conn.engine === "redis") {
+          if (conn.engine === "redis" || conn.engine === "rabbitmq") {
             return Effect.fail(
-              new QueryError({ engine: "redis", message: "SQL queries are not supported on a Redis connection" })
+              new QueryError({
+                engine: conn.engine,
+                message: `SQL queries are not supported on a ${conn.engine} connection`,
+              })
             )
           }
           return conn.engine === "postgres"
@@ -55,7 +58,7 @@ export namespace DatabaseDriver {
               : sqlite.query(conn, sql, params)
         },
         disconnect: (conn: ActiveConnection) => {
-          if (conn.engine === "redis") return Effect.void
+          if (conn.engine === "redis" || conn.engine === "rabbitmq") return Effect.void
           return conn.engine === "postgres"
             ? pg.disconnect(conn)
             : conn.engine === "mysql"
@@ -63,7 +66,7 @@ export namespace DatabaseDriver {
               : sqlite.disconnect(conn)
         },
         isConnected: (conn: ActiveConnection) => {
-          if (conn.engine === "redis") return Effect.succeed(false)
+          if (conn.engine === "redis" || conn.engine === "rabbitmq") return Effect.succeed(false)
           return conn.engine === "postgres"
             ? pg.isConnected(conn)
             : conn.engine === "mysql"

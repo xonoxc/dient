@@ -12,6 +12,7 @@ import { useTheme } from "@/theme-context"
 import {
   useRouter,
   useCommandLine,
+  useDialog,
   useSessionStatus,
   useToasts,
   useServices,
@@ -22,7 +23,7 @@ import { Sidebar } from "@/sidebar/sidebar"
 import { SIDEBAR_WIDTH } from "@/sidebar/fit-label"
 import { DataTable, type CellDecoration } from "@/table/data-table"
 import { selectionRange, useVimMode } from "@/vim"
-import { PANEL_ORDER, useExplorer } from "@/explorer/use-explorer"
+import { PANEL_ORDER, useExplorer, type ActiveExplorer } from "@/explorer/use-explorer"
 import { editRowInEditor } from "@/editor/edit-row-in-editor"
 import { editTextInEditor, stripEditorNewline } from "@/editor/edit-text-in-editor"
 import { yankRows } from "@/editor/row-clipboard"
@@ -40,6 +41,7 @@ import { normalModeKey, resolveTypedChar } from "@/ui/text-entry"
 import { paneIndexForKey } from "@/ui/pane-keys"
 import { windowTail } from "@/ui/text-window"
 import { LoadingIndicator } from "@/ui/loading-indicator"
+import { RabbitMqWorkspace } from "@/rabbitmq/rabbitmq-workspace"
 import { RedisStreamPanel, RedisTextPanel } from "@/redis/redis-views"
 import { parseRedisRow, redisRowShape, serializeRedisRow } from "@/redis/editing"
 import {
@@ -92,6 +94,7 @@ export function ExplorerScreen() {
   const theme = useTheme()
   const c = theme.colors
   const router = useRouter()
+  const dialog = useDialog()
   const commandLine = useCommandLine()
   const session = useSessionStatus()
   const toasts = useToasts()
@@ -820,6 +823,7 @@ export function ExplorerScreen() {
      one name, its engine alongside. */
   const { setStatus } = session
   useEffect(() => {
+    if (active?.database.engine === "rabbitmq") return
     setStatus({
       /* Finder and `/` search are text fields: while one is open the session is
          in INSERT mode regardless of the vim mode behind it. */
@@ -867,6 +871,31 @@ export function ExplorerScreen() {
     if (paneIndex !== null) {
       e.preventDefault()
       setFocus(PANEL_ORDER[paneIndex]!)
+      return
+    }
+
+    /* RabbitMQ owns a broker workspace rather than the SQL/Redis row grid.
+       Keep the shared sidebar navigation and global finder here; the focused
+       workspace handles queue, exchange, binding, and message operations. */
+    if (active?.database.engine === "rabbitmq") {
+      if (key === " " || key === "space") {
+        openFinder(e)
+        return
+      }
+      if (focus === "sidebar") {
+        if (key === "j" || key === "down") sidebar.move(1)
+        else if (key === "k" || key === "up") sidebar.move(-1)
+        else if (key === "g" || key === "G") sidebar.jump(key === "G" ? "last" : "first")
+        else if (key === "right") setFocus("table")
+        else if (key === "S") router.setScreen("settings")
+        else if (key === "tab") explorer.cycleConnection()
+        else if (key === "enter" || key === "return" || key === "\r") {
+          const cursor = sidebar.cursorRef.current
+          const current = sidebar.itemsRef.current[cursor]
+          if (current?.kind === "connection" && active.connection.id === current.refId) sidebar.toggle(cursor)
+          else explorer.selectActive()
+        }
+      }
       return
     }
 
@@ -1222,67 +1251,75 @@ export function ExplorerScreen() {
       />
 
       <box flexGrow={1} flexDirection="column">
-        <TableStrip
-          tableName={tableName}
-          rawTitle={explorer.redisView?.kind === "key"}
-          detail={redisDetail}
-          loading={loading}
-          focus={focus === "table"}
-          paneNumber={TABLE_PANE}
-          compact={width < 120}
-          offset={explorer.offset}
-          rows={explorer.table.sortedRows.length}
-          total={explorer.total}
-          pageSize={explorer.pageSize}
-          hasPrevPage={explorer.hasPrevPage}
-          hasNextPage={explorer.hasNextPage}
-        />
-        {searchOpenRef.current ? (
-          <SearchBar query={searchBuffer.current} matches={explorer.searchCount} availableWidth={dataWidth + 3} />
-        ) : null}
-        {error ? (
-          <box flexGrow={1} alignItems="center" justifyContent="center">
-            <text fg={c.error}>{error}</text>
-          </box>
-        ) : loading ? (
-          <box flexGrow={1} alignItems="center" justifyContent="center">
-            <LoadingIndicator label={tableName ? `loading ${tableName}…` : "connecting…"} />
-          </box>
-        ) : active ? (
-          redisTextMode && explorer.redisPage?.text !== undefined ? (
-            <RedisTextPanel
-              value={explorer.redisPage.text}
-              note={explorer.redisPage.note}
-              width={dataWidth}
-              scrollRef={redisScrollRef}
-              json={redisJsonMode}
-            />
-          ) : redisStreamMode ? (
-            <RedisStreamPanel
-              entries={explorer.redisPage?.entries ?? []}
-              width={dataWidth}
-              scrollRef={redisScrollRef}
-            />
-          ) : (
-            <DataTable
-              table={{ ...explorer.table, cursor: vim.cursor }}
-              viewportRows={viewportRows}
-              availableWidth={dataWidth}
-              empty={redisKeyspace ? "no keys" : "no rows"}
-              activeColumn={explorer.table.columns[editColumn]?.name ?? explorer.table.columns[0]?.name}
-              columnFocus={focus === "table"}
-              highlight={explorer.search.trim() || undefined}
-              selection={selectedRange}
-              minWidths={redisKeyspace ? REDIS_KEYS_MIN_WIDTHS : undefined}
-              cellDecoration={
-                redisKeyspace ? (row, column, value) => redisCellDecoration(c, row, column, value) : undefined
-              }
-            />
-          )
+        {active?.database.engine === "rabbitmq" ? (
+          <RabbitMqWorkspace active={active as ActiveExplorer} focused={focus === "table"} />
         ) : (
-          <box flexGrow={1} alignItems="center" justifyContent="center">
-            <text fg={c.textMuted}>select a connection in the sidebar to start browsing</text>
-          </box>
+          <>
+            <TableStrip
+              tableName={tableName}
+              rawTitle={explorer.redisView?.kind === "key"}
+              detail={redisDetail}
+              loading={loading}
+              focus={focus === "table"}
+              paneNumber={TABLE_PANE}
+              compact={width < 120}
+              offset={explorer.offset}
+              rows={explorer.table.sortedRows.length}
+              total={explorer.total}
+              pageSize={explorer.pageSize}
+              hasPrevPage={explorer.hasPrevPage}
+              hasNextPage={explorer.hasNextPage}
+            />
+            {searchOpenRef.current ? (
+              <SearchBar query={searchBuffer.current} matches={explorer.searchCount} availableWidth={dataWidth + 3} />
+            ) : null}
+            {error && dialog.dialog ? (
+              <box flexGrow={1} />
+            ) : error ? (
+              <box flexGrow={1} alignItems="center" justifyContent="center">
+                <text fg={c.error}>{error}</text>
+              </box>
+            ) : loading ? (
+              <box flexGrow={1} alignItems="center" justifyContent="center">
+                <LoadingIndicator label={tableName ? `loading ${tableName}…` : "connecting…"} />
+              </box>
+            ) : active ? (
+              redisTextMode && explorer.redisPage?.text !== undefined ? (
+                <RedisTextPanel
+                  value={explorer.redisPage.text}
+                  note={explorer.redisPage.note}
+                  width={dataWidth}
+                  scrollRef={redisScrollRef}
+                  json={redisJsonMode}
+                />
+              ) : redisStreamMode ? (
+                <RedisStreamPanel
+                  entries={explorer.redisPage?.entries ?? []}
+                  width={dataWidth}
+                  scrollRef={redisScrollRef}
+                />
+              ) : (
+                <DataTable
+                  table={{ ...explorer.table, cursor: vim.cursor }}
+                  viewportRows={viewportRows}
+                  availableWidth={dataWidth}
+                  empty={redisKeyspace ? "no keys" : "no rows"}
+                  activeColumn={explorer.table.columns[editColumn]?.name ?? explorer.table.columns[0]?.name}
+                  columnFocus={focus === "table"}
+                  highlight={explorer.search.trim() || undefined}
+                  selection={selectedRange}
+                  minWidths={redisKeyspace ? REDIS_KEYS_MIN_WIDTHS : undefined}
+                  cellDecoration={
+                    redisKeyspace ? (row, column, value) => redisCellDecoration(c, row, column, value) : undefined
+                  }
+                />
+              )
+            ) : (
+              <box flexGrow={1} alignItems="center" justifyContent="center">
+                <text fg={c.textMuted}>select a connection in the sidebar to start browsing</text>
+              </box>
+            )}
+          </>
         )}
       </box>
       {finderOpen ? (

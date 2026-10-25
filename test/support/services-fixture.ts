@@ -9,6 +9,7 @@ import { ConfigStore, type ConfigStoreService } from "@/config"
 import { DatabaseDriver } from "@/drivers/database-driver"
 import { SchemaInspector } from "@/inspector"
 import { RedisInspector } from "@/redis/redis-inspector"
+import { RabbitMqDriver } from "@/rabbitmq/driver"
 import { ConnectionManager } from "@/connection/connection-manager"
 import { QueryExecutor } from "@/query/query-executor"
 import { makeErrorLog } from "@/log/error-log"
@@ -49,6 +50,7 @@ export const buildTestServices = (configPath: string, updateDeps?: UpdateChecker
         connectionManager: Context.get(context, ConnectionManager),
         schemaInspector: Context.get(context, SchemaInspector),
         redisInspector: Context.get(context, RedisInspector),
+        rabbitmqDriver: Context.get(context, RabbitMqDriver),
         queryExecutor: Context.get(context, QueryExecutor),
         updateChecker: Context.get(context, UpdateChecker),
         errorLog: makeErrorLog(`${configPath}.error.log`),

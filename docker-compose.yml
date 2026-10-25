@@ -66,7 +66,44 @@ services:
     entrypoint: ["/bin/sh", "/seed.sh"]
     restart: "no"
 
+  rabbitmq:
+    # The management plugin is what dient talks to; port 15672 is the HTTP API.
+    image: rabbitmq:3-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: dient
+      RABBITMQ_DEFAULT_PASS: dient
+      RABBITMQ_DEFAULT_VHOST: /
+    ports:
+      - "55672:15672" # management API
+      - "55673:5672" # AMQP, for clients that publish/consume outside dient
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+
+  # One-shot seeder for the sample topology and messages. Re-running
+  # `docker compose up -d` only refills a sample queue when it is empty.
+  rabbitmq-seed:
+    image: rabbitmq:3-management-alpine
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "15672"
+      RABBITMQ_USER: dient
+      RABBITMQ_PASSWORD: dient
+    volumes:
+      - ./docker/rabbitmq/seed.sh:/seed.sh:ro
+    entrypoint: ["/bin/sh", "/seed.sh"]
+    restart: "no"
+
 volumes:
   postgres-data:
   mysql-data:
   redis-data:
+  rabbitmq-data:

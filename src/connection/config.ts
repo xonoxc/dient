@@ -52,6 +52,16 @@ export const resolveConnectionConfig = (
           tls: connection.tls,
         } as ConnectionConfig
       }
+      case "rabbitmq":
+        return {
+          engine: "rabbitmq",
+          host: connection.host,
+          port: connection.port,
+          user: connection.user,
+          password: connection.password,
+          defaultDatabase: connection.defaultDatabase?.trim() || "/",
+          tls: connection.tls,
+        } as ConnectionConfig
     }
   })
 

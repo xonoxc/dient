@@ -38,7 +38,7 @@ export type ConnectionId = S.Schema.Type<typeof ConnectionId>
  * unsupported engine value fails validation at runtime instead of silently
  * reaching a driver that doesn't know it.
  */
-export const Engine = S.Literal("postgres", "mysql", "sqlite", "redis")
+export const Engine = S.Literal("postgres", "mysql", "sqlite", "redis", "rabbitmq")
 export type Engine = S.Schema.Type<typeof Engine>
 
 export const ProjectSchema = S.Struct({
@@ -64,7 +64,7 @@ export const ConnectionSchema = S.Struct({
   password: S.optional(S.String),
   filename: S.optional(S.String),
   defaultDatabase: S.optional(S.String),
-  /** TLS for Redis; ignored by the SQL engines. */
+  /** TLS for Redis or RabbitMQ management; ignored by the SQL engines. */
   tls: S.optional(S.Boolean),
 })
 export type Connection = S.Schema.Type<typeof ConnectionSchema>
@@ -122,6 +122,19 @@ export const RedisConnectionConfig = S.Struct({
 })
 export type RedisConnectionConfig = S.Schema.Type<typeof RedisConnectionConfig>
 
+/** RabbitMQ's HTTP management API connection. `defaultDatabase` stores vhost. */
+export const RabbitMqConnectionConfig = S.Struct({
+  engine: S.Literal("rabbitmq"),
+  host: S.optional(S.String),
+  /** Management HTTP port (15672 by default; 15671 with TLS). */
+  port: S.optional(S.Number),
+  user: S.optional(S.String),
+  password: S.optional(S.String),
+  defaultDatabase: S.optional(S.String),
+  tls: S.optional(S.Boolean),
+})
+export type RabbitMqConnectionConfig = S.Schema.Type<typeof RabbitMqConnectionConfig>
+
 /** The SQL engines' config union, used by `DatabaseDriver`. */
 export const SqlConnectionConfig = S.Union(PostgresConnectionConfig, MysqlConnectionConfig, SqliteConnectionConfig)
 export type SqlConnectionConfig = S.Schema.Type<typeof SqlConnectionConfig>
@@ -130,6 +143,7 @@ export const ConnectionConfig = S.Union(
   PostgresConnectionConfig,
   MysqlConnectionConfig,
   SqliteConnectionConfig,
-  RedisConnectionConfig
+  RedisConnectionConfig,
+  RabbitMqConnectionConfig
 )
 export type ConnectionConfig = S.Schema.Type<typeof ConnectionConfig>

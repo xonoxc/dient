@@ -17,6 +17,7 @@
 import { ConfigStore, ConfigError } from "@/config"
 import { DatabaseDriver } from "@/drivers/database-driver"
 import { RedisDriver } from "@/drivers/redis"
+import { RabbitMqDriver } from "@/rabbitmq/driver"
 import { ConnectionError, QueryError } from "@/drivers/types"
 import { resolveConnectionConfig } from "@/connection/config"
 import { Context, Effect, Layer, Ref, Schedule } from "effect"
@@ -82,12 +83,17 @@ const findByDatabase = (
 type ConfigStoreServiceRef = import("@/config").ConfigStoreService
 
 export namespace ConnectionManager {
-  export const layer: Layer.Layer<ConnectionManager, never, ConfigStore | DatabaseDriver | RedisDriver> = Layer.effect(
+  export const layer: Layer.Layer<
+    ConnectionManager,
+    never,
+    ConfigStore | DatabaseDriver | RedisDriver | RabbitMqDriver
+  > = Layer.effect(
     ConnectionManager,
     Effect.gen(function* () {
       const store = yield* ConfigStore
       const driver = yield* DatabaseDriver
       const redis = yield* RedisDriver
+      const rabbitmq = yield* RabbitMqDriver
       const slots = yield* Ref.make(emptySlots())
 
       const open = (id: ConnectionId) =>
@@ -100,7 +106,9 @@ export namespace ConnectionManager {
           const active =
             config.engine === "redis"
               ? yield* Effect.scoped(redis.connect(config))
-              : yield* Effect.scoped(driver.connect(config))
+              : config.engine === "rabbitmq"
+                ? yield* Effect.scoped(rabbitmq.connect(config))
+                : yield* Effect.scoped(driver.connect(config))
           yield* Ref.update(slots, s => {
             s.active.set(id, { id, connection: found.connection, database: found.database, active })
             s.failed.delete(id)
@@ -134,7 +142,12 @@ export namespace ConnectionManager {
             Effect.map(s => s.active.get(id))
           )
           if (current) {
-            const close = current.active.engine === "redis" ? redis.disconnect : driver.disconnect
+            const close =
+              current.active.engine === "redis"
+                ? redis.disconnect
+                : current.active.engine === "rabbitmq"
+                  ? rabbitmq.disconnect
+                  : driver.disconnect
             yield* close(current.active).pipe(Effect.catchAll(() => Effect.void))
           }
           yield* Ref.update(slots, s => {
@@ -153,7 +166,12 @@ export namespace ConnectionManager {
             Effect.flatMap(s => {
               const entry = s.active.get(id)
               if (!entry) return Effect.succeed(false)
-              const check = entry.active.engine === "redis" ? redis.isConnected : driver.isConnected
+              const check =
+                entry.active.engine === "redis"
+                  ? redis.isConnected
+                  : entry.active.engine === "rabbitmq"
+                    ? rabbitmq.isConnected
+                    : driver.isConnected
               return check(entry.active).pipe(Effect.catchAll(() => Effect.succeed(false)))
             })
           ),
@@ -166,7 +184,12 @@ export namespace ConnectionManager {
               const entry = s.active.get(id)
               if (!entry) return Effect.succeed("disconnected" as const)
               /* the entry is live; a dead session is reported as an error so a retry replaces it */
-              const check = entry.active.engine === "redis" ? redis.isConnected : driver.isConnected
+              const check =
+                entry.active.engine === "redis"
+                  ? redis.isConnected
+                  : entry.active.engine === "rabbitmq"
+                    ? rabbitmq.isConnected
+                    : driver.isConnected
               return check(entry.active).pipe(Effect.map(ok => (ok ? "connected" : "error") as ConnectionStatus))
             })
           ),
@@ -174,9 +197,12 @@ export namespace ConnectionManager {
         query: (id, sql, params) =>
           Effect.gen(function* () {
             const active = yield* connect(id)
-            if (active.engine === "redis") {
+            if (active.engine === "redis" || active.engine === "rabbitmq") {
               return yield* Effect.fail(
-                new QueryError({ engine: "redis", message: "SQL queries are not supported on a Redis connection" })
+                new QueryError({
+                  engine: active.engine,
+                  message: `SQL queries are not supported on a ${active.engine} connection`,
+                })
               )
             }
             return yield* driver.query(active, sql, params).pipe(Effect.mapError(e => e as QueryError))
@@ -187,11 +213,18 @@ export namespace ConnectionManager {
             const config = yield* resolveConnectionConfig(database, connection)
             const attempt = Effect.scoped(
               Effect.gen(function* () {
-                const active = config.engine === "redis" ? yield* redis.connect(config) : yield* driver.connect(config)
+                const active =
+                  config.engine === "redis"
+                    ? yield* redis.connect(config)
+                    : config.engine === "rabbitmq"
+                      ? yield* rabbitmq.connect(config)
+                      : yield* driver.connect(config)
                 /* close the probe session; the app's real connections live in
                    the open-slot cache, not in pings */
                 if (config.engine === "redis") {
                   yield* redis.disconnect(active).pipe(Effect.catchAll(() => Effect.void))
+                } else if (config.engine === "rabbitmq") {
+                  yield* rabbitmq.disconnect(active).pipe(Effect.catchAll(() => Effect.void))
                 } else {
                   yield* driver.disconnect(active).pipe(Effect.catchAll(() => Effect.void))
                 }

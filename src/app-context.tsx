@@ -13,6 +13,7 @@ import type { ConnectionManagerService } from "@/connection/connection-manager"
 import type { QueryExecutorService } from "@/query/query-executor"
 import type { SchemaInspectorService } from "@/inspector"
 import type { RedisInspectorService } from "@/redis/redis-inspector"
+import type { RabbitMqDriverService } from "@/rabbitmq/driver"
 import type { Engine } from "@/domain"
 import type { VimMode } from "@/vim"
 import type { ErrorLog } from "@/log/error-log"
@@ -23,6 +24,7 @@ export interface AppServices {
   readonly connectionManager: ConnectionManagerService
   readonly schemaInspector: SchemaInspectorService
   readonly redisInspector: RedisInspectorService
+  readonly rabbitmqDriver: RabbitMqDriverService
   readonly queryExecutor: QueryExecutorService
   readonly updateChecker: UpdateCheckerService
   readonly errorLog: ErrorLog

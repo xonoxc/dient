@@ -4,7 +4,8 @@
  *
  * The model is deliberately flat: a database *is* its connection. Pressing `a`
  * opens a single-line prompt where you paste a connection string — a
- * `postgres://` / `mysql://` / `redis://` URL or a filesystem path (SQLite).
+ * `postgres://` / `mysql://` / `redis://` / `amqp://` URL or a filesystem path
+ * (SQLite).
  * `p` opens the same style of prompt for a new project (a project is a folder
  * onto which databases hang). A parsed URI pauses on an optional name prompt:
  * the tail (or Redis host:port/index) is suggested, and a typed value overrides
@@ -76,6 +77,7 @@ export const CONNECTION_FIELDS: Record<Engine, readonly ConnectionFormField[]> =
   postgres: ["host", "port", "user", "password", "defaultDatabase"],
   mysql: ["host", "port", "user", "password", "defaultDatabase"],
   redis: ["host", "port", "user", "password", "defaultDatabase"],
+  rabbitmq: ["host", "port", "user", "password", "defaultDatabase"],
 }
 
 export const FIELD_LABEL: Record<ConnectionFormField, string> = {
@@ -92,6 +94,7 @@ const ENGINE_DEFAULT_PORT: Record<Exclude<Engine, "sqlite">, string> = {
   postgres: "5432",
   mysql: "3306",
   redis: "6379",
+  rabbitmq: "15672",
 }
 
 const filenameStem = (filename: string): string => {
@@ -110,6 +113,7 @@ export const fallbackConnectionName = (
   const database = values.defaultDatabase?.trim()
   if (engine === "sqlite") return filenameStem(values.filename ?? "")
   if (engine === "redis") return `${host}:${port}${database && database !== "0" ? `/${database}` : ""}`
+  if (engine === "rabbitmq") return `${host}:${port}${database && database !== "/" ? `/${database}` : ""}`
   return database || `${host}:${port}`
 }
 
@@ -206,11 +210,11 @@ export const buildSettingsTree = (
 /** The two add-database choices, in render order. Exported so the menu render
     and the key handler cannot drift apart. */
 export const ADD_CHOICES = [
-  { label: "paste connection string", hint: "postgres://…  mysql://…  redis://…" },
+  { label: "paste connection string", hint: "postgres://…  mysql://…  redis://…  amqp://…  amqps://…" },
   { label: "host / user / password", hint: "name, host, port, user, password, database" },
 ] as const
 
-const ENGINES: ReadonlyArray<Engine> = ["postgres", "mysql", "sqlite", "redis"]
+const ENGINES: ReadonlyArray<Engine> = ["postgres", "mysql", "sqlite", "redis", "rabbitmq"]
 
 export const useSettings = (): UseSettingsResult => {
   const { configStore, connectionManager, errorLog } = useServices()
@@ -583,6 +587,40 @@ export const useSettings = (): UseSettingsResult => {
       return
     }
 
+    if (form.engine === "rabbitmq") {
+      const host = values.host?.trim() ?? ""
+      if (!host) {
+        toasts.push("error", "a RabbitMQ connection requires a host")
+        return
+      }
+      const port = values.port?.trim() ?? ""
+      if (port && (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535)) {
+        toasts.push("error", "management port must be a number between 1 and 65535")
+        return
+      }
+      const name = explicitName || fallbackConnectionName("rabbitmq", values)
+      const vhost = values.defaultDatabase?.trim() || "/"
+
+      Effect.runFork(
+        Effect.gen(function* () {
+          if (yield* nameTaken(form.projectId, name)) {
+            toastTaken(name)
+            return
+          }
+          yield* createDatabaseAndConnection(form.projectId, name, "rabbitmq", {
+            host,
+            ...(port ? { port: Number(port) } : {}),
+            ...(values.user?.trim() ? { user: values.user.trim() } : {}),
+            ...(values.password?.trim() ? { password: values.password.trim() } : {}),
+            defaultDatabase: vhost,
+          })
+          toasts.push("success", `added ${name} (rabbitmq)`)
+          finish()
+        }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))
+      )
+      return
+    }
+
     const host = values.host?.trim() ?? ""
     if (!host) {
       toasts.push("error", "a connection requires a host")
@@ -638,13 +676,22 @@ export const useSettings = (): UseSettingsResult => {
               defaultDatabase: parsed.defaultDatabase ?? "0",
               ...(parsed.tls ? { tls: true } : {}),
             }
-          : {
-              host: parsed.host,
-              port: parsed.port,
-              user: parsed.user,
-              password: parsed.password,
-              defaultDatabase: parsed.defaultDatabase ?? name,
-            }
+          : parsed.engine === "rabbitmq"
+            ? {
+                host: parsed.host,
+                port: parsed.port,
+                user: parsed.user,
+                password: parsed.password,
+                defaultDatabase: parsed.defaultDatabase ?? "/",
+                ...(parsed.tls ? { tls: true } : {}),
+              }
+            : {
+                host: parsed.host,
+                port: parsed.port,
+                user: parsed.user,
+                password: parsed.password,
+                defaultDatabase: parsed.defaultDatabase ?? name,
+              }
     Effect.runFork(
       Effect.gen(function* () {
         if (yield* nameTaken(form.projectId, name)) {
@@ -754,7 +801,11 @@ export const useSettings = (): UseSettingsResult => {
       const nextEngine = ENGINES[(ENGINES.indexOf(current.engine) + 1) % ENGINES.length]!
       engineRef.current = nextEngine
       setEngineState(nextEngine)
-      const next: SettingsForm = { ...current, engine: nextEngine, fieldIndex: 0 }
+      const values =
+        nextEngine === "rabbitmq"
+          ? { ...current.values, port: ENGINE_DEFAULT_PORT.rabbitmq, defaultDatabase: "/" }
+          : current.values
+      const next: SettingsForm = { ...current, engine: nextEngine, fieldIndex: 0, values }
       formRef.current = next
       setFormState(next)
       const key = fieldsOf(next)[0]!

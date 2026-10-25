@@ -34,6 +34,7 @@ const ENGINE_BADGES: Record<Engine, EngineBadge> = {
   mysql: { label: "MYSQL", tone: "warning" },
   sqlite: { label: "SQLite", tone: "info" },
   redis: { label: "Redis", tone: "error" },
+  rabbitmq: { label: "RABBIT", tone: "warning" },
 }
 
 const engineBadge = (engine: Engine | undefined): EngineBadge | undefined =>

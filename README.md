@@ -57,7 +57,7 @@ active connection, <code>●</code> is connection status.</sub>
   finder, settings and help panels size themselves against the terminal width;
   the confirm dialog is a fixed 60 columns.
 - **Docker + Compose (optional)** — only needed to run the sample PostgreSQL,
-  MySQL and Redis stack described below.
+  MySQL, Redis and RabbitMQ stack described below.
 
 ## Getting started
 
@@ -101,12 +101,13 @@ Then, in the app:
 ## Sample Docker stack
 
 A ready-to-browse stack lives in [`docker-compose.yml`](docker-compose.yml). It
-starts PostgreSQL, MySQL and Redis Stack (with RedisJSON), and seeds them with
-multiple databases and representative rows/keys.
+starts PostgreSQL, MySQL, Redis Stack (with RedisJSON) and RabbitMQ (with the
+management plugin), and seeds them with multiple databases, representative
+rows/keys, and a sample message topology.
 
 ```bash
 docker compose up -d
-docker compose logs -f redis-seed   # Ctrl-C after "Redis sample data loaded"
+docker compose logs -f redis-seed rabbitmq-seed   # Ctrl-C after both finish
 ```
 
 | Connection | URL |
@@ -117,6 +118,7 @@ docker compose logs -f redis-seed   # Ctrl-C after "Redis sample data loaded"
 | MySQL · `game_service` | `mysql://dient:dient@localhost:53306/game_service` |
 | Redis · DB 0 | `redis://localhost:56379/0` |
 | Redis · DB 1 | `redis://localhost:56379/1` |
+| RabbitMQ · vhost `/` | `rabbitmq://dient:dient@localhost:55672/` |
 
 The PostgreSQL databases contain users, products, orders, and 250 JSON events
 for paging. MySQL contains a shop schema and a `game_service` schema with 250
@@ -124,17 +126,25 @@ runs. Redis DB 0 has strings (including a 70 KB value for the truncation
 notice), a hash, list, set, sorted set, stream, TTL key, and a RedisJSON
 document; DB 1 has a separate greeting to exercise the `/1` database suffix.
 
+RabbitMQ exposes the management API on `55672` and AMQP on `55673`; dient uses
+the management API, so connect with a `rabbitmq://` URL. The sample broker has a
+durable `dient.events` topic exchange bound to `dient.orders` (`orders.*`) and
+`dient.notifications` (`notifications.#`, a quorum queue), with JSON and
+plain-text messages ready to peek and republish.
+
 The seed is idempotent, so `docker compose up -d` after a normal `docker compose
-down` keeps your changes. To wipe the volumes and reseed everything:
+down` keeps your changes; the RabbitMQ seeder only fills a sample queue when it
+is empty, so reruns do not duplicate messages. To wipe the volumes and reseed
+everything:
 
 ```bash
 docker compose down -v
 docker compose up -d
 ```
 
-If `55432`, `53306` or `56379` is already in use, change the host side of the
-port mapping in `docker-compose.yml`. SQLite needs no service — paste an
-absolute path such as `sqlite:///absolute/path/to/file.db`.
+If `55432`, `53306`, `56379`, `55672` or `55673` is already in use, change the
+host side of the port mapping in `docker-compose.yml`. SQLite needs no service —
+paste an absolute path such as `sqlite:///absolute/path/to/file.db`.
 
 ## Scripts
 

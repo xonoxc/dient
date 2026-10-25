@@ -14,6 +14,7 @@ import { SchemaInspector } from "@/inspector"
 import { ConnectionManager } from "@/connection/connection-manager"
 import { QueryExecutor } from "@/query/query-executor"
 import { RedisInspector } from "@/redis/redis-inspector"
+import { RabbitMqDriver } from "@/rabbitmq/driver"
 import { UpdateChecker, type UpdateCheckerDeps } from "@/update/update-checker"
 import { defaultLogPath, makeErrorLog } from "@/log/error-log"
 import type { AppServices } from "@/app-context"
@@ -21,7 +22,13 @@ import { Context, Effect, Layer, type Scope } from "effect"
 
 export const buildAppLayer = (configPath?: string, updateDeps?: UpdateCheckerDeps) => {
   const updateLayer = updateDeps ? UpdateChecker.layer(updateDeps) : UpdateChecker.layerDefault
-  const base = Layer.mergeAll(ConfigStore.layer(configPath), DatabaseDriver.layer, RedisDriver.layer, updateLayer)
+  const base = Layer.mergeAll(
+    ConfigStore.layer(configPath),
+    DatabaseDriver.layer,
+    RedisDriver.layer,
+    RabbitMqDriver.layer,
+    updateLayer
+  )
   return Layer.mergeAll(
     base,
     Layer.provide(ConnectionManager.layer, base),
@@ -38,6 +45,7 @@ export const resolveAppServices = (configPath?: string): Effect.Effect<AppServic
       configStore: Context.get(context, ConfigStore),
       schemaInspector: Context.get(context, SchemaInspector),
       redisInspector: Context.get(context, RedisInspector),
+      rabbitmqDriver: Context.get(context, RabbitMqDriver),
       connectionManager: Context.get(context, ConnectionManager),
       queryExecutor: Context.get(context, QueryExecutor),
       updateChecker: Context.get(context, UpdateChecker),

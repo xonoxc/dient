@@ -1,7 +1,7 @@
 /**
  * One-line connection strings, the primary way a connection (a database) gets
  * created. The user pastes whatever they have — a `postgres://`/`mysql://`/
- * `redis://` URL, or a filesystem path for SQLite — and the parser resolves it
+ * `redis://`/`amqp://` URL, or a filesystem path for SQLite — and the parser resolves it
  * to an engine, its parameters, and a display name taken from the tail of the
  * string (`…/some_db` → `some_db`). When a server URL carries no database path,
  * the caller is expected to ask for the name in a follow-up prompt.
@@ -34,6 +34,17 @@ export type ConnectionString =
       readonly defaultDatabase?: string
       readonly tls?: boolean
       /** Always present: a Redis URL without a path still names a server. */
+      readonly name: string
+    }
+  | {
+      readonly engine: "rabbitmq"
+      readonly host: string
+      /** RabbitMQ management API port, not the AMQP protocol port. */
+      readonly port?: number
+      readonly user?: string
+      readonly password?: string
+      readonly defaultDatabase?: string
+      readonly tls?: boolean
       readonly name: string
     }
 
@@ -118,6 +129,55 @@ const parseRedisUrl = (rest: string, tls: boolean): ConnectionString | null => {
   }
 }
 
+/**
+ * RabbitMQ's AMQP URLs identify the broker endpoint. Dient talks to the
+ * RabbitMQ management HTTP API, so AMQP ports map to its conventional
+ * management ports. `rabbitmq://` is the direct management-port form for
+ * installations that expose the API on a custom port.
+ */
+const parseRabbitUrl = (kind: string, rest: string): ConnectionString | null => {
+  const tls = kind === "amqps"
+  const protocol = kind === "rabbitmq" ? "amqp" : kind
+  let url: URL
+  try {
+    url = new URL(`${protocol}:${rest}`)
+  } catch {
+    return null
+  }
+
+  const host = url.hostname || "localhost"
+  const givenPort = url.port ? Number(url.port) : undefined
+  if (givenPort !== undefined && (!Number.isInteger(givenPort) || givenPort < 1 || givenPort > 65535)) return null
+  const managementPort =
+    kind === "rabbitmq"
+      ? (givenPort ?? (tls ? 15671 : 15672))
+      : givenPort === 15672 || givenPort === 15671
+        ? givenPort
+        : tls
+          ? 15671
+          : 15672
+
+  let vhost = "/"
+  if (url.pathname && url.pathname !== "/") {
+    try {
+      vhost = decodeURIComponent(url.pathname.replace(/^\//, "")) || "/"
+    } catch {
+      return null
+    }
+  }
+  const name = `${host}:${managementPort}${vhost !== "/" ? `/${vhost}` : ""}`
+  return {
+    engine: "rabbitmq",
+    host,
+    port: managementPort,
+    ...(url.username ? { user: decodeComponent(url.username) } : {}),
+    ...(url.password ? { password: decodeComponent(url.password) } : {}),
+    defaultDatabase: vhost,
+    ...(tls ? { tls: true } : {}),
+    name,
+  }
+}
+
 export const parseConnectionString = (input: string): ConnectionString | null => {
   const raw = input.trim()
   if (!raw) return null
@@ -137,6 +197,9 @@ export const parseConnectionString = (input: string): ConnectionString | null =>
 
   if (kind === "postgres" || kind === "postgresql") return parseServerUrl("postgres", rest)
   if (kind === "mysql") return parseServerUrl("mysql", rest)
+  if (kind === "amqp" || kind === "amqps" || kind === "rabbitmq") {
+    return parseRabbitUrl(kind, rest)
+  }
   if (kind === "redis" || kind === "rediss" || kind === "valkey" || kind === "valkeys") {
     return parseRedisUrl(rest, kind === "rediss" || kind === "valkeys")
   }

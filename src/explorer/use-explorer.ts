@@ -464,6 +464,7 @@ export const useExplorer = (): UseExplorerResult => {
       else openRedisKey(name)
       return
     }
+    if (activeExplorer.current?.database.engine === "rabbitmq") return
     loadPage(name, 0, true)
   }
 
@@ -568,7 +569,12 @@ export const useExplorer = (): UseExplorerResult => {
         /* Surface the tables under this connection right away. */
         sidebar.expandConnection(node.refId as ConnectionId)
 
-        const tableList = handle.engine === "redis" ? ["keys"] : yield* schemaInspector.listTables(handle)
+        const tableList =
+          handle.engine === "redis"
+            ? ["keys"]
+            : handle.engine === "rabbitmq"
+              ? []
+              : yield* schemaInspector.listTables(handle)
         if (gen !== generation.current) return
         setTables(tableList)
         if (handle.engine === "redis") {

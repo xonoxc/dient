@@ -100,7 +100,9 @@ export function SettingsScreen() {
       ? "connection string"
       : field === "defaultDatabase" && settings.engine === "redis"
         ? "db index"
-        : (FIELD_LABEL[field as keyof typeof FIELD_LABEL] ?? "value")
+        : field === "defaultDatabase" && settings.engine === "rabbitmq"
+          ? "vhost"
+          : (FIELD_LABEL[field as keyof typeof FIELD_LABEL] ?? "value")
     : ""
 
   const pasteConnectionString = () => {
@@ -408,6 +410,7 @@ function SettingsDetails({
   const { colors: c } = useTheme()
   const connection = item?.connection
   const isRedis = item?.meta === "redis"
+  const isRabbitMq = item?.meta === "rabbitmq"
   const location = connection?.filename
     ? connection.filename
     : connection
@@ -440,12 +443,14 @@ function SettingsDetails({
               <>
                 <text fg={c.textMuted}>{connection ? "CONNECTION" : "CONNECTION MISSING"}</text>
                 <text fg={connection ? c.text : c.warning}>{location ?? "Add connection details with a."}</text>
-                {connection && (connection.defaultDatabase || isRedis) ? (
+                {connection && (connection.defaultDatabase || isRedis || isRabbitMq) ? (
                   <text fg={c.textMuted}>
-                    {isRedis ? "db index" : "default database"} · {connection.defaultDatabase || "0"}
+                    {isRedis ? "db index" : isRabbitMq ? "vhost" : "default database"} ·{" "}
+                    {connection.defaultDatabase || (isRabbitMq ? "/" : "0")}
                   </text>
                 ) : null}
                 {isRedis && connection?.tls ? <text fg={c.textMuted}>TLS · enabled</text> : null}
+                {isRabbitMq && connection?.tls ? <text fg={c.textMuted}>management TLS · enabled</text> : null}
               </>
             )}
             <box height={2} />
@@ -518,7 +523,9 @@ function SettingsFormDialog({
           ? form.suggestedName
             ? form.pending.engine === "redis"
               ? "Name this Redis connection"
-              : "Name this database"
+              : form.pending.engine === "rabbitmq"
+                ? "Name this RabbitMQ connection"
+                : "Name this database"
             : "Choose a database name"
           : form.kind === "rename"
             ? "Rename database"
@@ -649,8 +656,12 @@ function CredentialsFields({
             : key === "defaultDatabase"
               ? form.engine === "redis"
                 ? "db index"
-                : "database"
-              : (FIELD_LABEL[key as keyof typeof FIELD_LABEL] ?? key)
+                : form.engine === "rabbitmq"
+                  ? "vhost"
+                  : "database"
+              : key === "port" && form.engine === "rabbitmq"
+                ? "mgmt port"
+                : (FIELD_LABEL[key as keyof typeof FIELD_LABEL] ?? key)
         return (
           <box
             key={key}

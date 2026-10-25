@@ -15,5 +15,28 @@ export {
   type RedisDriverService,
 } from "@/drivers/redis"
 export { connectSqlite, disconnectSqlite, isConnectedSqlite, querySqlite, SqliteDriver } from "@/drivers/sqlite"
+export {
+  bindRabbitQueue,
+  connectRabbitMq,
+  declareRabbitExchange,
+  declareRabbitQueue,
+  deleteRabbitExchange,
+  deleteRabbitQueue,
+  disconnectRabbitMq,
+  isConnectedRabbitMq,
+  listRabbitBindings,
+  listRabbitExchanges,
+  listRabbitQueues,
+  peekRabbitMessages,
+  publishRabbitMessage,
+  purgeRabbitQueue,
+  RabbitMqDriver,
+  unbindRabbitQueue,
+  type RabbitBinding,
+  type RabbitExchange,
+  type RabbitMessage,
+  type RabbitMqDriverService,
+  type RabbitQueue,
+} from "@/rabbitmq/driver"
 export type { ActiveConnection, ColumnInfo, DriverService, QueryResult } from "@/drivers/types"
 export { ConnectionError, QueryError } from "@/drivers/types"

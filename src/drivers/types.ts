@@ -30,9 +30,9 @@ export interface QueryResult {
 export interface ActiveConnection {
   readonly id: string
   readonly engine: Engine
-  /* @internal Opaque @effect/sql client (never accessed by `DatabaseDriver`). */
+  /* @internal Engine-specific client/config handle, passed back only to its driver. */
   readonly _client: unknown
-  /* @internal CloseScope that owns the client; `disconnect` closes it. */
+  /* @internal Resource owner when a driver needs one; stateless HTTP clients use null. */
   readonly _scope: unknown
 }
 
