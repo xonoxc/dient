@@ -7,7 +7,9 @@
  * frame loop live in the contexts below so tests can seed them with mocks and
  * drive key events through the real renderer.
  */
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
+
+import type { ReactNode } from "react"
 import type { ConfigStoreService } from "@/config"
 import type { ConnectionManagerService } from "@/connection/connection-manager"
 import type { QueryExecutorService } from "@/query/query-executor"
@@ -487,7 +489,9 @@ export function CommandBusProvider({ children }: { children?: ReactNode }) {
 
 export function useCommandBus(): CommandBusState {
   const bus = useContext(CommandBusContext)
-  if (!bus) throw new Error("useCommandBus() used outside of a <CommandBusProvider>")
+  if (!bus) {
+    throw new Error("useCommandBus() used outside of a <CommandBusProvider>")
+  }
   return bus
 }
 
@@ -498,6 +502,7 @@ export function useCommand(command: AppCommand): void {
   const bus = useCommandBus()
   const latest = useRef(command)
   latest.current = command
+
   const stable = useMemo<AppCommand>(
     () => ({
       id: command.id,
