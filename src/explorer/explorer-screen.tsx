@@ -124,6 +124,28 @@ export function ExplorerScreen() {
   const [viewerOpen, setViewerOpen] = useState(false)
   const [viewerOffset, setViewerOffset] = useState(0)
 
+  /* Vim-style delete: `d` is a pending prefix. Pressing `d` again (or any
+     non-d key that consumes the prefix) executes the delete. The timeout
+     clears the pending state so a slow `d d` chord does not leak into the
+     next key. */
+  const [pendingDelete, setPendingDelete] = useState(false)
+  const pendingDeleteRef = useRef(false)
+  const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const armDelete = () => {
+    if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current)
+    pendingDeleteRef.current = true
+    setPendingDelete(true)
+    deleteTimerRef.current = setTimeout(() => {
+      pendingDeleteRef.current = false
+      setPendingDelete(false)
+    }, 1000)
+  }
+  const clearDelete = () => {
+    if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current)
+    pendingDeleteRef.current = false
+    setPendingDelete(false)
+  }
+
   /* Whole-row editing runs in the user's `$EDITOR` over a `column: value` temp
      file, so nothing in the app can swallow a keystroke or drop an edit. Guard
      against re-entering while a session is still open. */
@@ -650,12 +672,92 @@ export function ExplorerScreen() {
     )
   }
 
+  /* Redis keyspace: `dd` deletes the key under the cursor. */
+  const deleteRedisKeyRow = () => {
+    const row = explorer.table.sortedRows[vim.cursor]
+    const key = row && typeof row.key === "string" ? row.key : null
+    if (!key) {
+      toasts.push("info", "no key to delete")
+      return
+    }
+    void dialog
+      .confirm({
+        title: `Delete key "${key}"?`,
+        body: `This removes "${key}" and all of its data from Redis. This cannot be undone.`,
+        okLabel: "delete key",
+        danger: true,
+      })
+      .then(ok => {
+        if (ok) {
+          explorer.deleteRedisKeyByName(key)
+        }
+      })
+  }
+
+  /* Vim-style delete. In NORMAL mode `dd` deletes the cursor row; in VISUAL
+     mode `d` deletes the entire selection. Both confirm before touching data. */
+  const deleteRows = () => {
+    if (!active) {
+      toasts.push("error", "no connection open to delete from")
+      return
+    }
+    /* Redis keyspace: `dd` deletes the key under the cursor. */
+    if (explorer.redisView?.kind === "keys") {
+      deleteRedisKeyRow()
+      return
+    }
+    if (vimMode === "visual" && vim.selection) {
+      const sel = Option.getOrNull(vim.selection)
+      if (!sel) {
+        toasts.push("info", "no selection to delete")
+        return
+      }
+      const range = selectionRange(sel)
+      const rows = explorer.table.sortedRows.slice(range.start, range.end + 1)
+      if (rows.length === 0) {
+        toasts.push("info", "no rows to delete")
+        return
+      }
+      const count = rows.length
+      const sample = explorer.table.sortedRows[range.start]
+      const preview = sample ? formatCell(Object.values(sample)[0] ?? "") : "row"
+      void dialog
+        .confirm({
+          title: `Delete ${count} row${count === 1 ? "" : "s"}?`,
+          body: `This removes ${count} row${count === 1 ? "" : "s"} from ${tableName ?? "the table"}. The first row starts with "${preview}". This cannot be undone.`,
+          okLabel: `delete ${count} row${count === 1 ? "" : "s"}`,
+          danger: true,
+        })
+        .then(ok => {
+          if (ok) explorer.deleteRows(rows)
+        })
+      return
+    }
+    const row = explorer.table.sortedRows[vim.cursor]
+    if (!row) {
+      toasts.push("info", "no row to delete")
+      return
+    }
+    const sample = formatCell(Object.values(row)[0] ?? "")
+    void dialog
+      .confirm({
+        title: "Delete this row?",
+        body: `This removes the row from ${tableName ?? "the table"}. The row starts with "${sample}". This cannot be undone.`,
+        okLabel: "delete row",
+        danger: true,
+      })
+      .then(ok => {
+        if (ok) explorer.deleteRows([row])
+      })
+  }
+
   const hints = useMemo(() => {
     /* While a selection is open those are the only live keys, so the hints name
        them and nothing else — the normal bindings are inert until it closes. */
     if (vimMode === "visual") {
       return [
         "y copy",
+        "d delete",
         explorer.redisView?.kind === "keys" ? "i rename key" : "i edit row",
         "Enter preview",
         "j/k extend",
@@ -695,6 +797,7 @@ export function ExplorerScreen() {
         ...pending,
         "Enter open key",
         "i rename key",
+        "dd delete key",
         "j/k move",
         "V select",
         "s settings",
@@ -709,6 +812,7 @@ export function ExplorerScreen() {
         ...pending,
         "Enter preview",
         "i edit row",
+        "dd delete row",
         "e full value",
         "j/k move",
         "h/l cols",
@@ -739,6 +843,7 @@ export function ExplorerScreen() {
       "s settings",
       "Enter preview",
       "i edit row",
+      "dd delete row",
       "V select rows",
       "e full value",
       "j/k move",
@@ -1118,6 +1223,7 @@ export function ExplorerScreen() {
          edit key, here and in VISUAL mode alike, so one muscle memory covers
          both. */
       if (key === "return" || key === "enter" || key === "\r") {
+        if (pendingDeleteRef.current) clearDelete()
         if (explorer.redisView?.kind === "keys") {
           const key = explorer.table.sortedRows[vim.cursor]?.key
           if (typeof key === "string") explorer.openRedisKey(key)
@@ -1125,6 +1231,18 @@ export function ExplorerScreen() {
         }
         setPreviewOpen(true)
         return
+      }
+
+      /* A pending `d` prefix is consumed by any key that isn't `d`/`D`; the
+         key then acts normally. This is what makes `dd` a chord rather than a
+         double-delete on every other keypress. */
+      const consumePending = (action: () => void) => {
+        if (pendingDeleteRef.current) {
+          clearDelete()
+          action()
+          return true
+        }
+        return false
       }
 
       /* VISUAL mode owns the keyboard: movement extends the linewise selection,
@@ -1135,21 +1253,38 @@ export function ExplorerScreen() {
          "edit this", and `i` is the key the hint strip names for it. */
       if (vimMode === "visual") {
         if (key === "y" || key === "Y") {
+          if (consumePending(() => {})) return
           copyRows()
+          vim.pressKey("escape")
+          return
+        }
+        /* `d` deletes the entire selection with a confirmation, mirroring
+           vim's `d` operator in visual mode. */
+        if (key === "d" || key === "D") {
+          if (pendingDeleteRef.current) {
+            clearDelete()
+            deleteRows()
+            vim.pressKey("escape")
+            return
+          }
+          deleteRows()
           vim.pressKey("escape")
           return
         }
         /* Editing leaves the selection open: the span survives the `$EDITOR`
            session so the rows are still highlighted when the user comes back. */
         if (key === "i") {
+          if (consumePending(() => editCurrentRow())) return
           editCurrentRow()
           return
         }
         if (key === "v" || key === "V" || key === "\u001b" || key === "Escape" || key === "escape") {
+          if (pendingDeleteRef.current) clearDelete()
           vim.pressKey("escape")
           return
         }
         if (TABLE_MOVE_KEYS.has(key) || key === "up" || key === "down") {
+          if (pendingDeleteRef.current) clearDelete()
           vim.pressKey(key === "up" ? "k" : key === "down" ? "j" : key)
         }
         return
@@ -1212,7 +1347,20 @@ export function ExplorerScreen() {
         enterVisualMode()
         return
       }
+      /* Vim-style `dd`: first `d` arms the operator, the second `d` (or `D`)
+         deletes the row under the cursor with a confirmation. Any other key
+         consumes the pending `d` and acts as usual. */
+      if (key === "d" || key === "D") {
+        if (pendingDeleteRef.current) {
+          clearDelete()
+          deleteRows()
+          return
+        }
+        armDelete()
+        return
+      }
       if (key === "\u001b" || key === "Escape" || key === "escape") {
+        clearDelete()
         if (explorer.redisView?.kind === "key") {
           explorer.backToRedisKeys()
           return

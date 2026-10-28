@@ -78,7 +78,7 @@ describe("App shell", () => {
       const row = lastTextRow(setup.captureSpans())
       /* The location reads whole, and hints are taken whole or not at all. */
       expect(row).toContain("sample · sqlite")
-      expect(row).toContain("V select rows")
+      expect(row).toContain("dd delete row")
       expect(row).toContain("users 3 rows")
       /* The fetch time is the right-end counterpart to the mode badge. */
       expect(row).toMatch(/<1ms|\d+(\.\d+)?ms|\d+(\.\d+)?s $/)

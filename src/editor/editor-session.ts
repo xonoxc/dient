@@ -154,7 +154,14 @@ export const runEditorSession = (options: EditorSessionOptions): void => {
   child.on("error", err => {
     if (handled) return
     handled = true
-    if (watcher) { try { watcher.close() } catch { /* ignore */ } watcher = null }
+    if (watcher) {
+      try {
+        watcher.close()
+      } catch {
+        /* ignore */
+      }
+      watcher = null
+    }
     renderer.resume()
     abandon(`could not start "${command}": ${err.message}`)
   })
@@ -162,7 +169,11 @@ export const runEditorSession = (options: EditorSessionOptions): void => {
     if (handled) return
     handled = true
     if (watcher) {
-      try { watcher.close() } catch { /* ignore */ }
+      try {
+        watcher.close()
+      } catch {
+        /* ignore */
+      }
       watcher = null
     }
     renderer.resume()

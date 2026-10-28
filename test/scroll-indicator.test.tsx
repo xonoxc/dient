@@ -24,19 +24,37 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 250))
 describe("thumbGeometry", () => {
   test("a table that fits gets no bar at all", () => {
     expect(thumbGeometry({ content: 40, viewport: 60, left: 0 })).toBeNull()
-    expect(thumbGeometry({ content: 60, viewport: 60, left: 0 })).toBeNull()
+    expect(
+      thumbGeometry({
+        content: 60,
+        viewport: 60,
+        left: 0,
+      })
+    ).toBeNull()
   })
 
   test("a degenerate viewport is not a crash", () => {
     expect(thumbGeometry({ content: 100, viewport: 0, left: 0 })).toBeNull()
-    expect(thumbGeometry({ content: 0, viewport: 0, left: 0 })).toBeNull()
+    expect(
+      thumbGeometry({
+        content: 0,
+        viewport: 0,
+        left: 0,
+      })
+    ).toBeNull()
   })
 
   test("the thumb is the on-screen fraction of the content", () => {
     /* Half the content visible: a thumb half the track, pinned to the start. */
     expect(thumbGeometry({ content: 120, viewport: 60, left: 0 })).toEqual({ offset: 0, width: 30 })
     /* Scrolled to the end: same size, at the end of the travel. */
-    expect(thumbGeometry({ content: 120, viewport: 60, left: 60 })).toEqual({ offset: 30, width: 30 })
+    expect(
+      thumbGeometry({
+        content: 120,
+        viewport: 60,
+        left: 60,
+      })
+    ).toEqual({ offset: 30, width: 30 })
   })
 
   test("the thumb stays at least one cell wide", () => {
@@ -53,7 +71,12 @@ describe("thumbGeometry", () => {
           continue
         }
         const atStart = thumbGeometry({ content, viewport, left: 0 })
-        const atEnd = thumbGeometry({ content, viewport, left: content - viewport })
+        const atEnd = thumbGeometry({
+          content,
+          viewport,
+          left: content - viewport,
+        })
+
         expect(atStart?.offset).toBe(0)
         expect((atEnd?.offset ?? 0) + (atEnd?.width ?? 0)).toBeLessThanOrEqual(viewport)
       }
@@ -65,6 +88,7 @@ describe("thumbGeometry", () => {
 function wideOrdersFile(): string {
   const columns = Array.from({ length: 8 }, (_, i) => `column_number_${i}_with_a_long_name TEXT`)
   const path = join(mkdtempSync(join(tmpdir(), "dient-scroll-")), "wide.db")
+
   const db = new SqliteDatabase(path)
   db.run(`CREATE TABLE orders (id INTEGER PRIMARY KEY, ${columns.join(", ")})`)
   db.run(
@@ -73,27 +97,37 @@ function wideOrdersFile(): string {
       .join(", ")})`
   )
   db.close()
+
   return path
 }
 
 function narrowOrdersFile(): string {
   const path = join(mkdtempSync(join(tmpdir(), "dient-scroll-")), "narrow.db")
+
   const db = new SqliteDatabase(path)
   db.run("CREATE TABLE orders (id INTEGER PRIMARY KEY, name TEXT)")
   db.run("INSERT INTO orders (id, name) VALUES (1, 'iphone')")
   db.close()
+
   return path
 }
 
 async function openTable(filename: string) {
   const services = await resolveTestServices(freshConfigFile())
-  await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename })
+  await seedProject(services.store, {
+    name: "demo",
+    database: "main",
+    engine: "sqlite",
+    filename,
+  })
+
   const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
   await pressKeys(setup, ["RETURN"])
   await setup.waitForFrame(f => f.includes("▾ demo"))
   await pressKeys(setup, ["j", "RETURN"])
   await setup.waitForFrame(f => f.includes("ORDERS"))
   await settle()
+
   return setup
 }
 

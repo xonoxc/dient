@@ -295,4 +295,89 @@ describe("RedisInspector", () => {
     const exit = await Effect.runPromiseExit(collision.renameKey(conn, "old", "taken"))
     expect(exit._tag).toBe("Failure")
   })
+
+  describe("deleteRows", () => {
+    const baseInfo = (type: string, key = "k"): RedisKeyInfo => ({
+      key,
+      type,
+      ttl: -1,
+      size: 1,
+      encoding: "listpack",
+      length: 1,
+    })
+
+    test("hash deletes fields with HDEL", async () => {
+      const commands: Array<readonly [string, ReadonlyArray<string | number>]> = []
+      const inspector = inspectorFor((command, args) => {
+        commands.push([command, args])
+        return 1
+      })
+      await Effect.runPromise(
+        inspector.deleteRows(conn, baseInfo("hash", "user:1"), [{ field: "name" }, { field: "age" }])
+      )
+      expect(commands).toEqual([["HDEL", ["user:1", "name", "age"]]])
+    })
+
+    test("list removes values with LREM from highest index downward", async () => {
+      const commands: Array<readonly [string, ReadonlyArray<string | number>]> = []
+      const inspector = inspectorFor((command, args) => {
+        commands.push([command, args])
+        return 1
+      })
+      await Effect.runPromise(
+        inspector.deleteRows(conn, baseInfo("list", "jobs"), [
+          { index: 0, value: "one" },
+          { index: 2, value: "three" },
+        ])
+      )
+      /* Index 2 first, then index 0 — deleting from the top avoids shifting
+         the indices of rows still to come. */
+      expect(commands).toEqual([
+        ["LREM", ["jobs", "0", "three"]],
+        ["LREM", ["jobs", "0", "one"]],
+      ])
+    })
+
+    test("set removes members with SREM", async () => {
+      const commands: Array<readonly [string, ReadonlyArray<string | number>]> = []
+      const inspector = inspectorFor((command, args) => {
+        commands.push([command, args])
+        return 1
+      })
+      await Effect.runPromise(
+        inspector.deleteRows(conn, baseInfo("set", "tags"), [{ member: "red" }, { member: "blue" }])
+      )
+      expect(commands).toEqual([["SREM", ["tags", "red", "blue"]]])
+    })
+
+    test("zset removes members with ZREM", async () => {
+      const commands: Array<readonly [string, ReadonlyArray<string | number>]> = []
+      const inspector = inspectorFor((command, args) => {
+        commands.push([command, args])
+        return 1
+      })
+      await Effect.runPromise(
+        inspector.deleteRows(conn, baseInfo("zset", "board"), [{ member: "alice" }, { member: "bob" }])
+      )
+      expect(commands).toEqual([["ZREM", ["board", "alice", "bob"]]])
+    })
+
+    test("an unsupported type fails", async () => {
+      const inspector = inspectorFor(() => 1)
+      const exit = await Effect.runPromiseExit(
+        inspector.deleteRows(conn, baseInfo("stream", "events"), [{ id: "1-0" }])
+      )
+      expect(exit._tag).toBe("Failure")
+    })
+  })
+
+  test("deleteKey issues DEL", async () => {
+    const commands: Array<string> = []
+    const inspector = inspectorFor((command, args) => {
+      commands.push(`${command} ${args.join(" ")}`)
+      return 1
+    })
+    await Effect.runPromise(inspector.deleteKey(conn, "gone"))
+    expect(commands).toEqual(["DEL gone"])
+  })
 })

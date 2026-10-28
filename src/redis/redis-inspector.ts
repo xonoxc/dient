@@ -56,6 +56,14 @@ export interface RedisInspectorService {
     row: Readonly<Record<string, unknown>>,
     updates: ReadonlyArray<RedisRowUpdate>
   ) => Effect.Effect<void, QueryError>
+  /** Delete one or more rows from a Redis collection value. */
+  readonly deleteRows: (
+    conn: ActiveConnection,
+    info: RedisKeyInfo,
+    rows: ReadonlyArray<Record<string, unknown>>
+  ) => Effect.Effect<void, QueryError>
+  /** Delete a Redis key entirely. */
+  readonly deleteKey: (conn: ActiveConnection, key: string) => Effect.Effect<void, QueryError>
   /** Rename a key without overwriting an existing destination. */
   readonly renameKey: (conn: ActiveConnection, key: string, next: string) => Effect.Effect<void, QueryError>
 }
@@ -548,7 +556,81 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
       )
     )
 
-  return { listKeys, describeKey, loadValue, readValueText, updateText, updateRow, renameKey }
+  const deleteRows = (
+    conn: ActiveConnection,
+    info: RedisKeyInfo,
+    rows: ReadonlyArray<Record<string, unknown>>
+  ): Effect.Effect<void, QueryError> => {
+    if (rows.length === 0) return Effect.void
+    switch (info.type) {
+      case "hash": {
+        const fields = rows.map(row => text(row.field)).filter(Boolean)
+        if (fields.length === 0) return Effect.void
+        return command(conn, "HDEL", [info.key, ...fields]).pipe(
+          Effect.map(() => undefined),
+          Effect.mapError(cause =>
+            cause instanceof QueryError
+              ? cause
+              : queryError(`could not delete fields from ${info.key}: ${describeError(cause)}`, cause)
+          )
+        )
+      }
+      case "list": {
+        /* LREM removes every matching value; indices shift after each
+           removal, so delete from the highest index downward. */
+        const sorted = [...rows].sort((a, b) => Number(b.index) - Number(a.index))
+        return Effect.gen(function* () {
+          for (const row of sorted) {
+            yield* command(conn, "LREM", [info.key, "0", String(row.value ?? "")])
+          }
+        }).pipe(
+          Effect.mapError(cause =>
+            cause instanceof QueryError
+              ? cause
+              : queryError(`could not delete items from ${info.key}: ${describeError(cause)}`, cause)
+          )
+        )
+      }
+      case "set": {
+        const members = rows.map(row => text(row.member)).filter(Boolean)
+        if (members.length === 0) return Effect.void
+        return command(conn, "SREM", [info.key, ...members]).pipe(
+          Effect.map(() => undefined),
+          Effect.mapError(cause =>
+            cause instanceof QueryError
+              ? cause
+              : queryError(`could not delete members from ${info.key}: ${describeError(cause)}`, cause)
+          )
+        )
+      }
+      case "zset": {
+        const members = rows.map(row => text(row.member)).filter(Boolean)
+        if (members.length === 0) return Effect.void
+        return command(conn, "ZREM", [info.key, ...members]).pipe(
+          Effect.map(() => undefined),
+          Effect.mapError(cause =>
+            cause instanceof QueryError
+              ? cause
+              : queryError(`could not delete members from ${info.key}: ${describeError(cause)}`, cause)
+          )
+        )
+      }
+      default:
+        return Effect.fail(queryError(`deleting rows from "${info.type}" is not supported`))
+    }
+  }
+
+  const deleteKey = (conn: ActiveConnection, key: string): Effect.Effect<void, QueryError> =>
+    command(conn, "DEL", [key]).pipe(
+      Effect.map(() => undefined),
+      Effect.mapError(cause =>
+        cause instanceof QueryError
+          ? cause
+          : queryError(`could not delete key "${key}": ${describeError(cause)}`, cause)
+      )
+    )
+
+  return { listKeys, describeKey, loadValue, readValueText, updateText, updateRow, deleteRows, deleteKey, renameKey }
 }
 
 export namespace RedisInspector {

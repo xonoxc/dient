@@ -14,7 +14,7 @@ import { useDialog, useServices, useToasts } from "@/app-context"
 import { useSidebar, type SidebarNode, type TablesByConnection } from "@/sidebar/use-sidebar"
 import type { ConnectionStatus } from "@/connection/connection-manager"
 import type { Connection, ConnectionId, Database, ProjectId } from "@/domain"
-import type { ActiveConnection, ColumnInfo } from "@/drivers/types"
+import type { ActiveConnection, ColumnInfo, QueryError } from "@/drivers/types"
 import type { TableInfo } from "@/inspector/types"
 import { cleanIdentifier } from "@/query/identifier"
 import { formatTtl } from "@/redis/format"
@@ -96,6 +96,14 @@ export interface UseExplorerResult {
   ) => void
   /** Rename the open key (or a key selected in the keyspace). */
   readonly renameRedisKey: (oldKey: string, newKey: string) => void
+  /** Delete one or more rows from the open SQL table. */
+  readonly deleteRows: (rows: ReadonlyArray<Record<string, unknown>>) => void
+  /** Delete one or more Redis collection rows, or keys from the keyspace. */
+  readonly deleteRedisRows: (rows: ReadonlyArray<Record<string, unknown>>) => void
+  /** Delete the open Redis key entirely. */
+  readonly deleteRedisKey: () => void
+  /** Delete a specific Redis key by name (used from the keyspace). */
+  readonly deleteRedisKeyByName: (key: string) => void
   /** Read the whole string/JSON value before handing it to `$EDITOR`. */
   readonly readRedisText: (onReady: (text: string) => void, onError?: () => void) => void
   /** Replace a string/RedisJSON value and refresh the open view. */
@@ -865,6 +873,153 @@ export const useExplorer = (): UseExplorerResult => {
     )
   }
 
+  const deleteRows = (rows: ReadonlyArray<Record<string, unknown>>): void => {
+    const explorer = activeExplorer.current
+    if (!explorer || !tableName) {
+      toasts.push("error", "nothing open to delete from")
+      return
+    }
+    if (explorer.database.engine === "redis") {
+      deleteRedisRows(rows)
+      return
+    }
+    if (rows.length === 0) {
+      toasts.push("info", "no rows to delete")
+      return
+    }
+    if (!tableInfo) {
+      toasts.push("error", `no schema info for ${tableName}`)
+      return
+    }
+    const pk = tableInfo.primaryKey
+    if (pk.length === 0) {
+      toasts.push("error", `table ${tableName} has no primary key — can't delete rows`)
+      return
+    }
+    const engine = explorer.database.engine
+    /* One DELETE per row, each keyed on its own primary-key values. Building
+       the whole statement up front and running it as a single Effect keeps the
+       success/failure reporting in one place. */
+    Effect.runFork(
+      Effect.gen(function* () {
+        const table = yield* cleanIdentifier(engine, tableName)
+        const where = yield* Effect.all(
+          pk.map(column => Effect.map(cleanIdentifier(engine, column), quoted => `${quoted} = ?`))
+        )
+        const whereClause = where.join(" AND ")
+        for (const row of rows) {
+          const params = pk.map(column => row[column])
+          yield* queryExecutor.execute(explorer.id, `DELETE FROM ${table} WHERE ${whereClause}`, params)
+        }
+        toasts.push("success", `deleted ${rows.length} row${rows.length === 1 ? "" : "s"} from ${tableName}`)
+        /* Reload the page: DELETE changes the row count, so the count must be
+           re-read and the page may now be shorter than the cursor. */
+        loadPage(tableName, offset, true)
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            errorLog.append("explorer.deleteRows", cause)
+            toasts.push("error", `delete failed: ${describeError(cause)}`)
+          })
+        )
+      )
+    )
+  }
+
+  const deleteRedisRows = (rows: ReadonlyArray<Record<string, unknown>>): void => {
+    const explorer = activeExplorer.current
+    const handle = activeHandle.current
+    if (!explorer || explorer.database.engine !== "redis" || !handle) {
+      toasts.push("error", "no Redis connection open to delete from")
+      return
+    }
+    if (rows.length === 0) {
+      toasts.push("info", "no rows to delete")
+      return
+    }
+    const info = redisInfo
+    if (!info) {
+      toasts.push("error", "no Redis value open to delete from")
+      return
+    }
+    Effect.runFork(
+      Effect.gen(function* () {
+        yield* redisInspector.deleteRows(handle, info, rows)
+        toasts.push("success", `deleted ${rows.length} row${rows.length === 1 ? "" : "s"} from ${info.key}`)
+        reloadRedisCurrent()
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            errorLog.append("explorer.deleteRedisRows", cause)
+            toasts.push("error", `delete failed: ${describeError(cause)}`)
+          })
+        )
+      )
+    )
+  }
+
+  const deleteRedisKey = (): void => {
+    const explorer = activeExplorer.current
+    const handle = activeHandle.current
+    if (!explorer || explorer.database.engine !== "redis" || !handle) {
+      toasts.push("error", "no Redis connection open to delete a key")
+      return
+    }
+    const info = redisInfo
+    const key = info?.key ?? tableName
+    if (!key) {
+      toasts.push("error", "no Redis key open to delete")
+      return
+    }
+    Effect.runFork(
+      Effect.gen(function* () {
+        yield* redisInspector.deleteKey(handle, key)
+        toasts.push("success", `deleted ${key}`)
+        /* If we were looking at this key, drop back to the keyspace. */
+        if (redisViewRef.current?.kind === "key" && redisViewRef.current.key === key) {
+          backToRedisKeys()
+        } else {
+          reloadRedisCurrent()
+        }
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            errorLog.append("explorer.deleteRedisKey", cause)
+            toasts.push("error", `delete failed: ${describeError(cause)}`)
+          })
+        )
+      )
+    )
+  }
+
+  const deleteRedisKeyByName = (key: string): void => {
+    const explorer = activeExplorer.current
+    const handle = activeHandle.current
+    if (!explorer || explorer.database.engine !== "redis" || !handle || !key) {
+      toasts.push("error", "no Redis connection open to delete a key")
+      return
+    }
+    Effect.runFork(
+      Effect.gen(function* () {
+        yield* redisInspector.deleteKey(handle, key)
+        toasts.push("success", `deleted ${key}`)
+        /* If we were looking at this key, drop back to the keyspace. */
+        if (redisViewRef.current?.kind === "key" && redisViewRef.current.key === key) {
+          backToRedisKeys()
+        } else {
+          reloadRedisCurrent()
+        }
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            errorLog.append("explorer.deleteRedisKeyByName", cause)
+            toasts.push("error", `delete failed: ${describeError(cause)}`)
+          })
+        )
+      )
+    )
+  }
+
   const result = useMemo<UseExplorerResult>(
     () => ({
       sidebar,
@@ -899,6 +1054,10 @@ export const useExplorer = (): UseExplorerResult => {
       cycleConnection,
       jumpToConnection,
       saveRow,
+      deleteRows,
+      deleteRedisRows,
+      deleteRedisKey,
+      deleteRedisKeyByName,
       renameRedisKey,
       readRedisText,
       saveRedisText,
@@ -907,6 +1066,7 @@ export const useExplorer = (): UseExplorerResult => {
     [
       sidebar,
       focus,
+      setFocus,
       statuses,
       active,
       tables,
@@ -927,6 +1087,10 @@ export const useExplorer = (): UseExplorerResult => {
       hasPrevPage,
       searchedRows.length,
       saveRow,
+      deleteRows,
+      deleteRedisRows,
+      deleteRedisKey,
+      deleteRedisKeyByName,
       renameRedisKey,
       readRedisText,
       saveRedisText,

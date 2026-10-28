@@ -27,7 +27,13 @@ async function expandToDatabase(setup: Awaited<ReturnType<typeof renderApp>>) {
 describe("sidebar tree", () => {
   test("renders the project tree from ConfigStore", async () => {
     const services = await resolveTestServices(freshConfigFile())
-    await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: "data.db" })
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: "data.db",
+    })
+
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       const frame = setup.captureCharFrame()
@@ -68,6 +74,7 @@ describe("sidebar tree", () => {
       engine: "sqlite",
       filename: freshSqliteDataFile("users"),
     })
+
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await expandToDatabase(setup)
@@ -83,8 +90,15 @@ describe("sidebar tree", () => {
 
   test("k moves back up, and Enter there collapses the node", async () => {
     const services = await resolveTestServices(freshConfigFile())
-    await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: "x.db" })
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: "x.db",
+    })
+
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+
     try {
       await pressKeys(setup, ["RETURN"])
       await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
@@ -114,6 +128,7 @@ describe("sidebar tree", () => {
 
       await pressKeys(setup, ["RETURN"])
       await setup.waitForFrame(f => f.includes("●") && f.includes("USERS"))
+
       expect(setup.captureCharFrame()).not.toContain("○ main")
     } finally {
       setup.renderer.destroy()
@@ -129,6 +144,7 @@ describe("sidebar tree", () => {
       host: "localhost",
       port: 3306,
     })
+
     const short = await Effect.runPromise(
       services.store.createDatabase({
         projectId: seeded.project.id,
@@ -136,6 +152,7 @@ describe("sidebar tree", () => {
         engine: "sqlite",
       })
     )
+
     await Effect.runPromise(
       services.store.createConnection({
         databaseId: short.id,
@@ -160,8 +177,10 @@ describe("sidebar tree", () => {
         .captureCharFrame()
         .split("\n")
         .map(line => line.split("│")[0] ?? "")
+
       const longRow = sidebarLines.find(line => line.includes("bearly-secu"))
       const shortRow = sidebarLines.find(line => line.includes("short"))
+
       expect(longRow).toBeDefined()
       expect(shortRow).toBeDefined()
       expect(longRow!.indexOf("[MYSQL]")).toBe(shortRow!.indexOf("[SQLite]"))
@@ -222,6 +241,7 @@ describe("sidebar tree", () => {
   test("an empty config shows a friendly empty panel", async () => {
     const services = await resolveTestServices(freshConfigFile())
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+
     try {
       const frame = setup.captureCharFrame()
       expect(frame).toContain("PROJECTS")

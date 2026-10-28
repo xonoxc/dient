@@ -394,11 +394,29 @@ describe("parseRowKeyValue", () => {
 describe("parseFieldValue", () => {
   test("numerics become numbers", () => {
     expect(parseFieldValue({ name: "q", type: "INTEGER", nullable: false }, "7")).toBe(7)
-    expect(parseFieldValue({ name: "p", type: "REAL", nullable: false }, "2.5")).toBe(2.5)
+    expect(
+      parseFieldValue(
+        {
+          name: "p",
+          type: "REAL",
+          nullable: false,
+        },
+        "2.5"
+      )
+    ).toBe(2.5)
   })
 
   test("an empty draft on a nullable column becomes NULL", () => {
     expect(parseFieldValue({ name: "note", type: "TEXT", nullable: true }, "")).toBeNull()
-    expect(parseFieldValue({ name: "note", type: "TEXT", nullable: false }, "")).toBe("")
+    expect(
+      parseFieldValue(
+        {
+          name: "note",
+          type: "TEXT",
+          nullable: false,
+        },
+        ""
+      )
+    ).toBe("")
   })
 })

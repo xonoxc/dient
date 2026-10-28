@@ -88,13 +88,19 @@ describe("Redis connection", () => {
       expect(list.nextToken).toBeNull()
 
       const set = await Effect.runPromise(
-        services.services.redisInspector.loadValue(conn, "tags", { token: null, count: 200 })
+        services.services.redisInspector.loadValue(conn, "tags", {
+          token: null,
+          count: 200,
+        })
       )
       expect(new Set(set.rows.map(row => row.member))).toEqual(new Set(["red", "blue"]))
       expect(set.nextToken).toBeNull()
 
       const zset = await Effect.runPromise(
-        services.services.redisInspector.loadValue(conn, "leaderboard", { token: null, count: 200 })
+        services.services.redisInspector.loadValue(conn, "leaderboard", {
+          token: null,
+          count: 200,
+        })
       )
       expect(zset.rows).toEqual([
         { rank: 1, score: "50", member: "bob" },
@@ -103,7 +109,10 @@ describe("Redis connection", () => {
       expect(zset.nextToken).toBeNull()
 
       const stream = await Effect.runPromise(
-        services.services.redisInspector.loadValue(conn, "events", { token: null, count: 200 })
+        services.services.redisInspector.loadValue(conn, "events", {
+          token: null,
+          count: 200,
+        })
       )
       expect(stream.entries?.map(entry => entry.fields[0]?.[1])).toEqual(["login", "logout"])
       expect(stream.nextToken).toBeNull()
@@ -139,6 +148,7 @@ describe("Redis connection", () => {
       port: redisPort(),
       defaultDatabase: "0",
     })
+
     const conn = await Effect.runPromise(services.services.connectionManager.connect(seeded.connection.id))
     try {
       const inspector = services.services.redisInspector

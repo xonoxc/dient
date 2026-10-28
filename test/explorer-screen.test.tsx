@@ -514,4 +514,113 @@ describe("list navigation", () => {
       }
     })
   })
+
+  describe("vim-style delete", () => {
+    /** A short table with a primary key so rows can be deleted. */
+    function deletableDb(): string {
+      const path = join(mkdtempSync(join(tmpdir(), "dient-g-")), "del.db")
+      const db = new SqliteDatabase(path)
+      db.run("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+      for (const name of ["alpha", "bravo", "charlie"]) {
+        db.run("INSERT INTO items (name) VALUES (?)", [name])
+      }
+      db.close()
+      return path
+    }
+
+    async function openDeletableTable(setup: Awaited<ReturnType<typeof renderApp>>) {
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
+      await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(f => f.includes("ITEMS") && f.includes("alpha"))
+      await pressKeys(setup, ["2"])
+      await setup.waitForFrame(f => f.includes("▶"))
+    }
+
+    test("dd in NORMAL mode opens a confirmation before deleting", async () => {
+      const services = await resolveTestServices(freshConfigFile())
+      await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: deletableDb() })
+      const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+      try {
+        await openDeletableTable(setup)
+
+        /* `dd` opens a confirmation modal, not a silent delete. */
+        await pressKeys(setup, ["d", "d"])
+        await setup.waitForFrame(f => f.includes("Delete this row?") && f.includes("alpha"))
+
+        /* The data is untouched until confirmed. */
+        expect(setup.captureCharFrame()).toContain("alpha")
+      } finally {
+        setup.renderer.destroy()
+      }
+    })
+
+    test("confirming dd deletes the row and reloads the page", async () => {
+      const services = await resolveTestServices(freshConfigFile())
+      await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: deletableDb() })
+      const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+      try {
+        await openDeletableTable(setup)
+
+        await pressKeys(setup, ["d", "d"])
+        await setup.waitForFrame(f => f.includes("Delete this row?"))
+        /* Confirm with Y. */
+        await pressKeys(setup, ["y"])
+        await setup.waitForFrame(f => f.includes("deleted 1 row"))
+
+        /* alpha is gone, bravo is now the first row. */
+        await setup.waitForFrame(f => !f.includes("alpha") && f.includes("bravo"))
+      } finally {
+        setup.renderer.destroy()
+      }
+    })
+
+    test("a single d followed by another key consumes the prefix", async () => {
+      const services = await resolveTestServices(freshConfigFile())
+      await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: deletableDb() })
+      const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+      try {
+        await openDeletableTable(setup)
+
+        /* `d j` should move the cursor down, not delete. */
+        await pressKeys(setup, ["d", "j"])
+        await setup.waitForFrame(f => f.includes("▶") && !f.includes("Delete"))
+      } finally {
+        setup.renderer.destroy()
+      }
+    })
+
+    test("d in VISUAL mode deletes the entire selection", async () => {
+      const services = await resolveTestServices(freshConfigFile())
+      await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: deletableDb() })
+      const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+      try {
+        await openDeletableTable(setup)
+
+        /* Enter visual mode and extend the selection down two rows. */
+        await pressKeys(setup, ["SHIFT+v", "j", "j"])
+        await setup.waitForFrame(f => f.includes("VISUAL"))
+
+        /* `d` opens a confirmation naming the selection size. */
+        await pressKeys(setup, ["d"])
+        await setup.waitForFrame(f => f.includes("Delete 3 rows?"))
+      } finally {
+        setup.renderer.destroy()
+      }
+    })
+
+    test("Esc cancels a pending dd chord", async () => {
+      const services = await resolveTestServices(freshConfigFile())
+      await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: deletableDb() })
+      const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+      try {
+        await openDeletableTable(setup)
+
+        await pressKeys(setup, ["d", "Escape"])
+        await setup.waitForFrame(f => !f.includes("Delete") && f.includes("alpha"))
+      } finally {
+        setup.renderer.destroy()
+      }
+    })
+  })
 })
