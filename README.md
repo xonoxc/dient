@@ -173,6 +173,7 @@ The rule is the same on every screen with more than one pane.
 | `j` / `k` (↓ / ↑) | Move down / up; scroll a Redis string or stream |
 | `gg` / `G` | First / last; top / bottom of a Redis value |
 | `1` / `2` | Focus pane 1 (sidebar) / pane 2 (table) |
+| `\` | Toggle the sidebar |
 | `h` / `l` | Scroll columns left / right |
 | ← / → | Previous / next column |
 | `Enter` | Open a Redis key, or preview the row |

@@ -62,6 +62,8 @@ export interface RedisInspectorService {
     info: RedisKeyInfo,
     rows: ReadonlyArray<Record<string, unknown>>
   ) => Effect.Effect<void, QueryError>
+  /** Delete one or more Redis keys entirely. */
+  readonly deleteKeys: (conn: ActiveConnection, keys: ReadonlyArray<string>) => Effect.Effect<void, QueryError>
   /** Delete a Redis key entirely. */
   readonly deleteKey: (conn: ActiveConnection, key: string) => Effect.Effect<void, QueryError>
   /** Rename a key without overwriting an existing destination. */
@@ -620,17 +622,35 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
     }
   }
 
-  const deleteKey = (conn: ActiveConnection, key: string): Effect.Effect<void, QueryError> =>
-    command(conn, "DEL", [key]).pipe(
+  const deleteKeys = (conn: ActiveConnection, keys: ReadonlyArray<string>): Effect.Effect<void, QueryError> => {
+    /* A visual selection can span the same key twice only if the caller made a
+       mistake; `DEL` is idempotent, but deduping keeps the command and the
+       success count honest. */
+    const unique = [...new Set(keys.filter(key => key.trim() !== ""))]
+    if (unique.length === 0) return Effect.void
+    const label = unique.length === 1 ? `key "${unique[0]}"` : `${unique.length} keys`
+    return command(conn, "DEL", unique).pipe(
       Effect.map(() => undefined),
       Effect.mapError(cause =>
-        cause instanceof QueryError
-          ? cause
-          : queryError(`could not delete key "${key}": ${describeError(cause)}`, cause)
+        cause instanceof QueryError ? cause : queryError(`could not delete ${label}: ${describeError(cause)}`, cause)
       )
     )
+  }
 
-  return { listKeys, describeKey, loadValue, readValueText, updateText, updateRow, deleteRows, deleteKey, renameKey }
+  const deleteKey = (conn: ActiveConnection, key: string): Effect.Effect<void, QueryError> => deleteKeys(conn, [key])
+
+  return {
+    listKeys,
+    describeKey,
+    loadValue,
+    readValueText,
+    updateText,
+    updateRow,
+    deleteRows,
+    deleteKeys,
+    deleteKey,
+    renameKey,
+  }
 }
 
 export namespace RedisInspector {

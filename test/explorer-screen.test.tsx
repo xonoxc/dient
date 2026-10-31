@@ -71,6 +71,38 @@ describe("explorer screen", () => {
     }
   })
 
+  test("\\ toggles the sidebar and moves focus into the table when hiding it", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile(),
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await expandToConnection(setup)
+      expect(setup.captureCharFrame()).toContain("PROJECTS")
+
+      await pressKeys(setup, ["\\"])
+      const hidden = await setup.waitForFrame(f => !f.includes("PROJECTS") && f.includes("USERS"))
+      expect(hidden).toContain("alice")
+
+      /* Hiding the pane the cursor was in hands the keyboard to the data. */
+      const paneTwo = setup
+        .captureSpans()
+        .lines.flatMap(line => line.spans)
+        .find(span => span.text.startsWith("2 ▌"))
+      expect(paneTwo).toBeDefined()
+      expect(paneTwo!.fg.toInts()).toEqual(makeTheme("dark").colors.accent.toInts())
+
+      await pressKeys(setup, ["\\"])
+      await setup.waitForFrame(f => f.includes("PROJECTS") && f.includes("USERS"))
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
   /* `V` opens a linewise row selection (the table's line is a row); `j`/`k`
      extend it and `y` copies every row it spans. The count in the confirmation
      is the user's own selection, so this pins both the span and the yank. */

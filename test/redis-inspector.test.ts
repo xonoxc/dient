@@ -371,6 +371,16 @@ describe("RedisInspector", () => {
     })
   })
 
+  test("deleteKeys issues one DEL for the whole selection", async () => {
+    const commands: Array<string> = []
+    const inspector = inspectorFor((command, args) => {
+      commands.push(`${command} ${args.join(" ")}`)
+      return args.length
+    })
+    await Effect.runPromise(inspector.deleteKeys(conn, ["alpha", "bravo", "alpha", ""]))
+    expect(commands).toEqual(["DEL alpha bravo"])
+  })
+
   test("deleteKey issues DEL", async () => {
     const commands: Array<string> = []
     const inspector = inspectorFor((command, args) => {

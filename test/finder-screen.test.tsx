@@ -139,6 +139,15 @@ describe("finder", () => {
       expect(otherLine!).not.toContain("▶")
       expect(landed).toContain("users")
       expect(landed).toContain("orders")
+
+      /* The jump lands in the data pane, not on the connection row it passed
+         through: pane 2's title is accent-coloured only while it owns focus. */
+      const paneTwo = setup
+        .captureSpans()
+        .lines.flatMap(line => line.spans)
+        .find(span => span.text.startsWith("2 ▌"))
+      expect(paneTwo).toBeDefined()
+      expect(paneTwo!.fg.toInts()).toEqual(makeTheme("dark").colors.accent.toInts())
     } finally {
       setup.renderer.destroy()
     }

@@ -11,6 +11,7 @@ const EXPLORER: ReadonlyArray<Binding> = [
   ["j / k (↓ / ↑)", "move / scroll value"],
   ["gg / G", "first / last (or value ends)"],
   ["1 / 2", "focus sidebar / table"],
+  ["\\", "toggle sidebar"],
   ["h / l", "scroll columns left / right"],
   ["← / →", "previous / next col"],
   ["Enter", "open key / preview row"],

@@ -103,6 +103,25 @@ export function ExplorerScreen() {
   const { configStore } = useServices()
   const update = useUpdateUi()
 
+  /* The project tree is a navigation aid, not permanent chrome: wide tables
+     need the columns back. Hiding it also gives the keyboard back to the data
+     pane, since an invisible pane must never own focus. */
+  const [sidebarVisible, setSidebarVisible] = useState(true)
+  const toggleSidebar = (): void => {
+    if (sidebarVisible) {
+      setSidebarVisible(false)
+      if (focus === "sidebar") setFocus("table")
+      return
+    }
+    setSidebarVisible(true)
+  }
+
+  /* Any path that asks for the sidebar while it is hidden (a finder jump to a
+     project, a command, a retry) is redirected to the visible data pane. */
+  useEffect(() => {
+    if (!sidebarVisible && focus === "sidebar") setFocus("table")
+  }, [sidebarVisible, focus, setFocus])
+
   /* Vim mode drives the cursor inside the currently loaded rows. */
   const vim = useVimMode(explorer.table.sortedRows.length)
   const vimMode = vim.mode
@@ -193,7 +212,7 @@ export function ExplorerScreen() {
      literal was stale (it said 26 while the sidebar is 32), and every cell of
      the difference became permanent horizontal overflow: the rightmost column
      was always cut off and a scrollbar was always on screen. */
-  const dataWidth = Math.max(0, width - 2 - SIDEBAR_WIDTH - 3)
+  const dataWidth = Math.max(0, width - 2 - (sidebarVisible ? SIDEBAR_WIDTH : 0) - 3)
   const previewWidth = Math.max(24, Math.min(96, width - 8))
   const redisDetail =
     explorer.redisView?.kind === "keys"
@@ -404,10 +423,10 @@ export function ExplorerScreen() {
     }
     if (entry.kind === "db") {
       if (entry.projectId && entry.connectionId) {
-        explorer.jumpToConnection(entry.projectId, entry.connectionId)
-        /* Land on the database row: the cursor highlights it and the `▶`
-           active marker appears once the connect it kicks off resolves. */
-        setFocus("sidebar")
+        /* The finder is a shortcut to content, not to the sidebar row that
+           happens to host the connection. Once the jump connects, focus the
+           data pane so `j`/`k` immediately navigate the table or keyspace. */
+        explorer.jumpToConnection(entry.projectId, entry.connectionId, "table")
       } else {
         toasts.push("info", `database "${entry.label}" has no connection — add one from settings`)
       }
@@ -416,6 +435,7 @@ export function ExplorerScreen() {
     /* project: reveal it in the sidebar and park the cursor on it */
     const index = explorer.sidebar.items.findIndex(node => node.kind === "project" && node.refId === entry.projectId)
     if (index >= 0) explorer.sidebar.open(index)
+    setSidebarVisible(true)
     setFocus("sidebar")
   }
 
@@ -701,11 +721,7 @@ export function ExplorerScreen() {
       toasts.push("error", "no connection open to delete from")
       return
     }
-    /* Redis keyspace: `dd` deletes the key under the cursor. */
-    if (explorer.redisView?.kind === "keys") {
-      deleteRedisKeyRow()
-      return
-    }
+    const keyspace = explorer.redisView?.kind === "keys"
     if (vimMode === "visual" && vim.selection) {
       const sel = Option.getOrNull(vim.selection)
       if (!sel) {
@@ -720,17 +736,26 @@ export function ExplorerScreen() {
       }
       const count = rows.length
       const sample = explorer.table.sortedRows[range.start]
-      const preview = sample ? formatCell(Object.values(sample)[0] ?? "") : "row"
+      const preview = sample ? formatCell(keyspace ? sample.key : (Object.values(sample)[0] ?? "")) : "row"
+      const noun = keyspace ? "key" : "row"
+      const plural = `${noun}${count === 1 ? "" : "s"}`
       void dialog
         .confirm({
-          title: `Delete ${count} row${count === 1 ? "" : "s"}?`,
-          body: `This removes ${count} row${count === 1 ? "" : "s"} from ${tableName ?? "the table"}. The first row starts with "${preview}". This cannot be undone.`,
-          okLabel: `delete ${count} row${count === 1 ? "" : "s"}`,
+          title: `Delete ${count} ${plural}?`,
+          body: keyspace
+            ? `This removes ${count} ${plural} and all of ${count === 1 ? "its" : "their"} data from Redis. The first key is "${preview}". This cannot be undone.`
+            : `This removes ${count} ${plural} from ${tableName ?? "the table"}. The first row starts with "${preview}". This cannot be undone.`,
+          okLabel: `delete ${count} ${plural}`,
           danger: true,
         })
         .then(ok => {
           if (ok) explorer.deleteRows(rows)
         })
+      return
+    }
+    /* Redis keyspace: `dd` deletes the key under the cursor. */
+    if (keyspace) {
+      deleteRedisKeyRow()
       return
     }
     const row = explorer.table.sortedRows[vim.cursor]
@@ -975,7 +1000,19 @@ export function ExplorerScreen() {
     const paneIndex = paneIndexForKey(e, PANEL_ORDER.length)
     if (paneIndex !== null) {
       e.preventDefault()
-      setFocus(PANEL_ORDER[paneIndex]!)
+      const target = PANEL_ORDER[paneIndex]!
+      /* Pane 1 addresses the sidebar; if it was hidden, bring it back rather
+         than focusing an invisible panel. */
+      if (target === "sidebar" && !sidebarVisible) setSidebarVisible(true)
+      setFocus(target)
+      return
+    }
+
+    /* `\` toggles the project tree. It is a window command, so it stays
+       reachable from either pane and while a preview/viewer is open. */
+    if (key === "\\") {
+      e.preventDefault()
+      toggleSidebar()
       return
     }
 
@@ -1389,14 +1426,16 @@ export function ExplorerScreen() {
 
   return (
     <box flexGrow={1} flexDirection="row">
-      <Sidebar
-        items={sidebar.items}
-        cursor={sidebar.cursor}
-        statuses={explorer.statuses}
-        activeConnectionId={active?.connection.id}
-        focus={focus === "sidebar"}
-        paneNumber={SIDEBAR_PANE}
-      />
+      {sidebarVisible ? (
+        <Sidebar
+          items={sidebar.items}
+          cursor={sidebar.cursor}
+          statuses={explorer.statuses}
+          activeConnectionId={active?.connection.id}
+          focus={focus === "sidebar"}
+          paneNumber={SIDEBAR_PANE}
+        />
+      ) : null}
 
       <box flexGrow={1} flexDirection="column">
         {active?.database.engine === "rabbitmq" ? (

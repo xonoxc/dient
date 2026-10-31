@@ -44,9 +44,7 @@ beforeAll(async () => {
   container = await new GenericContainer("redis:7-alpine").withExposedPorts(6379).start()
 }, 120_000)
 
-afterAll(async () => {
-  await container?.stop()
-}, 120_000)
+afterAll(async () => await container?.stop(), 120_000)
 
 describe("redis explorer", () => {
   test("opens the keyspace, drills into a string, and Esc returns", async () => {
@@ -89,6 +87,93 @@ describe("redis explorer", () => {
       await pressKeys(setup, ["ESCAPE"])
       const keysFrame = await setup.waitForFrame(f => f.includes("KEYS") && f.includes("greeting"))
       expect(keysFrame).not.toContain("hello redis")
+    } finally {
+      setup.renderer.destroy()
+    }
+  }, 30_000)
+
+  test("deletes every key in a visual selection from the keyspace", async () => {
+    const client = new Bun.RedisClient(`redis://${container!.getHost()}:${container!.getMappedPort(6379)}/0`)
+    await client.connect()
+    await client.send("FLUSHALL", [])
+    await client.send("SET", ["alpha", "1"])
+    await client.send("SET", ["bravo", "2"])
+    await client.send("SET", ["charlie", "3"])
+    client.close()
+
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "redis-multi-delete",
+      database: "cache",
+      engine: "redis",
+      host: container!.getHost(),
+      port: container!.getMappedPort(6379),
+      defaultDatabase: "0",
+    })
+
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("▾ redis-multi-delete") && f.includes("○ cache"))
+      await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(f => f.includes("KEYS") && f.includes("alpha"))
+
+      /* Select two adjacent keys, then confirm the visual delete. */
+      await pressKeys(setup, ["2"])
+      await pressKeys(setup, ["SHIFT+v", "j"])
+      await setup.waitForFrame(f => f.includes("VISUAL") && f.includes("2 selected"))
+      await pressKeys(setup, ["d"])
+      await setup.waitForFrame(f => f.includes("Delete 2 keys?"))
+      await pressKeys(setup, ["y"])
+      await setup.waitForFrame(f => f.includes("deleted 2 keys"))
+
+      const check = new Bun.RedisClient(`redis://${container!.getHost()}:${container!.getMappedPort(6379)}/0`)
+      await check.connect()
+      expect(await check.send("DBSIZE", [])).toBe(1)
+      check.close()
+    } finally {
+      setup.renderer.destroy()
+    }
+  }, 30_000)
+
+  test("deletes multiple fields in a visual selection from an open hash", async () => {
+    const client = new Bun.RedisClient(`redis://${container!.getHost()}:${container!.getMappedPort(6379)}/0`)
+    await client.connect()
+    await client.send("FLUSHALL", [])
+    await client.send("HSET", ["user:1", "name", "alice", "email", "alice@example.com", "role", "admin", "level", "7"])
+    client.close()
+
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "redis-hash-delete",
+      database: "cache",
+      engine: "redis",
+      host: container!.getHost(),
+      port: container!.getMappedPort(6379),
+      defaultDatabase: "0",
+    })
+
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("▾ redis-hash-delete") && f.includes("○ cache"))
+      await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(f => f.includes("KEYS") && f.includes("user:1"))
+      await pressKeys(setup, ["2"])
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("name") && f.includes("alice"))
+
+      await pressKeys(setup, ["SHIFT+v", "j"])
+      await setup.waitForFrame(f => f.includes("VISUAL") && f.includes("2 selected"))
+      await pressKeys(setup, ["d"])
+      await setup.waitForFrame(f => f.includes("Delete 2 rows?"))
+      await pressKeys(setup, ["y"])
+      await setup.waitForFrame(f => f.includes("deleted 2 rows from user:1"))
+
+      const check = new Bun.RedisClient(`redis://${container!.getHost()}:${container!.getMappedPort(6379)}/0`)
+      await check.connect()
+      expect(await check.send("HLEN", ["user:1"])).toBe(2)
+      check.close()
     } finally {
       setup.renderer.destroy()
     }

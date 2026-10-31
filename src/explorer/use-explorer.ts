@@ -84,12 +84,14 @@ export interface UseExplorerResult {
   readonly search: string
   readonly setSearch: (query: string) => void
   readonly searchCount: number
-  readonly selectActive: (index?: number) => void
+  readonly selectActive: (index?: number, focusOnOpen?: PanelFocus) => void
   readonly openTable: (name: string) => void
   readonly cycleConnection: () => void
   /** Jump to a specific connection from the finder, expanding the containing
-      project first if its (lazily loaded) tree has not reached it yet. */
-  readonly jumpToConnection: (projectId: ProjectId, connectionId: ConnectionId) => void
+      project first if its (lazily loaded) tree has not reached it yet. The
+      optional focus target moves the cursor into the data pane once the
+      connection has loaded, which is what a finder jump expects. */
+  readonly jumpToConnection: (projectId: ProjectId, connectionId: ConnectionId, focusOnOpen?: PanelFocus) => void
   readonly saveRow: (
     row: Record<string, unknown>,
     updates: ReadonlyArray<{ readonly column: string; readonly param: unknown }>
@@ -518,7 +520,7 @@ export const useExplorer = (): UseExplorerResult => {
     loadPage(tableName, Math.max(0, from - PAGE_SIZE), false)
   }
 
-  const selectActive = (index?: number): void => {
+  const selectActive = (index?: number, focusOnOpen: PanelFocus = "sidebar"): void => {
     /* Read the *live* cursor and tree so a `j` → `Enter` chord pressed in one
        frame acts on the moved cursor, not the render snapshot. */
     const cursor = index ?? sidebar.cursorRef.current
@@ -597,6 +599,10 @@ export const useExplorer = (): UseExplorerResult => {
           setTotal(null)
           setLoading(false)
         }
+        /* A finder jump targets the data the user searched for, not the
+           connection row they passed through to reach it. Move focus only
+           after the connection and its first view are ready. */
+        if (focusOnOpen === "table") setFocus("table")
       }).pipe(
         Effect.catchAll(cause =>
           Effect.gen(function* () {
@@ -624,7 +630,7 @@ export const useExplorer = (): UseExplorerResult => {
                 danger: true,
               })
             )
-            if (ok) selectActive(retryIndex)
+            if (ok) selectActive(retryIndex, focusOnOpen)
           })
         )
       )
@@ -643,7 +649,11 @@ export const useExplorer = (): UseExplorerResult => {
     if (index >= 0) selectActive(index)
   }
 
-  const jumpToConnection = (projectId: ProjectId, connectionId: ConnectionId): void => {
+  const jumpToConnection = (
+    projectId: ProjectId,
+    connectionId: ConnectionId,
+    focusOnOpen: PanelFocus = "sidebar"
+  ): void => {
     const liveItems = sidebar.itemsRef.current
     const reveal = (): void => {
       const index = sidebar.itemsRef.current.findIndex(
@@ -651,7 +661,7 @@ export const useExplorer = (): UseExplorerResult => {
       )
       if (index >= 0) {
         sidebar.goTo(index)
-        selectActive(index)
+        selectActive(index, focusOnOpen)
       } else {
         toasts.push("error", "connection not found")
       }
@@ -937,6 +947,32 @@ export const useExplorer = (): UseExplorerResult => {
       toasts.push("info", "no rows to delete")
       return
     }
+
+    /* The keyspace rows are keys, not fields/members of an open value, so a
+       visual selection there deletes the whole keys in one DEL. */
+    if (redisViewRef.current?.kind === "keys") {
+      const keys = rows.map(row => (typeof row.key === "string" ? row.key : "")).filter(key => key !== "")
+      if (keys.length === 0) {
+        toasts.push("info", "no keys to delete")
+        return
+      }
+      Effect.runFork(
+        Effect.gen(function* () {
+          yield* redisInspector.deleteKeys(handle, keys)
+          toasts.push("success", `deleted ${keys.length} key${keys.length === 1 ? "" : "s"}`)
+          reloadRedisCurrent()
+        }).pipe(
+          Effect.catchAll(cause =>
+            Effect.sync(() => {
+              errorLog.append("explorer.deleteRedisKeys", cause)
+              toasts.push("error", `delete failed: ${describeError(cause)}`)
+            })
+          )
+        )
+      )
+      return
+    }
+
     const info = redisInfo
     if (!info) {
       toasts.push("error", "no Redis value open to delete from")
