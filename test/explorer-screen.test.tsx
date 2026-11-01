@@ -409,7 +409,9 @@ describe("failed connection dialog", () => {
          one logical line that fits the 56-column content area and is not
          wrapped onto a second row. */
       const rows = frame.split("\n")
-      const bodyRows = rows.filter(row => row.includes("Failed to connect"))
+      /* The status bar repeats the failure as a toast; the dialog body is the
+         row that starts with the reason itself. */
+      const bodyRows = rows.filter(row => row.trim().startsWith("Failed to connect:"))
       expect(bodyRows).toHaveLength(1)
       const body = bodyRows[0]!.trim()
       expect(body.startsWith("Failed to connect:")).toBe(true)

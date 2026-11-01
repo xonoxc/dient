@@ -98,7 +98,7 @@ export function HelpScreen() {
       justifyContent="center"
       backgroundColor={c.bg}
     >
-      <ModalSurface width={panelWidth} maxHeight={Math.max(10, height - 2)}>
+      <ModalSurface width={panelWidth} maxHeight={Math.max(10, height - 2)} paddingY={0}>
         <box flexDirection="row" alignItems="center">
           <text fg={c.accent}>dient · keybindings</text>
           <box flexGrow={1} />
