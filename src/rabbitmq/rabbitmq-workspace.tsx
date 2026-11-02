@@ -1,6 +1,7 @@
 /** RabbitMQ's colorful queue, exchange, binding, and message workbench. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Effect } from "effect"
+import { Effect, Either } from "effect"
+import { stringifyJson, parseJson } from "@/effect/json"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import type { ScrollBoxRenderable } from "@opentui/core"
 import {
@@ -36,31 +37,25 @@ const TABS: ReadonlyArray<{ readonly id: WorkspaceTab; readonly label: string }>
 const clampCursor = (cursor: number, length: number): number => Math.max(0, Math.min(cursor, length - 1))
 
 const asJsonText = (value: unknown): string => {
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
+  return Either.getOrElse(stringifyJson(value, 2), () => String(value))
 }
 
 const payloadPreview = (value: string): string => {
-  try {
-    return JSON.stringify(JSON.parse(value)) ?? value
-  } catch {
-    return value.replace(/[\r\n\t]+/g, " ↵ ")
-  }
+  const parsed = parseJson(value)
+  if (Either.isLeft(parsed)) return value
+  return Either.getOrElse(stringifyJson(parsed.right), () => value)
 }
 
 const payloadDocument = (value: string): string => {
-  try {
-    return JSON.stringify(JSON.parse(value), null, 2) ?? value
-  } catch {
-    return value
-  }
+  const parsed = parseJson(value)
+  if (Either.isLeft(parsed)) return value
+  return Either.getOrElse(stringifyJson(parsed.right, 2), () => value)
 }
 
 const parseEditorJson = (text: string): Record<string, unknown> => {
-  const value: unknown = JSON.parse(text)
+  const parsed = parseJson(text)
+  if (Either.isLeft(parsed)) throw parsed.left
+  const value = parsed.right
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("expected a JSON object")
   }
@@ -925,7 +920,10 @@ function RabbitInspector({
         <text fg={c.accent}>ARGUMENTS</text>
         {args.length ? (
           args.map(([key, value]) => (
-            <text key={key} fg={c.text}>{`${key}  ${typeof value === "string" ? value : JSON.stringify(value)}`}</text>
+            <text
+              key={key}
+              fg={c.text}
+            >{`${key}  ${typeof value === "string" ? value : Either.getOrElse(stringifyJson(value), () => String(value))}`}</text>
           ))
         ) : (
           <text fg={c.text}>none</text>
@@ -984,7 +982,10 @@ function RabbitInspector({
         <text fg={c.accent}>ARGUMENTS</text>
         {args.length ? (
           args.map(([key, value]) => (
-            <text key={key} fg={c.text}>{`${key}  ${typeof value === "string" ? value : JSON.stringify(value)}`}</text>
+            <text
+              key={key}
+              fg={c.text}
+            >{`${key}  ${typeof value === "string" ? value : Either.getOrElse(stringifyJson(value), () => String(value))}`}</text>
           ))
         ) : (
           <text fg={c.text}>none</text>

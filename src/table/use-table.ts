@@ -5,6 +5,8 @@
  * bounded sample so they never require mapping the whole dataset.
  */
 import { useMemo, useState } from "react"
+import { Either } from "effect"
+import { stringifyJson } from "@/effect/json"
 import type { ColumnInfo } from "@/drivers/types"
 
 export interface SortState {
@@ -49,11 +51,7 @@ export const formatCell = (value: unknown): string => {
   if (typeof value === "object") {
     if (value instanceof Date) return value.toISOString()
     if (value instanceof Uint8Array) return `<${value.length} bytes>`
-    try {
-      return JSON.stringify(value)
-    } catch {
-      return String(value)
-    }
+    return Either.getOrElse(stringifyJson(value), () => String(value))
   }
   return String(value)
 }

@@ -11,7 +11,8 @@
  *   - Edits are narrowly scoped: SET KEEPTTL / JSON.SET for values, HDEL+HSET /
  *     LSET / SREM+SADD / ZADD+ZREM for collection rows, and RENAMENX for keys.
  */
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Either, Layer } from "effect"
+import { parseJson, stringifyJson } from "@/effect/json"
 import type { ActiveConnection, ColumnInfo } from "@/drivers/types"
 import { QueryError } from "@/drivers/types"
 import { RedisDriver, type RedisDriverService } from "@/drivers/redis"
@@ -335,16 +336,13 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
   const jsonPage = (conn: ActiveConnection, info: RedisKeyInfo): Effect.Effect<RedisPage, QueryError> =>
     command(conn, "JSON.GET", [info.key]).pipe(
       Effect.map(value => {
-        const raw = typeof value === "string" ? value : (JSON.stringify(value) ?? "null")
+        const raw = typeof value === "string" ? value : Either.getOrElse(stringifyJson(value), () => "null")
         /* RedisJSON returns compact JSON; indent it so the wrapped-text panel
            reads like a document instead of one endless line. */
-        const body = (() => {
-          try {
-            return JSON.stringify(JSON.parse(raw), null, 2)
-          } catch {
-            return raw
-          }
-        })()
+        const body = Either.match(parseJson(raw), {
+          onLeft: () => raw,
+          onRight: parsed => Either.getOrElse(stringifyJson(parsed, 2), () => raw),
+        })
         const truncated = body.length > MAX_VALUE_BYTES
         const display = truncated ? body.slice(0, MAX_VALUE_BYTES) : body
         return {
@@ -428,7 +426,7 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
         /* Edit the raw document, not a JSON.parse/stringify round trip: that
            round trip silently rounds integers above 2^53 even when the user
            only changes a harmless character elsewhere in the document. */
-        const body = typeof raw === "string" ? raw : (JSON.stringify(raw) ?? "null")
+        const body = typeof raw === "string" ? raw : Either.getOrElse(stringifyJson(raw), () => "null")
         if (body.length > MAX_EDIT_BYTES) {
           return yield* Effect.fail(
             queryError(
@@ -455,10 +453,10 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
         /* Validate locally so the toast names the problem before a command is
            sent. Parse only; the edited text is stored verbatim so large numbers
            do not lose precision on a JSON.parse/JSON.stringify round trip. */
-        yield* Effect.try({
-          try: () => JSON.parse(value) as unknown,
-          catch: cause => queryError(`invalid JSON: ${describeError(cause)}`, cause),
-        })
+        const parsed = parseJson(value)
+        if (Either.isLeft(parsed)) {
+          yield* Effect.fail(queryError(`invalid JSON: ${describeError(parsed.left)}`, parsed.left))
+        }
         yield* command(conn, "JSON.SET", [info.key, "$", value])
         return
       }

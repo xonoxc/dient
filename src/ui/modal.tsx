@@ -34,6 +34,7 @@ export function ModalView() {
 
   useKeyboard(e => {
     if (!dialog) return
+
     const key = normalModeKey(e)
     if (key === "enter" || key === "y" || key === "Y") {
       dialog.resolve(true)

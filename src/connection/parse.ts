@@ -10,6 +10,7 @@
  * SQLite path, because that is the local-file case users paste most. Every
  * other form returns `null` so the settings form can toast a clear failure.
  */
+import { Either } from "effect"
 import { basename, extname } from "node:path"
 
 export type ConnectionString =
@@ -50,13 +51,11 @@ export type ConnectionString =
 
 const SCHEME = /^([a-z][a-z0-9+.-]*):/
 
-const decodeComponent = (value: string): string => {
-  try {
-    return decodeURIComponent(value)
-  } catch {
-    return value
-  }
-}
+const decodeComponent = (value: string): string =>
+  Either.getOrElse(
+    Either.try(() => decodeURIComponent(value)),
+    () => value
+  )
 
 const tailName = (input: string): string =>
   basename(input)
@@ -65,18 +64,14 @@ const tailName = (input: string): string =>
 
 /** Parse a `postgres://`/`mysql://` URL into engine parameters. */
 const parseServerUrl = (engine: "postgres" | "mysql", rest: string): ConnectionString | null => {
-  let url: URL
-  try {
-    /* `rest` is scheme-less (we sliced it off already); the URL constructor
-     * needs an absolute input, so rebuild the scheme before parsing. */
-    url = new URL(`${engine}:${rest}`)
-  } catch {
-    return null
-  }
+  /* `rest` is scheme-less (we sliced it off already); the URL constructor
+   * needs an absolute input, so rebuild the scheme before parsing. */
+  const url = Either.getOrNull(Either.try(() => new URL(`${engine}:${rest}`)))
+  if (url === null) return null
 
   const name =
     url.pathname && url.pathname !== "/"
-      ? decodeURIComponent(
+      ? decodeComponent(
           url.pathname
             .replace(/^\/+|\/+$/g, "")
             .split("/")
@@ -100,12 +95,8 @@ const parseServerUrl = (engine: "postgres" | "mysql", rest: string): ConnectionS
  * name is derived from host/port/index because there is no path name to borrow.
  */
 const parseRedisUrl = (rest: string, tls: boolean): ConnectionString | null => {
-  let url: URL
-  try {
-    url = new URL(`${tls ? "rediss" : "redis"}:${rest}`)
-  } catch {
-    return null
-  }
+  const url = Either.getOrNull(Either.try(() => new URL(`${tls ? "rediss" : "redis"}:${rest}`)))
+  if (url === null) return null
 
   const host = url.hostname || "localhost"
   const port = url.port ? Number(url.port) : undefined
@@ -138,12 +129,9 @@ const parseRedisUrl = (rest: string, tls: boolean): ConnectionString | null => {
 const parseRabbitUrl = (kind: string, rest: string): ConnectionString | null => {
   const tls = kind === "amqps"
   const protocol = kind === "rabbitmq" ? "amqp" : kind
-  let url: URL
-  try {
-    url = new URL(`${protocol}:${rest}`)
-  } catch {
-    return null
-  }
+
+  const url = Either.getOrNull(Either.try(() => new URL(`${protocol}:${rest}`)))
+  if (url === null) return null
 
   const host = url.hostname || "localhost"
   const givenPort = url.port ? Number(url.port) : undefined
@@ -159,12 +147,11 @@ const parseRabbitUrl = (kind: string, rest: string): ConnectionString | null => 
 
   let vhost = "/"
   if (url.pathname && url.pathname !== "/") {
-    try {
-      vhost = decodeURIComponent(url.pathname.replace(/^\//, "")) || "/"
-    } catch {
-      return null
-    }
+    const decoded = Either.getOrNull(Either.try(() => decodeURIComponent(url.pathname.replace(/^\//, ""))))
+    if (decoded === null) return null
+    vhost = decoded || "/"
   }
+
   const name = `${host}:${managementPort}${vhost !== "/" ? `/${vhost}` : ""}`
   return {
     engine: "rabbitmq",

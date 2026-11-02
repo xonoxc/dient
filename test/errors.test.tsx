@@ -126,6 +126,7 @@ describe("error handling", () => {
       filename: freshSqliteDataFile("users"),
     })
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+
     try {
       await pressKeys(setup, ["RETURN"])
       await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))

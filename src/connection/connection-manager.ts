@@ -109,6 +109,7 @@ export namespace ConnectionManager {
               : config.engine === "rabbitmq"
                 ? yield* Effect.scoped(rabbitmq.connect(config))
                 : yield* Effect.scoped(driver.connect(config))
+
           yield* Ref.update(slots, s => {
             s.active.set(id, { id, connection: found.connection, database: found.database, active })
             s.failed.delete(id)
@@ -148,6 +149,7 @@ export namespace ConnectionManager {
                 : current.active.engine === "rabbitmq"
                   ? rabbitmq.disconnect
                   : driver.disconnect
+
             yield* close(current.active).pipe(Effect.catchAll(() => Effect.void))
           }
           yield* Ref.update(slots, s => {
@@ -172,6 +174,7 @@ export namespace ConnectionManager {
                   : entry.active.engine === "rabbitmq"
                     ? rabbitmq.isConnected
                     : driver.isConnected
+
               return check(entry.active).pipe(Effect.catchAll(() => Effect.succeed(false)))
             })
           ),
@@ -190,6 +193,7 @@ export namespace ConnectionManager {
                   : entry.active.engine === "rabbitmq"
                     ? rabbitmq.isConnected
                     : driver.isConnected
+
               return check(entry.active).pipe(Effect.map(ok => (ok ? "connected" : "error") as ConnectionStatus))
             })
           ),
@@ -205,6 +209,7 @@ export namespace ConnectionManager {
                 })
               )
             }
+
             return yield* driver.query(active, sql, params).pipe(Effect.mapError(e => e as QueryError))
           }),
 
@@ -228,6 +233,7 @@ export namespace ConnectionManager {
                 } else {
                   yield* driver.disconnect(active).pipe(Effect.catchAll(() => Effect.void))
                 }
+
                 return true
               })
             )

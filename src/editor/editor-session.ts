@@ -6,10 +6,10 @@
  * on every terminal path, including the early ones before a child exists.
  */
 import { spawn } from "node:child_process"
-import type { ChildProcess } from "node:child_process"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, watch as fsWatch } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { Either } from "effect"
 import { describeError } from "@/errors/describe"
 
 /** The suspend/resume surface the editor session needs from the renderer. */
@@ -49,11 +49,8 @@ export const editorCommand = (): string => process.env.EDITOR ?? process.env.VIS
 const safeName = (name: string): string => name.replace(/[^A-Za-z0-9_-]+/g, "_") || "edit"
 
 const cleanDir = (dir: string): void => {
-  try {
-    rmSync(dir, { recursive: true, force: true })
-  } catch {
-    /* best-effort temp cleanup */
-  }
+  /* best-effort temp cleanup */
+  Either.try(() => rmSync(dir, { recursive: true, force: true }))
 }
 
 /** Run one editor session over `content` and report the edited text to `onSave`. */
@@ -61,14 +58,13 @@ export const runEditorSession = (options: EditorSessionOptions): void => {
   const { renderer, label, filename, extension, content, callbacks, onSave, watch } = options
   const command = editorCommand()
 
-  let dir: string
-  try {
-    dir = mkdtempSync(join(tmpdir(), "dient-edit-"))
-  } catch (cause) {
-    callbacks.error(`could not create a temp file for editing: ${describeError(cause)}`)
+  const madeDir = Either.try(() => mkdtempSync(join(tmpdir(), "dient-edit-")))
+  if (Either.isLeft(madeDir)) {
+    callbacks.error(`could not create a temp file for editing: ${describeError(madeDir.left)}`)
     callbacks.done()
     return
   }
+  const dir = madeDir.right
 
   const abandon = (message: string): void => {
     cleanDir(dir)
@@ -77,39 +73,42 @@ export const runEditorSession = (options: EditorSessionOptions): void => {
   }
 
   const file = join(dir, `${safeName(filename)}${extension ?? ".txt"}`)
-  try {
-    writeFileSync(file, content, "utf8")
-  } catch (cause) {
-    abandon(`could not stage the file for editing: ${describeError(cause)}`)
+
+  const staged = Either.try(() => writeFileSync(file, content, "utf8"))
+  if (Either.isLeft(staged)) {
+    abandon(`could not stage the file for editing: ${describeError(staged.left)}`)
     return
   }
 
   let lastContent = content
   let watcher: ReturnType<typeof fsWatch> | null = null
+  const closeWatcher = (): void => {
+    if (!watcher) return
+    const current = watcher
+    watcher = null
+    void Either.try(() => current.close())
+  }
   const readAndSave = (): void => {
-    let edited: string
-    try {
-      edited = readFileSync(file, "utf8")
-    } catch {
-      return
-    }
+    const edited = Either.getOrNull(Either.try(() => readFileSync(file, "utf8")))
+
+    if (edited === null) return
     if (edited === lastContent) return
     lastContent = edited
-    try {
-      onSave(edited)
-    } catch (cause) {
-      callbacks.error(`could not apply the edit: ${describeError(cause)}`)
+
+    const saved = Either.try(() => onSave(edited))
+    if (Either.isLeft(saved)) {
+      callbacks.error(`could not apply the edit: ${describeError(saved.left)}`)
     }
   }
   if (watch) {
-    try {
-      watcher = fsWatch(file, () => {
+    const watching = Either.try(() =>
+      fsWatch(file, () => {
         // Debounce: editors often write in multiple steps.
         setTimeout(readAndSave, 200)
       })
-    } catch {
-      /* watching is best-effort */
-    }
+    )
+    if (Either.isRight(watching)) watcher = watching.right
+    /* watching is best-effort */
   }
 
   const program = command.split(/\s+/).filter(Boolean)
@@ -138,69 +137,57 @@ export const runEditorSession = (options: EditorSessionOptions): void => {
   callbacks.notice(`editing ${label} in ${bin}`)
   renderer.suspend()
 
-  let child: ChildProcess
-  try {
-    child = spawn(bin, args, {
-      stdio: "inherit",
-      env: process.env,
-    })
-  } catch (cause) {
+  const spawned = Either.try(() => spawn(bin, args, { stdio: "inherit", env: process.env }))
+  if (Either.isLeft(spawned)) {
     renderer.resume()
-    abandon(`could not start "${command}": ${describeError(cause)}`)
+    abandon(`could not start "${command}": ${describeError(spawned.left)}`)
     return
   }
+
+  const child = spawned.right
 
   let handled = false
   child.on("error", err => {
     if (handled) return
+
     handled = true
-    if (watcher) {
-      try {
-        watcher.close()
-      } catch {
-        /* ignore */
-      }
-      watcher = null
-    }
+    closeWatcher()
     renderer.resume()
     abandon(`could not start "${command}": ${err.message}`)
   })
+
   child.on("exit", code => {
     if (handled) return
+
     handled = true
-    if (watcher) {
-      try {
-        watcher.close()
-      } catch {
-        /* ignore */
-      }
-      watcher = null
-    }
+    closeWatcher()
     renderer.resume()
     if (code !== 0) {
       abandon(`editor exited with code ${code} — no changes taken back`)
       return
     }
+
     if (watch) {
       readAndSave()
       cleanDir(dir)
       callbacks.done()
       return
     }
-    let edited: string
-    try {
-      edited = readFileSync(file, "utf8")
-    } catch (cause) {
-      abandon(`could not read the edited file: ${describeError(cause)}`)
+
+    const read = Either.try(() => readFileSync(file, "utf8"))
+    if (Either.isLeft(read)) {
+      abandon(`could not read the edited file: ${describeError(read.left)}`)
       return
     }
+    const edited = read.right
+
     cleanDir(dir)
-    try {
-      onSave(edited)
-    } catch (cause) {
-      callbacks.error(`could not apply the edit: ${describeError(cause)}`)
-    } finally {
-      callbacks.done()
+
+    const saved = Either.try(() => onSave(edited))
+    if (Either.isLeft(saved)) {
+      callbacks.error(`could not apply the edit: ${describeError(saved.left)}`)
     }
+
+    callbacks.done()
   })
 }

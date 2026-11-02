@@ -42,6 +42,7 @@ export const resolveConnectionConfig = (
             })
           )
         }
+
         return {
           engine: "redis",
           host: connection.host,
@@ -52,6 +53,7 @@ export const resolveConnectionConfig = (
           tls: connection.tls,
         } as ConnectionConfig
       }
+
       case "rabbitmq":
         return {
           engine: "rabbitmq",

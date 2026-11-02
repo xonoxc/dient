@@ -293,6 +293,18 @@ export function SettingsScreen() {
       return
     }
 
+    /* Ctrl+H / Ctrl+L switch panes (vim-style). */
+    if (e.ctrl === true && (key === "h" || key === "H" || key === "backspace")) {
+      e.preventDefault()
+      setPane("list")
+      return
+    }
+    if (e.ctrl === true && (key === "l" || key === "L" || key === "\f" || key === "formfeed" || key === "clear")) {
+      e.preventDefault()
+      setPane("details")
+      return
+    }
+
     if (key === "P" && !e.ctrl && !e.meta) {
       addProject()
       return

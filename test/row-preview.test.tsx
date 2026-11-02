@@ -94,6 +94,7 @@ describe("row preview", () => {
     const services = await seed(dataPath)
     setEditor(installEditor("save.sh", `cat > "$1" <<'DIENTEOF'\nid: 1\nname: amy\nemail: NULL\nDIENTEOF\n`))
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+
     try {
       await openUsers(setup)
       await pressKeys(setup, ["2"])
@@ -122,6 +123,7 @@ describe("row preview", () => {
     const services = await seed(freshSqliteDataFile())
     setEditor(installEditor("noop.sh", "exit 0"))
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+
     try {
       await openUsers(setup)
       await pressKeys(setup, ["2"])
@@ -147,6 +149,7 @@ describe("row preview", () => {
     const services = await seed(freshSqliteDataFile())
     setEditor(installEditor("noop.sh", "exit 0"))
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+
     try {
       await openUsers(setup)
       await pressKeys(setup, ["2"])

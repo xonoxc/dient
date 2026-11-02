@@ -48,6 +48,7 @@ export const editRowInEditor = (options: EditRowOptions): void => {
         callbacks.error(result.error)
         return
       }
+
       if (result.updates.length === 0) {
         callbacks.notice("no changes to save")
         return

@@ -5,7 +5,8 @@
  * `SessionProvider`.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Effect, Option } from "effect"
+import { Effect, Either, Option } from "effect"
+import { parseJson } from "@/effect/json"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import type { ScrollBoxRenderable } from "@opentui/core"
 import { useTheme } from "@/theme-context"
@@ -548,12 +549,13 @@ export function ExplorerScreen() {
                 const value = stripEditorNewline(edited, text)
                 if (isJson) {
                   const trimmed = value.trim()
-                  try {
-                    JSON.parse(trimmed)
-                  } catch (cause) {
-                    toasts.push("error", `invalid JSON: ${describeError(cause)}`)
+
+                  const validated = parseJson(trimmed)
+                  if (Either.isLeft(validated)) {
+                    toasts.push("error", `invalid JSON: ${describeError(validated.left)}`)
                     return
                   }
+
                   if (trimmed === text) {
                     return
                   }
@@ -1005,6 +1007,21 @@ export function ExplorerScreen() {
          than focusing an invisible panel. */
       if (target === "sidebar" && !sidebarVisible) setSidebarVisible(true)
       setFocus(target)
+      return
+    }
+
+    /* Ctrl+H / Ctrl+L switch panes (vim-style): H = left (sidebar), L = right
+       (table). Handled before the overlay guards so the binding keeps working
+       while a preview/viewer is open. */
+    if (e.ctrl === true && (key === "h" || key === "H" || key === "backspace")) {
+      e.preventDefault()
+      if (!sidebarVisible) setSidebarVisible(true)
+      setFocus("sidebar")
+      return
+    }
+    if (e.ctrl === true && (key === "l" || key === "L" || key === "\f" || key === "formfeed" || key === "clear")) {
+      e.preventDefault()
+      setFocus("table")
       return
     }
 

@@ -40,7 +40,9 @@ export function ServicesProvider({ services, children }: { services: AppServices
 
 export function useServices(): AppServices {
   const services = useContext(ServicesContext)
-  if (!services) throw new Error("useServices() used outside of a <ServicesProvider>")
+  if (!services) {
+    throw new Error("useServices() used outside of a <ServicesProvider>")
+  }
   return services
 }
 
@@ -61,6 +63,7 @@ const RouterContext = createContext<RouterState | null>(null)
 export function RouterProvider({ children, exit }: { children?: ReactNode; readonly exit: (code: number) => void }) {
   const [screen, setScreen] = useState<AppScreen>("explorer")
   const [helpOpen, setHelpOpen] = useState(false)
+
   const value = useMemo<RouterState>(
     () => ({
       screen,

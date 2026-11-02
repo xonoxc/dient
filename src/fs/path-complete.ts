@@ -7,18 +7,14 @@
  * Both are pure over a small fs surface so they unit-test with throwaway dirs
  * and degrade to a no-op whenever the path is unreadable.
  */
+import { Either } from "effect"
 import { existsSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 
 const MAX_CANDIDATES = 12
 
-const isDirectory = (path: string): boolean => {
-  try {
-    return existsSync(path) && readdirSync(path) !== undefined
-  } catch {
-    return false
-  }
-}
+const isDirectory = (path: string): boolean =>
+  Either.getOrElse(Either.try(() => existsSync(path) && readdirSync(path) !== undefined), () => false)
 
 /** Split a draft into its parent directory and the trailing name prefix. */
 const splitDraft = (draft: string): { dir: string; prefix: string } => {
@@ -37,12 +33,7 @@ export const pathCandidates = (draft: string): ReadonlyArray<string> => {
   const { dir, prefix } = splitDraft(draft)
   const absoluteDir = absoluteDirOf(dir)
   if (!existsSync(absoluteDir) || !isDirectory(absoluteDir)) return []
-  let entries: ReadonlyArray<string>
-  try {
-    entries = readdirSync(absoluteDir)
-  } catch {
-    return []
-  }
+  const entries = Either.getOrElse(Either.try(() => readdirSync(absoluteDir)), () => [])
   return entries
     .filter(name => name.startsWith(prefix))
     .slice(0, MAX_CANDIDATES)

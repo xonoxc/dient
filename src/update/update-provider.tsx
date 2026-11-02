@@ -78,6 +78,7 @@ export function UpdateProvider({ children }: { children?: ReactNode }) {
       const target = latest.value
       setRelease(target)
       toasts.push("info", `downloading ${target.tag}…`, 15000)
+
       const outcome: InstallStep = yield* updateChecker
         .install(target)
         .pipe(
@@ -85,6 +86,7 @@ export function UpdateProvider({ children }: { children?: ReactNode }) {
             Effect.sync((): InstallStep => ({ _tag: "Failed", message: error.message }))
           )
         )
+
       if (outcome._tag === "Installed") {
         setPhase("current")
         toasts.push("success", `updated to ${target.tag} — quit (q) and relaunch to use it`, 10000)
@@ -115,8 +117,10 @@ export function UpdateProvider({ children }: { children?: ReactNode }) {
         toasts.push("info", "no pending update to ignore")
         return
       }
+
       yield* updateChecker.ignore(release.version)
       setPhase("current")
+
       toasts.push("info", `ignoring ${release.tag} — will notify again on the next release`)
     }).pipe(
       Effect.catchAll((error: UpdateError) =>

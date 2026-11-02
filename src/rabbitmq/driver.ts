@@ -3,7 +3,8 @@
  * for application messaging; this interactive explorer uses the optional
  * management plugin's HTTP API for topology and troubleshooting operations.
  */
-import { Context, Effect, Layer, Scope } from "effect"
+import { Context, Effect, Either, Layer, Scope } from "effect"
+import { parseJson, stringifyJson } from "@/effect/json"
 import type { RabbitMqConnectionConfig } from "@/domain"
 import type { ActiveConnection } from "@/drivers/types"
 import { ConnectionError, QueryError } from "@/drivers/types"
@@ -147,7 +148,10 @@ const fetchManagement = async <A>(client: ManagementClient, path: string, init: 
     const detail = body.trim().replace(/\s+/g, " ").slice(0, 240)
     throw new Error(`RabbitMQ management API ${response.status}${detail ? `: ${detail}` : ""}`)
   }
-  return (body ? JSON.parse(body) : undefined) as A
+  if (!body) return undefined as A
+  const parsed = parseJson(body)
+  if (Either.isLeft(parsed)) throw parsed.left
+  return parsed.right as A
 }
 
 const request = <A>(conn: ActiveConnection, path: string, init?: RequestInit): Effect.Effect<A, QueryError> =>
@@ -156,7 +160,7 @@ const request = <A>(conn: ActiveConnection, path: string, init?: RequestInit): E
     catch: cause => new QueryError({ engine: ENGINE, message: describeError(cause), cause }),
   })
 
-const json = (value: unknown): string => JSON.stringify(value)
+const json = (value: unknown): string => Either.getOrElse(stringifyJson(value), () => "")
 
 export const connectRabbitMq = (
   config: RabbitMqConnectionConfig
