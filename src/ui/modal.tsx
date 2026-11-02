@@ -61,8 +61,8 @@ export function ModalView() {
         </box>
         <box height={1} />
         <box flexDirection="row">
-          <text fg={c.textMuted}>[(Y)es / (N)o] </text>
-          <text fg={dialog.options.danger ? c.error : c.success}>{dialog.options.okLabel ?? "confirm"}</text>
+          <text fg={c.textSubtle}>[(Y)es / (N)o] </text>
+          <text fg={dialog.options.danger ? c.error : c.textSubtle}>{dialog.options.okLabel ?? "confirm"}</text>
         </box>
       </ModalSurface>
     </box>

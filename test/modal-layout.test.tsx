@@ -182,6 +182,21 @@ describe("modal layout", () => {
     }
   })
 
+  test("the footer shortcuts use readable foreground colours", async () => {
+    const setup = await frameFor("delete this row?")
+    try {
+      const colors = makeTheme("dark").colors
+      const spans = setup.captureSpans().lines.flatMap(line => line.spans)
+      const shortcut = spans.find(span => span.text.includes(FOOTER))
+      const action = spans.find(span => span.text.includes("ok"))
+
+      expect(shortcut?.fg.toInts()).toEqual(colors.textSubtle.toInts())
+      expect(action?.fg.toInts()).toEqual(colors.textSubtle.toInts())
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
   test("a body taller than the cap is clipped, not scrolled off the panel", async () => {
     const setup = await frameFor(Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n"))
     try {

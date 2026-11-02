@@ -40,6 +40,7 @@ export type ThemeMode = "dark" | "light"
 export interface ThemeColors {
   readonly text: RGBA
   readonly textMuted: RGBA
+  readonly textSubtle: RGBA
   readonly textBright: RGBA
   readonly bg: RGBA
   readonly bgSurface: RGBA
@@ -131,6 +132,14 @@ const SCRIM_ALPHA = 0.56
 const HIGHLIGHT_TINT_AMOUNT = 0.18
 
 /**
+ * Secondary text that should read quieter than the terminal foreground but
+ * still be comfortably legible. Unlike `textMuted` (which is the terminal's
+ * gray ANSI slot), this is derived from the actual foreground/background pair,
+ * so it keeps the right contrast in both dark and light themes.
+ */
+const SUBTLE_TEXT_AMOUNT = 0.26
+
+/**
  * Overlay `overlay` on top of `base` by `amount` (0..1) in linear space. The
  * result is a solid color — the blend is baked, so consumers just pass it to
  * a border/background and never think about alpha.
@@ -173,6 +182,7 @@ export const makeTheme = (mode: ThemeMode, palette?: TerminalPalette): ThemeServ
   const colors: ThemeColors = {
     text,
     textMuted: slot(8),
+    textSubtle: blend(text, bg, SUBTLE_TEXT_AMOUNT),
     textBright: slot(15),
     bg,
     bgSurface: blend(bg, surfaceTint, SURFACE_TINT_AMOUNT),
