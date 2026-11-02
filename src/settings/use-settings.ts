@@ -3,15 +3,15 @@
  * drives keyboard forms.
  *
  * The model is deliberately flat: a database *is* its connection. Pressing `a`
- * opens a single-line prompt where you paste a connection string — a
- * `postgres://` / `mysql://` / `redis://` / `amqp://` URL or a filesystem path
- * (SQLite).
- * `p` opens the same style of prompt for a new project (a project is a folder
- * onto which databases hang). A parsed URI pauses on an optional name prompt:
- * the tail (or Redis host:port/index) is suggested, and a typed value overrides
- * it. A credentials form (host/port/user/…) is one key away for people who
- * prefer filling fields (Ctrl+n); its name field is optional and falls back to
- * the database/file stem or host:port.
+ * opens a choice: paste a connection string — a `postgres://` / `mysql://` /
+ * `redis://` / `amqp://` URL or a filesystem path (SQLite) — or fill in fields.
+ * `Shift+P` opens a prompt for a new project (a project is a folder onto which
+ * databases hang). A parsed URI pauses on an optional name prompt: the tail
+ * (or Redis host:port/index) is suggested, and a typed value overrides it. A
+ * credentials form (host/port/user/…) is one key away for people who prefer
+ * filling fields (Ctrl+n); its name field is optional and falls back to the
+ * database/file stem or host:port. `e` edits the selected project name or every
+ * setting on the selected database; `r` remains the quick rename.
  *
  * Form state is mirrored into refs: keyboard handlers fire between React
  * commits when a user (or a test pressing whole chords) types faster than a
@@ -28,7 +28,7 @@ import { describeError } from "@/errors/describe"
 
 import type { CreateConnectionInput } from "@/config"
 import type { ConfigError } from "@/config"
-import type { Connection, Database, DatabaseId, Engine, Project, ProjectId } from "@/domain"
+import type { Connection, ConnectionId, Database, DatabaseId, Engine, Project, ProjectId } from "@/domain"
 
 export type SettingsKind = "project" | "database"
 
@@ -48,7 +48,8 @@ export interface SettingsListItem {
 export type ConnectionFormField = "name" | "host" | "port" | "user" | "password" | "filename" | "defaultDatabase"
 
 export type SettingsForm =
-  | { readonly kind: "project" }
+  /** A project name form. `projectId` is present when editing an existing one. */
+  | { readonly kind: "project"; readonly projectId?: ProjectId }
   /** First stop when adding a database: paste a URL, or fill in fields. Both
       styles every DB client offers; picking one up front beats hiding the
       field form behind a chord. */
@@ -61,6 +62,10 @@ export type SettingsForm =
       readonly values: Partial<Record<ConnectionFormField | "uri", string>>
       /** Engine for the credentials ("fields") mode. */
       readonly engine: Engine
+      /** Present when the form updates an existing database instead of adding one. */
+      readonly editing?: { readonly databaseId: DatabaseId; readonly connectionId?: ConnectionId }
+      /** TLS is a boolean in the domain model; keep it out of the text values. */
+      readonly tls?: boolean
     }
   | {
       readonly kind: "connectName"
@@ -135,7 +140,7 @@ export interface UseSettingsResult {
   readonly backspace: () => void
   readonly setDraft: (draft: string) => void
   readonly pasteText: (text: string) => void
-  readonly tab: () => void
+  readonly tab: (direction?: 1 | -1) => void
   /** In the connect form: `uri` ⇄ `fields`, then cycle the engine. */
   readonly cycleEngine: () => void
   readonly move: (delta: -1 | 1) => void
@@ -154,6 +159,12 @@ export interface UseSettingsResult {
   readonly addChoiceSubmit: () => void
   readonly remove: () => void
   readonly rename: () => void
+  /** Edit the selected project name or the selected database's full settings. */
+  readonly edit: () => void
+  /** Clear the active text field (Ctrl+u) without closing the form. */
+  readonly clearField: () => void
+  /** Toggle TLS for a Redis/RabbitMQ connection form (Ctrl+t). */
+  readonly toggleTls: () => void
   readonly testConnection: () => void
   readonly submitForm: () => void
   readonly cancelForm: () => void
@@ -386,10 +397,18 @@ export const useSettings = (): UseSettingsResult => {
 
   const openForm = (next: SettingsForm | null): void => {
     formRef.current = next
+    if (next?.kind === "connect") {
+      /* Keep the derived engine label/completion state in sync with a form that
+         opens on a database's engine, not just after Ctrl+n cycling. */
+      engineRef.current = next.engine
+      setEngineState(next.engine)
+    }
     let buffer = ""
     if (next?.kind === "connect")
       buffer = next.values[next.mode === "uri" ? "uri" : (fieldsOf(next)[next.fieldIndex] ?? "name")] ?? ""
     else if (next?.kind === "rename") buffer = databaseById(next.databaseId)?.name ?? ""
+    else if (next?.kind === "project" && next.projectId)
+      buffer = projects.find(project => project.id === next.projectId)?.name ?? ""
     draftRef.current = buffer
     setFormState(next)
     setDraftState(buffer)
@@ -491,13 +510,139 @@ export const useSettings = (): UseSettingsResult => {
       yield* Effect.sync(() => revealDatabase(projectId, name))
     })
 
-  const nameTaken = (projectId: ProjectId, name: string): Effect.Effect<boolean, ConfigError> =>
-    Effect.map(configStore.listDatabases(projectId), rows => rows.some(row => row.name === name))
+  const nameTaken = (projectId: ProjectId, name: string, exceptId?: DatabaseId): Effect.Effect<boolean, ConfigError> =>
+    Effect.map(configStore.listDatabases(projectId), rows => rows.some(row => row.name === name && row.id !== exceptId))
+
+  type ConnectionInputResult =
+    | {
+        readonly ok: true
+        readonly name: string
+        readonly input: Partial<Omit<CreateConnectionInput, "databaseId">>
+      }
+    | { readonly ok: false; readonly message: string }
+
+  /** Turn prefilled/edited credentials fields into a validated connection patch. */
+  const connectionInput = (
+    engine: Engine,
+    values: Readonly<Partial<Record<ConnectionFormField | "uri", string>>>,
+    tls: boolean
+  ): ConnectionInputResult => {
+    const explicitName = values.name?.trim() ?? ""
+    const host = values.host?.trim() ?? ""
+    const portText = values.port?.trim() ?? ""
+    const optional = (key: ConnectionFormField): string | undefined => {
+      const value = values[key]
+      return value === undefined ? undefined : value.trim()
+    }
+
+    if (engine === "sqlite") {
+      const filename = values.filename?.trim() ?? ""
+      if (!filename) return { ok: false, message: "a sqlite connection requires a filename" }
+      return {
+        ok: true,
+        name: explicitName || fallbackConnectionName("sqlite", values),
+        input: { filename },
+      }
+    }
+
+    if (!host) return { ok: false, message: `a ${engine} connection requires a host` }
+    if (portText && (!/^\d+$/.test(portText) || Number(portText) < 1 || Number(portText) > 65535)) {
+      return { ok: false, message: "port must be a number between 1 and 65535" }
+    }
+
+    if (engine === "redis") {
+      const db = values.defaultDatabase?.trim() || "0"
+      if (!/^\d+$/.test(db)) return { ok: false, message: "Redis database must be a numeric index" }
+      return {
+        ok: true,
+        name: explicitName || fallbackConnectionName("redis", values),
+        input: {
+          host,
+          ...(portText ? { port: Number(portText) } : {}),
+          ...(optional("user") !== undefined ? { user: optional("user") } : {}),
+          ...(optional("password") !== undefined ? { password: optional("password") } : {}),
+          defaultDatabase: db,
+          tls,
+        },
+      }
+    }
+
+    if (engine === "rabbitmq") {
+      return {
+        ok: true,
+        name: explicitName || fallbackConnectionName("rabbitmq", values),
+        input: {
+          host,
+          ...(portText ? { port: Number(portText) } : {}),
+          ...(optional("user") !== undefined ? { user: optional("user") } : {}),
+          ...(optional("password") !== undefined ? { password: optional("password") } : {}),
+          defaultDatabase: values.defaultDatabase?.trim() || "/",
+          tls,
+        },
+      }
+    }
+
+    return {
+      ok: true,
+      name: explicitName || fallbackConnectionName(engine, values),
+      input: {
+        host,
+        ...(portText ? { port: Number(portText) } : {}),
+        ...(optional("user") !== undefined ? { user: optional("user") } : {}),
+        ...(optional("password") !== undefined ? { password: optional("password") } : {}),
+        ...(optional("defaultDatabase") !== undefined ? { defaultDatabase: optional("defaultDatabase") } : {}),
+      },
+    }
+  }
+
+  const submitConnectionEdit = (form: Extract<SettingsForm, { kind: "connect" }>): void => {
+    if (!form.editing) return
+    const built = connectionInput(form.engine, form.values, form.tls === true)
+    if (!built.ok) {
+      toasts.push("error", built.message)
+      return
+    }
+
+    Effect.runFork(
+      Effect.gen(function* () {
+        if (yield* nameTaken(form.projectId, built.name, form.editing!.databaseId)) {
+          toastTaken(built.name)
+          return
+        }
+
+        const { databaseId, connectionId } = form.editing!
+        /* Drop any live session first so the next query reconnects with the
+           edited settings instead of reusing the old client. */
+        if (connectionId) yield* connectionManager.disconnect(connectionId)
+        yield* configStore.updateDatabase(databaseId, { name: built.name, engine: form.engine })
+        if (connectionId) yield* configStore.updateConnection(connectionId, built.input)
+        else yield* configStore.createConnection({ databaseId, ...built.input })
+        yield* Effect.sync(() => {
+          configRevision.bump(form.projectId)
+          toasts.push("success", `updated ${built.name} (${form.engine})`)
+        })
+        openForm(null)
+        refresh()
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            errorLog.append("settings.editDatabase", cause)
+            toasts.push("error", `update failed: ${describeError(cause)}`)
+          })
+        )
+      )
+    )
+  }
 
   const submitConnectionForm = (form: Extract<SettingsForm, { kind: "connect" }>): void => {
     const finish = (): void => {
       openForm(null)
       refresh()
+    }
+
+    if (form.editing) {
+      submitConnectionEdit(form)
+      return
     }
 
     if (form.mode === "uri") {
@@ -579,6 +724,7 @@ export const useSettings = (): UseSettingsResult => {
             ...(values.user?.trim() ? { user: values.user.trim() } : {}),
             ...(values.password?.trim() ? { password: values.password.trim() } : {}),
             defaultDatabase: db,
+            ...(form.tls ? { tls: true } : {}),
           })
           toasts.push("success", `added ${name} (redis)`)
           finish()
@@ -613,6 +759,7 @@ export const useSettings = (): UseSettingsResult => {
             ...(values.user?.trim() ? { user: values.user.trim() } : {}),
             ...(values.password?.trim() ? { password: values.password.trim() } : {}),
             defaultDatabase: vhost,
+            ...(form.tls ? { tls: true } : {}),
           })
           toasts.push("success", `added ${name} (rabbitmq)`)
           finish()
@@ -812,7 +959,7 @@ export const useSettings = (): UseSettingsResult => {
       draftRef.current = next.values[key] ?? ""
       setDraftState(draftRef.current)
     },
-    tab: () => {
+    tab: (direction = 1) => {
       const current = formRef.current
       if (!current) return
       if (current.kind === "connect") {
@@ -825,7 +972,7 @@ export const useSettings = (): UseSettingsResult => {
           return
         }
         const fields = fieldsOf(current)
-        const fieldIndexNext = (current.fieldIndex + 1) % fields.length
+        const fieldIndexNext = (current.fieldIndex + direction + fields.length) % fields.length
         const next: SettingsForm = { ...current, fieldIndex: fieldIndexNext }
         formRef.current = next
         draftRef.current = next.values[fields[fieldIndexNext] ?? "name"] ?? ""
@@ -915,11 +1062,81 @@ export const useSettings = (): UseSettingsResult => {
     },
     rename: () => {
       const item = items[Math.min(cursor, items.length - 1)]
-      if (!item || item.kind !== "database") {
-        toasts.push("info", "move to a database row (j/k) and press r to rename it")
+      if (!item) return
+      if (item.kind === "project") {
+        openForm({ kind: "project", projectId: item.refId as ProjectId })
         return
       }
       openForm({ kind: "rename", databaseId: item.refId as DatabaseId })
+    },
+    edit: () => {
+      const item = items[Math.min(cursor, items.length - 1)]
+      if (!item) {
+        toasts.push("info", "select a project or database to edit")
+        return
+      }
+      if (item.kind === "project") {
+        openForm({ kind: "project", projectId: item.refId as ProjectId })
+        return
+      }
+
+      const database = databaseById(item.refId as DatabaseId)
+      if (!database) {
+        toasts.push("error", "database not found")
+        return
+      }
+      const connection = connections.get(database.id)?.[0] ?? null
+      const defaultPort = database.engine === "sqlite" ? "" : ENGINE_DEFAULT_PORT[database.engine]
+      openForm({
+        kind: "connect",
+        projectId: database.projectId,
+        mode: "fields",
+        fieldIndex: 0,
+        engine: database.engine,
+        editing: {
+          databaseId: database.id,
+          ...(connection ? { connectionId: connection.id } : {}),
+        },
+        tls: connection?.tls === true,
+        values: {
+          name: database.name,
+          host: connection?.host ?? "",
+          port: connection?.port !== undefined ? String(connection.port) : defaultPort,
+          user: connection?.user ?? "",
+          password: connection?.password ?? "",
+          filename: connection?.filename ?? "",
+          defaultDatabase:
+            connection?.defaultDatabase ??
+            (database.engine === "rabbitmq" ? "/" : database.engine === "redis" ? "0" : ""),
+        },
+      })
+    },
+    clearField: () => {
+      const current = formRef.current
+      if (!current) return
+      if (current.kind === "connect") {
+        const key = current.mode === "uri" ? "uri" : fieldsOf(current)[current.fieldIndex]
+        if (!key) return
+        const next: SettingsForm = {
+          ...current,
+          values: { ...current.values, [key]: "" },
+        }
+        formRef.current = next
+        draftRef.current = ""
+        setFormState(next)
+        setDraftState("")
+        return
+      }
+      draftRef.current = ""
+      setDraftState("")
+    },
+    toggleTls: () => {
+      const current = formRef.current
+      if (!current || current.kind !== "connect") return
+      if (current.mode !== "fields" || (current.engine !== "redis" && current.engine !== "rabbitmq")) return
+      const next: SettingsForm = { ...current, tls: !current.tls }
+      formRef.current = next
+      setFormState(next)
     },
     testConnection,
     submitForm: () => {
@@ -956,6 +1173,7 @@ export const useSettings = (): UseSettingsResult => {
         )
         return
       }
+      if (current.kind !== "project") return
       const name = draftRef.current.trim()
       if (!name) {
         toasts.push("error", "a name is required")
@@ -963,14 +1181,22 @@ export const useSettings = (): UseSettingsResult => {
       }
       Effect.runFork(
         Effect.gen(function* () {
-          yield* configStore.createProject({ name })
-          toasts.push("success", "project added")
+          if (current.projectId) {
+            yield* configStore.updateProject(current.projectId, name)
+            yield* Effect.sync(() => configRevision.bump(current.projectId))
+            toasts.push("success", `renamed to ${name}`)
+          } else {
+            const project = yield* configStore.createProject({ name })
+            yield* Effect.sync(() => configRevision.bump(project.id))
+            toasts.push("success", "project added")
+          }
           openForm(null)
           refresh()
         }).pipe(
           Effect.catchAll(cause =>
             Effect.sync(() => {
-              toasts.push("error", `failed to add project: ${describeError(cause)}`)
+              errorLog.append(current.projectId ? "settings.renameProject" : "settings.addProject", cause)
+              toasts.push("error", `failed to save project: ${describeError(cause)}`)
               openForm(null)
               refresh()
             })

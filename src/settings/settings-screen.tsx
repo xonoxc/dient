@@ -1,11 +1,12 @@
 /**
  * Settings screen. Renders the config tree (projects → databases) and drives
  * the keyboard forms. NORMAL mode binds `a` (add database), `p` (paste a URI),
- * `P` (add project), `r` (rename), `t` (ping), `d` (delete), `e` (explorer), `j/k`,
- * `Enter`; a form switches the screen to INSERT mode, where every printable
- * key is typed text — a pasted `mysql://user:pw@host:3306/db` contains most
- * of NORMAL mode's letters. In the credentials form, Tab changes fields,
- * Ctrl+n changes engines, Ctrl+v pastes, and Esc cancels.
+ * `P` (add project), `e` (edit), `r` (rename), `t` (ping), `d` (delete),
+ * `Shift+E` (explorer), `j/k`, `Enter`; a form switches the screen to INSERT
+ * mode, where every printable key is typed text — a pasted
+ * `mysql://user:pw@host:3306/db` contains most of NORMAL mode's letters. In the
+ * credentials form, Tab/Shift+Tab change fields, Ctrl+n changes engines, Ctrl+t
+ * toggles TLS, Ctrl+u clears the active field, Ctrl+v pastes, and Esc cancels.
  * Focus lives entirely here while this screen is active; the number keys move
  * it between the workspaces list (1) and the selection details (2).
  */
@@ -55,6 +56,9 @@ export function SettingsScreen() {
     projects,
     remove,
     rename,
+    edit,
+    clearField,
+    toggleTls,
     testConnection,
     submitForm,
     cancelForm,
@@ -147,7 +151,9 @@ export function SettingsScreen() {
       "a db",
       "p paste URI",
       "Shift+P project",
-      "e explorer",
+      "e edit",
+      "r rename",
+      "Shift+E explorer",
       "j/k move",
       "Enter expand",
       ...(showDetails ? ["1/2 panes"] : []),
@@ -164,14 +170,24 @@ export function SettingsScreen() {
           : form.kind === "connect" && form.mode === "uri"
             ? ["paste connection string", "Tab complete", "Ctrl+n credentials", "Enter add", "Esc cancel"]
             : form.kind === "connect"
-              ? [`type ${fieldLabel}`, "Tab field", "Ctrl+n engine", "Enter add", "Esc cancel"]
+              ? [
+                  `type ${fieldLabel}`,
+                  "Tab/Shift+Tab field",
+                  "Ctrl+n engine",
+                  ...(form.engine === "redis" || form.engine === "rabbitmq" ? ["Ctrl+t TLS"] : []),
+                  "Ctrl+u clear",
+                  form.editing ? "Enter save" : "Enter add",
+                  "Esc cancel",
+                ]
               : form.kind === "connectName"
                 ? form.suggestedName
                   ? ["optional name", "Enter add", "Esc cancel"]
                   : ["database name missing", "Enter add", "Esc cancel"]
                 : form.kind === "rename"
                   ? ["new name", "Enter save", "Esc cancel"]
-                  : ["type name", "Enter save", "Esc cancel"]
+                  : form.kind === "project"
+                    ? [form.projectId ? "project name" : "new project", "Enter save", "Esc cancel"]
+                    : ["type name", "Enter save", "Esc cancel"]
         : idle,
     })
   }, [session.setStatus, form, field, testing, completions.length, textInput.active, showDetails]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -209,7 +225,7 @@ export function SettingsScreen() {
       return true
     }
     if (key === "tab") {
-      tab()
+      tab(e.shift === true ? -1 : 1)
       return true
     }
     if (key === "backspace") {
@@ -219,6 +235,8 @@ export function SettingsScreen() {
     /* Chords: a modified key is never text, so this is safe. */
     if (e.ctrl === true) {
       if (key === "n" && current.kind === "connect") cycleEngine()
+      else if (key === "t") toggleTls()
+      else if (key === "u") clearField()
       else if (key === "v") {
         Effect.runFork(
           Effect.gen(function* () {
@@ -309,6 +327,9 @@ export function SettingsScreen() {
         return
       case "p":
         pasteConnectionString()
+        return
+      case "e":
+        edit()
         return
       case "r":
         rename()
@@ -455,10 +476,10 @@ function SettingsDetails({
             )}
             <box height={2} />
             <text fg={c.textMuted}>
-              {item.kind === "project" ? "Shift+P  create project" : "r  rename   d  remove"}
+              {item.kind === "project" ? "e  edit name   r  rename" : "e  edit settings   r  rename"}
             </text>
             <text fg={c.textMuted}>
-              {item.kind === "project" ? "a  add database   p  paste URI" : "t  test connection"}
+              {item.kind === "project" ? "a  add database   p  paste URI" : "t  test connection   d  remove"}
             </text>
           </>
         ) : (
@@ -518,7 +539,7 @@ function SettingsFormDialog({
     form.kind === "addChoice"
       ? `Add database · ${projectName}`
       : form.kind === "connect"
-        ? `Add database · ${form.mode === "uri" ? "connection string" : form.engine}`
+        ? `${form.editing ? "Edit" : "Add"} database · ${form.mode === "uri" ? "connection string" : form.engine}`
         : form.kind === "connectName"
           ? form.suggestedName
             ? form.pending.engine === "redis"
@@ -529,20 +550,24 @@ function SettingsFormDialog({
             : "Choose a database name"
           : form.kind === "rename"
             ? "Rename database"
-            : "New project"
+            : form.kind === "project" && form.projectId
+              ? "Edit project"
+              : "New project"
   /* Content width inside `ModalSurface`: its outer padding (1 per side) plus the
      inner `paddingX={2}` leave `panelWidth - 4` cells for the form. */
   const contentWidth = panelWidth - 4
   const formLabel =
     form.kind === "connect"
-      ? "new database · connection string: "
+      ? `${form.editing ? "edit" : "new"} database · connection string: `
       : form.kind === "connectName"
         ? form.suggestedName
           ? "name (optional): "
           : "the URL has no database name · name: "
         : form.kind === "rename"
           ? "rename to: "
-          : "new project: "
+          : form.kind === "project" && form.projectId
+            ? "project name: "
+            : "new project: "
 
   return (
     <box
@@ -618,7 +643,7 @@ function SettingsFormDialog({
             <box height={1} />
             <text fg={c.textMuted}>
               {form.kind === "connect" && form.mode === "fields"
-                ? "Tab next field · Ctrl+n engine · Enter save · Esc cancel"
+                ? "Tab/Shift+Tab field · Ctrl+n engine · Ctrl+u clear · Enter save · Esc cancel"
                 : form.kind === "connect" && form.mode === "uri"
                   ? "Ctrl+V paste · Ctrl+N credentials · Enter add · Esc cancel"
                   : "Enter save · Esc cancel"}
@@ -681,6 +706,16 @@ function CredentialsFields({
           </box>
         )
       })}
+      {form.engine === "redis" || form.engine === "rabbitmq" ? (
+        <>
+          <box height={1} />
+          <box height={1} paddingX={1}>
+            <text fg={form.tls ? c.accent : c.textMuted}>
+              TLS · {form.tls ? "enabled" : "disabled"} · Ctrl+t toggle
+            </text>
+          </box>
+        </>
+      ) : null}
     </box>
   )
 }

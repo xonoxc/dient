@@ -40,10 +40,11 @@ const SETTINGS: ReadonlyArray<Binding> = [
   ["a", "add database"],
   ["p", "paste connection URI"],
   ["Shift+P", "add project"],
-  ["r", "rename"],
+  ["e", "edit project or database"],
+  ["r", "rename project or database"],
   ["t", "test connection"],
   ["d", "delete"],
-  ["e", "return to explorer"],
+  ["Shift+E", "return to explorer"],
   ["?", "show this reference"],
 ]
 

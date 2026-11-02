@@ -283,6 +283,158 @@ describe("settings screen", () => {
     }
   })
 
+  test("e edits a project name and r renames the same project", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: "data.db",
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await openSettings(setup)
+
+      await pressKeys(setup, ["e"])
+      await setup.waitForFrame(f => f.includes("Edit project") && f.includes("project name: "))
+      await pressKeys(setup, ["CTRL+u"])
+      await typeString(setup, "platform")
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("renamed to platform"))
+
+      const edited = await Effect.runPromise(services.store.listProjects())
+      expect(edited.map(project => project.name)).toEqual(["platform"])
+
+      await pressKeys(setup, ["r"])
+      await setup.waitForFrame(f => f.includes("Edit project") && f.includes("project name: "))
+      await pressKeys(setup, ["CTRL+u"])
+      await typeString(setup, "workspace")
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("renamed to workspace"))
+
+      const renamed = await Effect.runPromise(services.store.listProjects())
+      expect(renamed.map(project => project.name)).toEqual(["workspace"])
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test("e edits a database's name and connection fields in place", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    const seeded = await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "postgres",
+      host: "db.internal",
+      port: 5432,
+      user: "app",
+      password: "secret",
+      defaultDatabase: "orders",
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await openSettings(setup)
+      await expandProject(setup)
+
+      await pressKeys(setup, ["e"])
+      await setup.waitForFrame(f => f.includes("Edit database · postgres") && f.includes("db.internal"))
+
+      /* The form starts on the name, then Tab walks to host and port. */
+      await pressKeys(setup, ["CTRL+u"])
+      await typeString(setup, "primary")
+      await pressKeys(setup, ["TAB", "CTRL+u"])
+      await typeString(setup, "db2.internal")
+      await pressKeys(setup, ["TAB", "CTRL+u"])
+      await typeString(setup, "6543")
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("updated primary (postgres)"))
+
+      const databases = await Effect.runPromise(services.store.listDatabases(seeded.project.id))
+      const updated = databases.find(database => database.id === seeded.database.id)
+      expect(updated?.name).toBe("primary")
+      const connections = await Effect.runPromise(services.store.listConnections(seeded.database.id))
+      expect(connections[0]).toMatchObject({
+        host: "db2.internal",
+        port: 6543,
+        user: "app",
+        password: "secret",
+        defaultDatabase: "orders",
+      })
+      expect(connections[0]!.id).toBe(seeded.connection.id)
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test("Shift+Tab moves backward through the edit form fields", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    const seeded = await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "postgres",
+      host: "db.internal",
+      port: 5432,
+      user: "app",
+      password: "secret",
+      defaultDatabase: "orders",
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await openSettings(setup)
+      await expandProject(setup)
+
+      await pressKeys(setup, ["e"])
+      await setup.waitForFrame(f => f.includes("Edit database · postgres") && f.includes("db.internal"))
+
+      /* The form opens on name; Shift+Tab wraps backward to the final field,
+         the default database. */
+      await pressKeys(setup, ["SHIFT+TAB", "CTRL+u"])
+      await typeString(setup, "warehouse")
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("updated main (postgres)"))
+
+      const connections = await Effect.runPromise(services.store.listConnections(seeded.database.id))
+      expect(connections[0]).toMatchObject({
+        host: "db.internal",
+        port: 5432,
+        defaultDatabase: "warehouse",
+      })
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test("e edits Redis TLS from the connection form", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    const seeded = await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "redis",
+      host: "cache.internal",
+      port: 6379,
+      defaultDatabase: "0",
+      tls: false,
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await openSettings(setup)
+      await expandProject(setup)
+
+      await pressKeys(setup, ["e"])
+      await setup.waitForFrame(f => f.includes("Edit database · redis") && f.includes("TLS · disabled"))
+
+      await pressKeys(setup, ["CTRL+t"])
+      await setup.waitForFrame(f => f.includes("TLS · enabled"))
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("updated main (redis)"))
+
+      const connections = await Effect.runPromise(services.store.listConnections(seeded.database.id))
+      expect(connections[0]?.tls).toBe(true)
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
   /* The mode contract, stated as a test: while a text field is open it is the
      sole keyboard owner, so *every* character NORMAL mode binds must type as
      text. This is the guard against the class of bug where one more binding
@@ -499,7 +651,7 @@ describe("settings screen", () => {
       await pressKeys(setup, ["a"])
       await setup.waitForFrame(f => f.includes("host / user / password"))
       await pressKeys(setup, ["2"])
-      await setup.waitForFrame(f => f.includes("Tab next field"))
+      await setup.waitForFrame(f => f.includes("Tab/Shift+Tab field"))
 
       for (const value of ["shop", "db.internal", "5432", "admin", "s3cret", "orders"]) {
         await typeString(setup, value)
@@ -619,7 +771,7 @@ describe("settings screen", () => {
       await pressKeys(setup, ["a"])
       await setup.waitForFrame(f => f.includes("host / user / password"))
       await pressKeys(setup, ["2"])
-      await setup.waitForFrame(f => f.includes("Tab next field"))
+      await setup.waitForFrame(f => f.includes("Tab/Shift+Tab field"))
 
       await typeString(setup, "S3cret!Pass")
       await setup.waitForFrame(f => f.includes("S3cret!Pass"))
@@ -686,7 +838,7 @@ describe("adding a connection reveals it", () => {
       await pressKeys(setup, ["j"])
       await setup.waitForFrame(f => f.includes("host / user / password"))
       await pressKeys(setup, ["RETURN"])
-      await setup.waitForFrame(f => f.includes("Tab next field"))
+      await setup.waitForFrame(f => f.includes("Tab/Shift+Tab field"))
     } finally {
       setup.renderer.destroy()
     }

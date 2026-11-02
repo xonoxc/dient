@@ -94,8 +94,11 @@ Then, in the app:
    (`…/shop` → `shop`), the SQLite file stem, or `host:port/index` for Redis;
    press `Enter` to keep it or type a new name. In the field form the name is
    also optional and falls back to the database/file stem or `host:port`.
-3. `t` tests the connection, `Enter` saves, `e` returns to the explorer.
-   On a database row, `r` renames the display name.
+3. `t` tests the connection and `Enter` saves. On a project or database row,
+   `e` edits it: projects get a name field, databases get every connection
+   setting (name, host, port, user, password, database/file, engine, TLS).
+   Use `Tab` / `Shift+Tab` to move between fields. `r` renames, and `Shift+E`
+   returns to the explorer.
 4. `Enter` on a database connects and opens its first table.
 
 ## Sample Docker stack
@@ -221,8 +224,9 @@ to a metadata row.
 | `a` | Add a database |
 | `p` | Paste a connection URI |
 | `Shift+P` | Add a project |
+| `e` | Edit the selected project or database |
 | `r` / `t` / `d` | Rename / test connection / delete |
-| `e` | Back to the explorer |
+| `Shift+E` | Back to the explorer |
 
 ### Commands
 
