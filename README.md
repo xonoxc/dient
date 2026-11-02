@@ -16,18 +16,7 @@ A project is a **group of databases**; a database carries exactly one connection
 and its tables (or keyspace, for Redis). The sidebar is that tree, the grid is
 the table, and the keyboard never leaves them.
 
-```text
-┌ PROJECTS ────────────────┐┌ ORDERS ────────────────────────────────────┐
-│ ▾ demo                   ││ ID ITEM QTY TOTAL                          │
-│   ▾ ▶ ● sample  SQLite   ││   1 widget      3     9.99                 │
-│     ▸ orders             ││   2 gadget      1    24.50                 │
-│     ▸ users              ││   3 gizmo       7    11.00                 │
-└──────────────────────────┘└────────────────────────────────────────────┘
-   NORMAL  dient  sample · sqlite · orders  3 rows
-```
-
-<sub>Schematic. <code>▾</code>/<code>▸</code> expand a node, <code>▶</code> marks the
-active connection, <code>●</code> is connection status.</sub>
+![dient](public/dient.png)
 
 ### What it does
 
