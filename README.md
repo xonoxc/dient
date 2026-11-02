@@ -16,7 +16,7 @@ A project is a **group of databases**; a database carries exactly one connection
 and its tables (or keyspace, for Redis). The sidebar is that tree, the grid is
 the table, and the keyboard never leaves them.
 
-![dient](public/dient.png)
+![dient](public/dient01.png)
 
 ### What it does
 
