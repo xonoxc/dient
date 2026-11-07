@@ -39,16 +39,42 @@ the table, and the keyboard never leaves them.
 
 ---
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xonoxc/dient/main/install.sh | sh
+```
+
+The script detects Linux or macOS and x64 or arm64, downloads the matching
+binary from the latest GitHub release, and installs it as `dient` in
+`~/.local/bin` (or `/usr/local/bin` when run as root). It prints a `PATH` hint
+if the install directory is not already on your path.
+
+Install a specific release, or choose another directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xonoxc/dient/main/install.sh | sh -s -- --version v0.1.0
+curl -fsSL https://raw.githubusercontent.com/xonoxc/dient/main/install.sh | sh -s -- --dir /usr/local/bin
+```
+
+`DIENT_VERSION`, `DIENT_INSTALL_DIR` and `DIENT_REPO` work as environment
+variables too, and `sh install.sh --help` lists every option. Prefer to inspect
+the script first? [Download it](install.sh) and run it locally.
+
+Once installed, `:upgrade` inside the app installs new releases in place. The
+install script is only needed for the first install (or to pin a version).
+
 ## Requirements
 
-- **[Bun](https://bun.sh/) 1.3.0+** — runtime, package manager and test runner.
 - **A terminal OpenTUI can drive.** The highlight bands want truecolor. The
   finder, settings and help panels size themselves against the terminal width;
   the confirm dialog is a fixed 60 columns.
+- **[Bun](https://bun.sh/) 1.3.0+** — only to run or build from source; the
+  install script fetches a self-contained binary.
 - **Docker + Compose (optional)** — only needed to run the sample PostgreSQL,
   MySQL, Redis and RabbitMQ stack described below.
 
-## Getting started
+## Getting started from source
 
 ```bash
 bun install

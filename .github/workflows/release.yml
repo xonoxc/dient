@@ -8,8 +8,9 @@
 # The tag (`v0.2.0`) must match `package.json`'s `version` (`0.2.0`) — the
 # checks job enforces that, because the in-app updater compares the bundled
 # version against release tags. Asset names (`dient-linux-x64`, …) are a
-# contract with `src/update/check.ts`: rename them in both places or the
-# `:upgrade` command cannot find its download.
+# contract with `src/update/check.ts` and `install.sh`: rename them in all
+# three places or the `:upgrade` command and the installer cannot find their
+# download.
 name: release
 
 on:
