@@ -197,6 +197,7 @@ The rule is the same on every screen with more than one pane.
 | `Enter` | Open a Redis key, or preview the row |
 | `Esc` | Leave an open Redis key for the keyspace |
 | `i` | Edit the current row/value in `$EDITOR` (Redis: rename a key in the keyspace) |
+| `r` | Reload the current table or Redis value |
 | `V` | Start a row selection |
 | `y` | Copy the selection to the clipboard |
 | `/` | Filter the current page |

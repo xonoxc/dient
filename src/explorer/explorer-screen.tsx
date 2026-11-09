@@ -451,15 +451,19 @@ export function ExplorerScreen() {
       explorer.openTable(name)
     },
   })
+  /* One reload path for `:refresh` and its `r` keybinding. Redis reopens the
+     current key (or keyspace page); SQL reopens the table from the first page.
+     A reload is also the only way to see rows another client changed. */
+  const refreshCurrent = () => {
+    if (explorer.redisView?.kind === "key") explorer.openRedisKey(explorer.redisView.key)
+    else if (explorer.tableName) explorer.openTable(explorer.tableName)
+    else toasts.push("info", "no table open to refresh")
+  }
   useCommand({
     id: "explorer:refresh",
-    help: ":refresh — reload the current table",
+    help: ":refresh — reload the current table (r)",
     match: text => text.trim() === "refresh",
-    run: () => {
-      if (explorer.redisView?.kind === "key") explorer.openRedisKey(explorer.redisView.key)
-      else if (explorer.tableName) explorer.openTable(explorer.tableName)
-      else toasts.push("info", "no table open to refresh")
-    },
+    run: refreshCurrent,
   })
   useCommand({
     id: "explorer:connect",
@@ -809,6 +813,7 @@ export function ExplorerScreen() {
         ...paging,
         ...pending,
         ...(redisTextMode ? ["i edit value"] : []),
+        "r refresh",
         "j/k scroll",
         "g/G ends",
         "Esc keys",
@@ -822,6 +827,7 @@ export function ExplorerScreen() {
       return [
         ...paging,
         ...pending,
+        "r refresh",
         "Enter open key",
         "i rename key",
         "dd delete key",
@@ -837,6 +843,7 @@ export function ExplorerScreen() {
       return [
         ...paging,
         ...pending,
+        "r refresh",
         "Enter preview",
         "i edit row",
         "dd delete row",
@@ -854,6 +861,7 @@ export function ExplorerScreen() {
       return [
         ...paging,
         ...pending,
+        "r refresh",
         "s settings",
         "j/k move",
         "Enter open",
@@ -863,10 +871,12 @@ export function ExplorerScreen() {
         "? help",
       ]
     }
-    if (explorer.search.trim()) return [...paging, `${explorer.searchCount} matches`, "n/N jump", "Esc clear"]
+    if (explorer.search.trim())
+      return [...paging, "r refresh", `${explorer.searchCount} matches`, "n/N jump", "Esc clear"]
     return [
       ...paging,
       ...pending,
+      "r refresh",
       "s settings",
       "Enter preview",
       "i edit row",
@@ -1148,6 +1158,16 @@ export function ExplorerScreen() {
        open selection, so it is refused there and the selection keeps it. */
     if (key === "q" && vimMode !== "visual") {
       router.exit(0)
+      return
+    }
+
+    /* `r` reloads whatever is open from the database/Redis. It is deliberately
+       a window command: refreshing the rows is just as useful when the cursor
+       is in the sidebar, and it stays out of VISUAL mode so a selection is not
+       silently thrown away. */
+    if (key === "r" && vimMode !== "visual") {
+      if (pendingDeleteRef.current) clearDelete()
+      refreshCurrent()
       return
     }
 

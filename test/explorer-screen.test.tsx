@@ -71,6 +71,34 @@ describe("explorer screen", () => {
     }
   })
 
+  test("r reloads the open table from the database", async () => {
+    const dataPath = freshSqliteDataFile()
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: dataPath,
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await expandToConnection(setup)
+      await pressKeys(setup, ["2"])
+
+      /* A second handle plays the role of another client: the open explorer
+         must not show the change until it reloads. */
+      const db = new SqliteDatabase(dataPath)
+      db.run("UPDATE users SET name = 'alicia', email = 'alicia@example.com' WHERE id = 1")
+      db.close()
+
+      await pressKeys(setup, ["r"])
+      await setup.waitForFrame(f => f.includes("alicia@example.com"))
+      expect(setup.captureCharFrame()).not.toContain("alice@example.com")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
   test("\\ toggles the sidebar and moves focus into the table when hiding it", async () => {
     const services = await resolveTestServices(freshConfigFile())
     await seedProject(services.store, {
