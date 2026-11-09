@@ -348,10 +348,4 @@ These are rules the codebase already follows, not aspirations.
   that one `pressKeys` batch reaches the handler with pre-batch state, so split
   dispatches when a key changes focus.
 
----
 
-<p align="center">
-  <em>Scaffolded with <code>bun create tui</code> —
-  <a href="https://github.com/msmps/create-tui">create-tui</a> is the easiest way to start a
-  new OpenTUI project.</em>
-</p>
