@@ -170,6 +170,22 @@ describe("SchemaInspector · postgres", () => {
     expect(byName["created_at"]!.default).toBeDefined()
   })
 
+  it("describeTable includes indexes, foreign keys, and generated DDL", async () => {
+    const exit = await runInspector(inspector =>
+      withConnection(pgConfig(), conn => withTables(conn, tables, () => inspector.describeTable(conn, orders.name)))
+    )
+    expect(exit._tag).toBe("Success")
+    const info = value(exit) as Option.Option<TableInfo>
+    expect(Option.isSome(info)).toBe(true)
+    const table = (info as Option.Some<TableInfo>).value
+    expect(table.indexes.some(index => index.primary && index.columns.join(",") === "order_id,item_id")).toBe(true)
+    const fk = table.foreignKeys.find(foreignKey => foreignKey.columns.join(",") === "user_id")
+    expect(fk?.referencedTable).toBe(users.name)
+    expect(fk?.referencedColumns).toEqual(["id"])
+    expect(table.ddl).toContain("CREATE TABLE")
+    expect(table.ddl).toContain("PRIMARY KEY")
+  })
+
   it("getPrimaryKey returns composite key columns in order", async () => {
     const exit = await runInspector(inspector =>
       withConnection(pgConfig(), conn => withTables(conn, tables, () => inspector.getPrimaryKey(conn, orders.name)))
@@ -250,6 +266,21 @@ describe("SchemaInspector · mysql", () => {
     expect(byName["email"]!.nullable).toBe(false)
     expect(byName["nickname"]!.nullable).toBe(true)
     expect(byName["created_at"]!.default).toBeDefined()
+  })
+
+  it("describeTable includes indexes, foreign keys, and DDL", async () => {
+    const exit = await runInspector(inspector =>
+      withConnection(mysqlConfig(), conn => withTables(conn, tables, () => inspector.describeTable(conn, orders.name)))
+    )
+    expect(exit._tag).toBe("Success")
+    const info = value(exit) as Option.Option<TableInfo>
+    expect(Option.isSome(info)).toBe(true)
+    const table = (info as Option.Some<TableInfo>).value
+    expect(table.indexes.some(index => index.primary && index.columns.join(",") === "order_id,item_id")).toBe(true)
+    const fk = table.foreignKeys.find(foreignKey => foreignKey.columns.join(",") === "user_id")
+    expect(fk?.referencedTable).toBe(users.name)
+    expect(fk?.referencedColumns).toEqual(["id"])
+    expect(table.ddl).toContain("CREATE TABLE")
   })
 
   it("getPrimaryKey returns composite key columns in order", async () => {
@@ -354,6 +385,21 @@ describe("SchemaInspector · sqlite", () => {
     expect(byName["email"]!.nullable).toBe(false)
     expect(byName["nickname"]!.nullable).toBe(true)
     expect(byName["created_at"]!.default).toBeDefined()
+  })
+
+  it("describeTable includes indexes, foreign keys, and DDL", async () => {
+    const exit = await runInspector(inspector =>
+      withConnection(sqliteConfig(), conn => withTables(conn, tables, () => inspector.describeTable(conn, orders.name)))
+    )
+    expect(exit._tag).toBe("Success")
+    const info = value(exit) as Option.Option<TableInfo>
+    expect(Option.isSome(info)).toBe(true)
+    const table = (info as Option.Some<TableInfo>).value
+    expect(table.indexes.some(index => index.primary && index.columns.join(",") === "order_id,item_id")).toBe(true)
+    const fk = table.foreignKeys.find(foreignKey => foreignKey.columns.join(",") === "user_id")
+    expect(fk?.referencedTable).toBe(users.name)
+    expect(fk?.referencedColumns).toEqual(["id"])
+    expect(table.ddl).toContain("CREATE TABLE")
   })
 
   it("getPrimaryKey returns composite key columns in order", async () => {

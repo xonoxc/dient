@@ -17,8 +17,10 @@ import type { ActiveConnection, ColumnInfo } from "@/drivers/types"
 import { QueryError } from "@/drivers/types"
 import { RedisDriver, type RedisDriverService } from "@/drivers/redis"
 import { describeError } from "@/errors/describe"
+import { parseRedisCommand } from "@/redis/command"
 import { isRedisScore } from "@/redis/format"
 import type {
+  RedisKeyDraft,
   RedisKeyInfo,
   RedisKeyRow,
   RedisKeysPage,
@@ -69,6 +71,12 @@ export interface RedisInspectorService {
   readonly deleteKey: (conn: ActiveConnection, key: string) => Effect.Effect<void, QueryError>
   /** Rename a key without overwriting an existing destination. */
   readonly renameKey: (conn: ActiveConnection, key: string, next: string) => Effect.Effect<void, QueryError>
+  /** Create a key only when it does not already exist. */
+  readonly createKey: (conn: ActiveConnection, draft: RedisKeyDraft) => Effect.Effect<void, QueryError>
+  /** Set or clear a key's expiry. `-1` persists the key. */
+  readonly setTtl: (conn: ActiveConnection, key: string, ttl: number) => Effect.Effect<void, QueryError>
+  /** Run one arbitrary Redis command from the `:redis` console. */
+  readonly runCommand: (conn: ActiveConnection, line: string) => Effect.Effect<unknown, QueryError>
 }
 
 export class RedisInspector extends Context.Tag("RedisInspector")<RedisInspector, RedisInspectorService>() {}
@@ -637,6 +645,81 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
 
   const deleteKey = (conn: ActiveConnection, key: string): Effect.Effect<void, QueryError> => deleteKeys(conn, [key])
 
+  const createKey = (conn: ActiveConnection, draft: RedisKeyDraft): Effect.Effect<void, QueryError> =>
+    Effect.gen(function* () {
+      const key = draft.key.trim()
+      if (key === "") return yield* Effect.fail(queryError("key name cannot be empty"))
+      const exists = number(yield* command(conn, "EXISTS", [key]))
+      if (exists > 0) return yield* Effect.fail(queryError(`key "${key}" already exists`))
+
+      switch (draft.type) {
+        case "string":
+          yield* command(conn, "SET", [key, draft.value])
+          break
+        case "hash": {
+          const args = draft.entries.flatMap(([field, value]) => [field, value])
+          yield* command(conn, "HSET", [key, ...args])
+          break
+        }
+        case "list":
+          yield* command(conn, "RPUSH", [key, ...draft.entries])
+          break
+        case "set":
+          yield* command(conn, "SADD", [key, ...draft.entries])
+          break
+        case "zset": {
+          const args = draft.entries.flatMap(([member, score]) => [score, member])
+          yield* command(conn, "ZADD", [key, ...args])
+          break
+        }
+      }
+
+      if (draft.ttl > 0) {
+        yield* command(conn, "EXPIRE", [key, String(draft.ttl)])
+      }
+    }).pipe(
+      Effect.mapError(cause =>
+        cause instanceof QueryError ? cause : queryError(`could not create key: ${describeError(cause)}`, cause)
+      )
+    )
+
+  const setTtl = (conn: ActiveConnection, key: string, ttl: number): Effect.Effect<void, QueryError> =>
+    Effect.gen(function* () {
+      if (key.trim() === "") return yield* Effect.fail(queryError("key name cannot be empty"))
+      if (!Number.isInteger(ttl) || ttl < -1) {
+        return yield* Effect.fail(queryError("ttl must be -1 (persist) or a positive number of seconds"))
+      }
+      if (ttl === 0) {
+        return yield* Effect.fail(queryError("ttl 0 would delete the key immediately; use -1 or a positive number"))
+      }
+      const exists = number(yield* command(conn, "EXISTS", [key]))
+      if (exists === 0) return yield* Effect.fail(queryError(`key "${key}" no longer exists`))
+      if (ttl === -1) {
+        yield* command(conn, "PERSIST", [key])
+      } else {
+        yield* command(conn, "EXPIRE", [key, String(ttl)])
+      }
+    }).pipe(
+      Effect.mapError(cause =>
+        cause instanceof QueryError
+          ? cause
+          : queryError(`could not update ttl for ${key}: ${describeError(cause)}`, cause)
+      )
+    )
+
+  const runCommand = (conn: ActiveConnection, line: string): Effect.Effect<unknown, QueryError> =>
+    Effect.gen(function* () {
+      const parsed = parseRedisCommand(line)
+      if (Either.isLeft(parsed)) {
+        return yield* Effect.fail(queryError(parsed.left))
+      }
+      return yield* command(conn, parsed.right.name, parsed.right.args)
+    }).pipe(
+      Effect.mapError(cause =>
+        cause instanceof QueryError ? cause : queryError(`redis command failed: ${describeError(cause)}`, cause)
+      )
+    )
+
   return {
     listKeys,
     describeKey,
@@ -648,6 +731,9 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
     deleteKeys,
     deleteKey,
     renameKey,
+    createKey,
+    setTtl,
+    runCommand,
   }
 }
 

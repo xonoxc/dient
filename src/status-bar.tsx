@@ -136,15 +136,29 @@ export function StatusBar(props: StatusBarProps) {
      colored, padded zone you read without looking for it. It is the only place
      query cost is visible, and on a paged table it is what tells a user whether
      Ctrl+f will feel instant. */
-  const latency = props.lastQueryMs !== undefined ? ` ${formatQueryMs(props.lastQueryMs)} ` : ""
-  const fixed = mode.length + 1 + brand.length + (rightBits ? 1 + rightBits.length : 0) + latency.length + EDGE_GAP
+  let latency = props.lastQueryMs !== undefined ? ` ${formatQueryMs(props.lastQueryMs)} ` : ""
+  const baseFixed = mode.length + 1 + brand.length + (rightBits ? 1 + rightBits.length : 0) + EDGE_GAP
+  const fits = (hintsText: string, latencyText: string): boolean =>
+    baseFixed + latencyText.length + (hintsText ? hintsText.length + 1 : 0) <= strip
 
-  /* Hints yield before the location does, one whole hint at a time. */
-  let hints = fitHints(props.hints ?? [], Math.floor(strip / HINT_SHARE))
-  while (hints && fixed + hints.length + 1 > strip) {
+  /* Hints yield before the location does, one whole hint at a time. On a
+     narrow strip the fetch-time badge is informational while the hints are
+     actionable, so drop the badge before the first hint disappears. Widen the
+     hint budget at the same time; a narrow bar has no room for both. */
+  const hintCap = Math.floor(strip / HINT_SHARE)
+  let hints = fitHints(props.hints ?? [], hintCap)
+  if (latency && strip < 80) {
+    const roomier = fitHints(props.hints ?? [], strip - baseFixed - 1)
+    if (roomier.length > hints.length && !fits(roomier, latency)) {
+      latency = ""
+      hints = roomier
+    }
+  }
+  while (hints && !fits(hints, latency)) {
     hints = dropLastHint(hints)
   }
   const hintsWidth = hints ? hints.length + 1 : 0
+  const fixed = baseFixed + latency.length
   const leftBits = rightBits ? fit(locationText, strip - fixed - hintsWidth) : ""
   const mid = `${leftBits}${rightBits}`
 

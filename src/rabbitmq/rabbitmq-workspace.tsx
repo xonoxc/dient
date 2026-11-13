@@ -19,7 +19,7 @@ import { normalModeKey } from "@/ui/text-entry"
 import { LoadingIndicator } from "@/ui/loading-indicator"
 import { writeSystemClipboard } from "@/ui/clipboard"
 import type { ActiveConnection } from "@/drivers/types"
-import type { RabbitBinding, RabbitExchange, RabbitMessage, RabbitQueue } from "@/rabbitmq/driver"
+import type { RabbitBinding, RabbitConsumer, RabbitExchange, RabbitMessage, RabbitQueue } from "@/rabbitmq/driver"
 import { useTheme } from "@/theme-context"
 import { describeError } from "@/errors/describe"
 import { wrapText } from "@/explorer/cell-viewer"
@@ -84,6 +84,7 @@ export function RabbitMqWorkspace({ active, focused }: { readonly active: Active
   const [queues, setQueues] = useState<ReadonlyArray<RabbitQueue>>([])
   const [exchanges, setExchanges] = useState<ReadonlyArray<RabbitExchange>>([])
   const [bindings, setBindings] = useState<ReadonlyArray<RabbitBinding>>([])
+  const [consumers, setConsumers] = useState<ReadonlyArray<RabbitConsumer>>([])
   const [messages, setMessages] = useState<ReadonlyArray<RabbitMessage>>([])
   const [tab, setTab] = useState<WorkspaceTab>("queues")
   const [queueSort, setQueueSort] = useState<QueueSort>("manual")
@@ -103,6 +104,7 @@ export function RabbitMqWorkspace({ active, focused }: { readonly active: Active
     setQueues([])
     setExchanges([])
     setBindings([])
+    setConsumers([])
     setMessages([])
     setQueueOrder([])
     setQueueSort("manual")
@@ -129,19 +131,21 @@ export function RabbitMqWorkspace({ active, focused }: { readonly active: Active
     setLoading(true)
     setError(null)
     try {
-      const [nextQueues, nextExchanges, nextBindings] = await Effect.runPromise(
+      const [nextQueues, nextExchanges, nextBindings, nextConsumers] = await Effect.runPromise(
         Effect.all(
           [
             rabbitmqDriver.listQueues(handle),
             rabbitmqDriver.listExchanges(handle),
             rabbitmqDriver.listBindings(handle),
+            rabbitmqDriver.listConsumers(handle).pipe(Effect.orElseSucceed(() => [])),
           ],
-          { concurrency: 3 }
+          { concurrency: 4 }
         )
       )
       setQueues(nextQueues)
       setExchanges(nextExchanges)
       setBindings(nextBindings.filter(binding => binding.destination_type === "queue"))
+      setConsumers(nextConsumers)
       setQueueOrder(current => {
         const names = nextQueues.map(queue => queue.name).sort((a, b) => a.localeCompare(b))
         return [...current.filter(name => names.includes(name)), ...names.filter(name => !current.includes(name))]
@@ -428,6 +432,47 @@ export function RabbitMqWorkspace({ active, focused }: { readonly active: Active
     if (ok) run(rabbitmqDriver.purgeQueue(handle!, queue.name), undefined, `purged ${queue.name}`)
   }
 
+  /* The management API can pop one ready message at a time, but it cannot move
+     a message by delivery tag. "Move next" is therefore explicit: it consumes
+     the head of the source queue and republishes it through the default
+     exchange. The destination is verified before the pop so a typo cannot eat
+     the source message. */
+  const moveNextMessage = (queueName: string): void => {
+    if (!handle) return
+    runEditor("Move next message", `${JSON.stringify({ source: queueName, target: "" }, null, 2)}\n`, text => {
+      try {
+        const draft = parseEditorJson(text)
+        const source = typeof draft.source === "string" ? draft.source.trim() : queueName
+        const target = typeof draft.target === "string" ? draft.target.trim() : ""
+        if (!target) throw new Error("target queue is required")
+        if (target === source) throw new Error("target must differ from the source queue")
+        void dialog
+          .confirm({
+            title: `Move head of ${source} to ${target}?`,
+            body: `This consumes the next ready message from "${source}" and republishes it to "${target}". If the publish fails after the consume, the message cannot be restored.`,
+            okLabel: "move message",
+            danger: true,
+          })
+          .then(ok => {
+            if (!ok) return
+            run(
+              rabbitmqDriver.moveMessage(handle!, source, target),
+              result => {
+                if (result.moved) {
+                  toasts.push("success", `moved one message to ${target}`)
+                } else {
+                  toasts.push("info", `${source} has no ready messages to move`)
+                }
+              },
+              ""
+            )
+          })
+      } catch (cause) {
+        toasts.push("error", `move form: ${describeError(cause)}`)
+      }
+    })
+  }
+
   const selectTab = (next: WorkspaceTab): void => {
     setTab(next)
     setCursor(0)
@@ -465,6 +510,7 @@ export function RabbitMqWorkspace({ active, focused }: { readonly active: Active
             "p publish",
             "b bind",
             "x purge",
+            "M move next",
             "d delete",
             "r refresh",
           ]
@@ -472,7 +518,7 @@ export function RabbitMqWorkspace({ active, focused }: { readonly active: Active
           ? ["j/k select", "a exchange", "p publish", "d delete", "r refresh"]
           : tab === "bindings"
             ? ["j/k select", "u unbind", "r refresh"]
-            : ["j/k select", "y copy", "o flip view", "i edit & republish", "Esc queues"],
+            : ["j/k select", "y copy", "o flip view", "i edit & republish", "M move next", "Esc queues"],
     [tab]
   )
 
@@ -522,6 +568,8 @@ export function RabbitMqWorkspace({ active, focused }: { readonly active: Active
     else if (key === "p" && tab === "exchanges" && selectedExchange) publish(undefined, selectedExchange)
     else if (key === "b" && tab === "queues" && selectedQueue) bindQueue(selectedQueue)
     else if (key === "x" && tab === "queues" && selectedQueue) void purgeQueue(selectedQueue)
+    else if (key === "M" && tab === "queues" && selectedQueue) moveNextMessage(selectedQueue.name)
+    else if (key === "M" && tab === "messages" && messageQueue) moveNextMessage(messageQueue)
     else if (key === "d" && tab === "queues" && selectedQueue) void confirmDelete("queue", selectedQueue.name)
     else if (key === "d" && tab === "exchanges" && selectedExchange)
       void confirmDelete("exchange", selectedExchange.name)
@@ -850,6 +898,7 @@ export function RabbitMqWorkspace({ active, focused }: { readonly active: Active
                     binding={selectedBinding}
                     message={selectedMessage}
                     bindings={bindings}
+                    consumers={consumers}
                     width={inspectorWidth}
                     height={height}
                   />
@@ -870,6 +919,7 @@ function RabbitInspector({
   binding,
   message,
   bindings,
+  consumers,
   width,
   height,
 }: {
@@ -879,6 +929,7 @@ function RabbitInspector({
   readonly binding: RabbitBinding | null
   readonly message?: RabbitMessage
   readonly bindings: ReadonlyArray<RabbitBinding>
+  readonly consumers: ReadonlyArray<RabbitConsumer>
   readonly width: number
   readonly height: number
 }) {
@@ -901,6 +952,7 @@ function RabbitInspector({
   if (tab === "queues" && queue) {
     const kind = queue.type ?? String(queue.arguments?.["x-queue-type"] ?? "classic")
     const args = Object.entries(queue.arguments ?? {})
+    const queueConsumers = consumers.filter(consumer => consumer.queue.name === queue.name)
     return (
       <box flexDirection="column" paddingX={1}>
         <text fg={c.accent}>QUEUE</text>
@@ -916,6 +968,19 @@ function RabbitInspector({
         />
         <DetailField label="Consumers" value={(queue.consumers ?? 0).toLocaleString()} tone={c.success} />
         <DetailField label="Auto-delete" value={queue.auto_delete ? "yes" : "no"} />
+        <box height={1} />
+        <text fg={c.accent}>CONSUMERS</text>
+        {queueConsumers.length ? (
+          queueConsumers.slice(0, 8).map(consumer => (
+            <text key={consumer.consumer_tag} fg={c.text}>
+              {`${consumer.consumer_tag}  ${consumer.ack_required === false ? "auto-ack" : `prefetch ${consumer.prefetch_count ?? 0}`}${
+                consumer.active === false ? " · inactive" : ""
+              }`}
+            </text>
+          ))
+        ) : (
+          <text fg={c.text}>none attached</text>
+        )}
         <box height={1} />
         <text fg={c.accent}>ARGUMENTS</text>
         {args.length ? (

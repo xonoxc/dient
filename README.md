@@ -198,6 +198,8 @@ The rule is the same on every screen with more than one pane.
 | `Esc` | Leave an open Redis key for the keyspace |
 | `i` | Edit the current row/value in `$EDITOR` (Redis: rename a key in the keyspace) |
 | `r` | Reload the current table or Redis value |
+| `e` | View the full cell value |
+| `D` | Show the table schema (DDL, indexes, foreign keys) |
 | `V` | Start a row selection |
 | `y` | Copy the selection to the clipboard |
 | `/` | Filter the current page |
@@ -226,9 +228,46 @@ list `index` / zset `rank` columns are fixed identifiers. Collection commands
 preserve TTL naturally. Stream entries are Redis-append-only, so the stream
 card view remains a reader; its key can still be renamed from the keyspace.
 
+`a` creates a key from a JSON form (`string`, `hash`, `list`, `set`, or `zset`,
+with an optional TTL) and refuses to overwrite an existing key. `T` edits the
+current key's TTL (`-1` clears it). `:redis <command>` runs any command, with
+quoted arguments, and opens the reply in a scrollable viewer:
+
+```text
+:redis GET greeting
+:redis SET greeting "hello world"
+:redis HGETALL user:1
+```
+
 The driver is standalone (no Cluster/Sentinel) and understands the core Redis
 types plus RedisJSON; module-specific types without a dedicated view fall back
 to a metadata row.
+
+### RabbitMQ
+
+A RabbitMQ connection opens a management-API workspace with queues, exchanges,
+bindings, and a message inspector. `j`/`k` move, `Tab` cycles tabs, `r`
+refreshes, and the queue inspector lists active consumers with their prefetch
+and ack mode.
+
+| Key | Action |
+| --- | --- |
+| `a` | Declare a queue or exchange |
+| `m` / `Enter` | Peek the selected queue (non-destructive requeue read) |
+| `p` | Publish a message |
+| `b` | Bind the selected queue to an exchange |
+| `x` | Purge ready messages |
+| `M` | Move the next ready message to another queue |
+| `d` | Delete the selected queue or exchange |
+| `o` | Reverse the message view |
+| `y` | Copy the selected payload |
+| `i` | Edit and republish the selected payload |
+| `Esc` | Leave the message view for queues |
+
+`M` consumes exactly one ready message from the source and republishes it
+through the default exchange, preserving its properties and payload encoding.
+The destination queue is checked first, but the management API acknowledges as
+it returns, so a publish failure after the consume cannot be rolled back.
 
 ### Settings
 
@@ -253,6 +292,8 @@ Type `:` for the command line.
 | `:e <table>` | Open a table |
 | `:connect <name>` | Switch database |
 | `:refresh` | Reload the current table |
+| `:schema` | Show the table schema |
+| `:redis <command>` | Run a Redis command and show the reply |
 | `:upgrade` | Install the pending update |
 | `:ignore-update` | Skip the pending update |
 | `:version` | Show the app version |

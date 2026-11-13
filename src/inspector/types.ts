@@ -13,10 +13,29 @@ export interface TableColumn {
   readonly default?: unknown
 }
 
+export interface TableIndex {
+  readonly name: string
+  readonly columns: ReadonlyArray<string>
+  readonly unique: boolean
+  readonly primary: boolean
+}
+
+export interface TableForeignKey {
+  readonly name: string
+  readonly columns: ReadonlyArray<string>
+  readonly referencedTable: string
+  readonly referencedColumns: ReadonlyArray<string>
+}
+
 export interface TableInfo {
   readonly name: string
   readonly columns: ReadonlyArray<TableColumn>
   readonly primaryKey: ReadonlyArray<string>
+  readonly indexes: ReadonlyArray<TableIndex>
+  readonly foreignKeys: ReadonlyArray<TableForeignKey>
+  /** The engine's CREATE TABLE statement, or a generated equivalent where the
+   * engine has no direct way to expose one (PostgreSQL). */
+  readonly ddl?: string
 }
 
 /**
@@ -25,8 +44,9 @@ export interface TableInfo {
  * to the engine's introspection tables.
  *
  * - `listTables` returns every user table for the connection's database.
- * - `describeTable` returns the full column + primary key shape of one table,
- *   or `Option.none()` when the table does not exist.
+ * - `describeTable` returns the full column, primary-key, index, foreign-key,
+ *   and DDL shape of one table, or `Option.none()` when the table does not
+ *   exist.
  * - `getPrimaryKey` returns the ordered primary key columns, or `[]` when the
  *   table is absent or has no primary key.
  *

@@ -8,7 +8,7 @@
  * Effect the service boundary), so hooks never block a render.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Effect, Fiber, Option } from "effect"
+import { Effect, Either, Fiber, Option } from "effect"
 import { describeError } from "@/errors/describe"
 import { useDialog, useServices, useToasts } from "@/app-context"
 import { useSidebar, type SidebarNode, type TablesByConnection } from "@/sidebar/use-sidebar"
@@ -17,8 +17,9 @@ import type { Connection, ConnectionId, Database, ProjectId } from "@/domain"
 import type { ActiveConnection, ColumnInfo, QueryError } from "@/drivers/types"
 import type { TableInfo } from "@/inspector/types"
 import { cleanIdentifier } from "@/query/identifier"
+import { parseRedisCommand, formatRedisReply } from "@/redis/command"
 import { formatTtl } from "@/redis/format"
-import type { RedisKeyInfo, RedisPage, RedisRowUpdate } from "@/redis/types"
+import type { RedisKeyDraft, RedisKeyInfo, RedisPage, RedisRowUpdate } from "@/redis/types"
 import { useTable, type UseTableResult } from "@/table/use-table"
 import { formatCell } from "@/table/use-table"
 
@@ -98,6 +99,16 @@ export interface UseExplorerResult {
   ) => void
   /** Rename the open key (or a key selected in the keyspace). */
   readonly renameRedisKey: (oldKey: string, newKey: string) => void
+  /** Create a new Redis key from the `a` form, then reload the keyspace. */
+  readonly createRedisKey: (draft: RedisKeyDraft) => void
+  /** Set or clear a Redis key's expiry and reload the current view. */
+  readonly setRedisTtl: (key: string, ttl: number) => void
+  /** Execute one `:redis` command and hand the formatted reply to the caller. */
+  readonly runRedisCommand: (
+    line: string,
+    onResult: (title: string, text: string) => void,
+    onError?: () => void
+  ) => void
   /** Delete one or more rows from the open SQL table. */
   readonly deleteRows: (rows: ReadonlyArray<Record<string, unknown>>) => void
   /** Delete one or more Redis collection rows, or keys from the keyspace. */
@@ -289,7 +300,15 @@ export const useExplorer = (): UseExplorerResult => {
         setRedisInfo(null)
         setRedisPage(null)
         setColumns([{ name: "key" }, { name: "type" }, { name: "ttl" }])
-        setRows(page.rows.map(row => ({ key: row.key, type: row.type, ttl: formatTtl(row.ttl) })))
+        setRows(
+          page.rows.map(row => ({
+            key: row.key,
+            type: row.type,
+            ttl: formatTtl(row.ttl),
+            /* Raw seconds only for the `T` editor; not a visible column. */
+            ttlSeconds: row.ttl,
+          }))
+        )
         setTableName("keys")
         setTableInfo(null)
         setTotal(page.total)
@@ -812,6 +831,100 @@ export const useExplorer = (): UseExplorerResult => {
     )
   }
 
+  /* Create a key from the `a` form. The inspector refuses to overwrite an
+     existing key, so a typo cannot clobber data. */
+  const createRedisKey = (draft: RedisKeyDraft): void => {
+    const explorer = activeExplorer.current
+    const handle = activeHandle.current
+    if (!explorer || explorer.database.engine !== "redis" || !handle) {
+      toasts.push("error", "no Redis connection open to create a key")
+      return
+    }
+    Effect.runFork(
+      Effect.gen(function* () {
+        yield* redisInspector.createKey(handle, draft)
+        yield* Effect.sync(() => {
+          toasts.push("success", `created ${draft.key}`)
+          const view = redisViewRef.current
+          const pageIndex = redisPageIndexRef.current
+          const token = redisTokensRef.current[pageIndex] ?? null
+          if (view?.kind === "key") loadRedisKey(view.key, token, pageIndex)
+          else loadRedisKeys(token, pageIndex)
+        })
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            errorLog.append("explorer.redisCreateKey", cause)
+            toasts.push("error", `create failed: ${describeError(cause)}`)
+          })
+        )
+      )
+    )
+  }
+
+  const setRedisTtl = (key: string, ttl: number): void => {
+    const explorer = activeExplorer.current
+    const handle = activeHandle.current
+    if (!explorer || explorer.database.engine !== "redis" || !handle) {
+      toasts.push("error", "no Redis connection open to update a ttl")
+      return
+    }
+    Effect.runFork(
+      Effect.gen(function* () {
+        yield* redisInspector.setTtl(handle, key, ttl)
+        yield* Effect.sync(() => {
+          toasts.push("success", ttl === -1 ? `${key} no longer expires` : `${key} expires in ${formatTtl(ttl)}`)
+          const view = redisViewRef.current
+          const pageIndex = redisPageIndexRef.current
+          const token = redisTokensRef.current[pageIndex] ?? null
+          if (view?.kind === "key" && view.key === key) loadRedisKey(key, token, pageIndex)
+          else loadRedisKeys(token, pageIndex)
+        })
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            errorLog.append("explorer.redisSetTtl", cause)
+            toasts.push("error", `ttl failed: ${describeError(cause)}`)
+          })
+        )
+      )
+    )
+  }
+
+  const runRedisCommand = (
+    line: string,
+    onResult: (title: string, text: string) => void,
+    onError?: () => void
+  ): void => {
+    const explorer = activeExplorer.current
+    const handle = activeHandle.current
+    if (!explorer || explorer.database.engine !== "redis" || !handle) {
+      toasts.push("error", "no Redis connection open for a command")
+      onError?.()
+      return
+    }
+    const parsed = parseRedisCommand(line)
+    if (Either.isLeft(parsed)) {
+      toasts.push("error", parsed.left)
+      onError?.()
+      return
+    }
+    Effect.runFork(
+      Effect.gen(function* () {
+        const reply = yield* redisInspector.runCommand(handle, line)
+        yield* Effect.sync(() => onResult(`redis · ${parsed.right.display}`, formatRedisReply(reply)))
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            errorLog.append("explorer.redisCommand", cause)
+            toasts.push("error", `command failed: ${describeError(cause)}`)
+            onError?.()
+          })
+        )
+      )
+    )
+  }
+
   /* Persist a whole edited row: one UPDATE with a SET clause per changed
      field, always keyed on the primary key from the schema inspector. */
   const saveRow = (
@@ -1095,6 +1208,9 @@ export const useExplorer = (): UseExplorerResult => {
       deleteRedisKey,
       deleteRedisKeyByName,
       renameRedisKey,
+      createRedisKey,
+      setRedisTtl,
+      runRedisCommand,
       readRedisText,
       saveRedisText,
       saveRedisRow,
@@ -1128,6 +1244,9 @@ export const useExplorer = (): UseExplorerResult => {
       deleteRedisKey,
       deleteRedisKeyByName,
       renameRedisKey,
+      createRedisKey,
+      setRedisTtl,
+      runRedisCommand,
       readRedisText,
       saveRedisText,
       saveRedisRow,

@@ -34,8 +34,10 @@ import { useCommand } from "@/app-context"
 import { buildFinderIndex, type FinderEntry } from "@/finder/finder"
 import { FinderOverlay } from "@/finder/finder-overlay"
 import { RowPreview } from "@/explorer/row-preview"
+import { TextViewer, textViewerTextWidth, textViewerWidth } from "@/explorer/text-viewer"
 import { useUpdateUi } from "@/update/update-provider"
 import { describeError } from "@/errors/describe"
+import { formatTableInfo } from "@/inspector/format"
 import { CELL_VIEWER_TEXT_WIDTH, CellViewer, wrapText } from "@/explorer/cell-viewer"
 import { fuzzyMatch } from "@/finder/fuzzy"
 import { normalModeKey, resolveTypedChar } from "@/ui/text-entry"
@@ -44,7 +46,14 @@ import { windowTail } from "@/ui/text-window"
 import { LoadingIndicator } from "@/ui/loading-indicator"
 import { RabbitMqWorkspace } from "@/rabbitmq/rabbitmq-workspace"
 import { RedisStreamPanel, RedisTextPanel } from "@/redis/redis-views"
-import { parseRedisRow, redisRowShape, serializeRedisRow } from "@/redis/editing"
+import {
+  parseRedisKeyDraft,
+  parseRedisRow,
+  parseRedisTtl,
+  redisRowShape,
+  serializeRedisRow,
+  REDIS_KEY_TEMPLATE,
+} from "@/redis/editing"
 import {
   formatTtl,
   redisKeyDetail,
@@ -143,6 +152,12 @@ export function ExplorerScreen() {
      a reopened value always starts at the top. */
   const [viewerOpen, setViewerOpen] = useState(false)
   const [viewerOffset, setViewerOffset] = useState(0)
+
+  /* `D` opens the schema document; `:redis` uses the same overlay for command
+     replies. One generic text viewer keeps both scrollable and dismissable
+     without inventing a second modal contract. */
+  const [textViewer, setTextViewer] = useState<{ readonly title: string; readonly text: string } | null>(null)
+  const [textViewerOffset, setTextViewerOffset] = useState(0)
 
   /* Vim-style delete: `d` is a pending prefix. Pressing `d` again (or any
      non-d key that consumes the prefix) executes the delete. The timeout
@@ -466,6 +481,15 @@ export function ExplorerScreen() {
     run: refreshCurrent,
   })
   useCommand({
+    id: "explorer:redis-command",
+    help: ":redis <command> — run a Redis command",
+    match: text => /^redis\s+\S+/i.test(text.trim()),
+    run: text => {
+      const line = text.trim().replace(/^redis\s+/i, "")
+      explorer.runRedisCommand(line, openTextViewer)
+    },
+  })
+  useCommand({
     id: "explorer:connect",
     help: ":connect <db> — switch to a database",
     match: text => /^connect\s+\S+/.test(text.trim()),
@@ -613,6 +637,85 @@ export function ExplorerScreen() {
             return
           }
           explorer.saveRedisRow(row, parsed.updates)
+        },
+        done: () => {
+          editorBusyRef.current = false
+        },
+      },
+    })
+  }
+
+  const createRedisKey = () => {
+    if (!active || active.database.engine !== "redis") {
+      toasts.push("error", "not on a Redis connection")
+      return
+    }
+    if (explorer.redisView?.kind !== "keys") {
+      toasts.push("info", "return to the Redis keyspace to create a key")
+      return
+    }
+    if (editorBusyRef.current) return
+    editorBusyRef.current = true
+    editTextInEditor({
+      renderer,
+      label: "New Redis key",
+      filename: "redis-key",
+      extension: ".json",
+      content: REDIS_KEY_TEMPLATE,
+      callbacks: {
+        notice: message => toasts.push("info", message),
+        error: message => toasts.push("error", message),
+        onSave: edited => {
+          const parsed = parseRedisKeyDraft(edited)
+          if (!parsed.ok) {
+            toasts.push("error", parsed.error)
+            return
+          }
+          explorer.createRedisKey(parsed.draft)
+        },
+        done: () => {
+          editorBusyRef.current = false
+        },
+      },
+    })
+  }
+
+  const editRedisTtl = () => {
+    if (!active || active.database.engine !== "redis") {
+      toasts.push("error", "not on a Redis connection")
+      return
+    }
+    const view = explorer.redisView
+    const row = explorer.table.sortedRows[vim.cursor]
+    const key =
+      view?.kind === "key"
+        ? (explorer.redisInfo?.key ?? explorer.tableName)
+        : typeof row?.key === "string"
+          ? row.key
+          : null
+    if (!key) {
+      toasts.push("info", "no key selected")
+      return
+    }
+    const current = view?.kind === "key" ? (explorer.redisInfo?.ttl ?? -1) : Number(row?.ttlSeconds ?? -1)
+    if (editorBusyRef.current) return
+    editorBusyRef.current = true
+    editTextInEditor({
+      renderer,
+      label: `ttl ${key}`,
+      filename: "redis-ttl",
+      extension: ".txt",
+      content: `${current}\n`,
+      callbacks: {
+        notice: message => toasts.push("info", message),
+        error: message => toasts.push("error", message),
+        onSave: edited => {
+          const parsed = parseRedisTtl(edited)
+          if (!parsed.ok) {
+            toasts.push("error", parsed.error)
+            return
+          }
+          explorer.setRedisTtl(key, parsed.ttl)
         },
         done: () => {
           editorBusyRef.current = false
@@ -812,10 +915,11 @@ export function ExplorerScreen() {
       return [
         ...paging,
         ...pending,
-        ...(redisTextMode ? ["i edit value"] : []),
-        "r refresh",
         "j/k scroll",
         "g/G ends",
+        ...(redisTextMode ? ["i edit value"] : []),
+        "r refresh",
+        "T ttl",
         "Esc keys",
         "s settings",
         "space jump",
@@ -827,6 +931,8 @@ export function ExplorerScreen() {
       return [
         ...paging,
         ...pending,
+        "a new key",
+        "T ttl",
         "r refresh",
         "Enter open key",
         "i rename key",
@@ -843,6 +949,7 @@ export function ExplorerScreen() {
       return [
         ...paging,
         ...pending,
+        "T ttl",
         "r refresh",
         "Enter preview",
         "i edit row",
@@ -876,11 +983,12 @@ export function ExplorerScreen() {
     return [
       ...paging,
       ...pending,
-      "r refresh",
       "s settings",
       "Enter preview",
-      "i edit row",
       "dd delete row",
+      "D schema",
+      "r refresh",
+      "i edit row",
       "V select rows",
       "e full value",
       "j/k move",
@@ -938,6 +1046,39 @@ export function ExplorerScreen() {
   /* Rows the viewer may spend on wrapped value lines: title, gap, optional
      scroll position, gap, and hint strip all come out of the terminal first. */
   const viewerMaxRows = Math.max(4, Math.min(height - 10, 16))
+
+  const textViewerMaxRows = Math.max(4, Math.min(height - 10, 24))
+  const viewerWidth = textViewerWidth(width)
+  const viewerTextWidth = textViewerTextWidth(viewerWidth)
+  const openTextViewer = (title: string, text: string) => {
+    setTextViewer({ title, text })
+    setTextViewerOffset(0)
+  }
+  const textViewerLines = (): number => (textViewer ? wrapText(textViewer.text, viewerTextWidth).length : 0)
+  const scrollTextViewer = (delta: number) => {
+    setTextViewerOffset(current =>
+      Math.max(0, Math.min(Math.max(0, textViewerLines() - textViewerMaxRows), current + delta))
+    )
+  }
+  const jumpTextViewer = (where: "first" | "last") => {
+    setTextViewerOffset(where === "first" ? 0 : Math.max(0, textViewerLines() - textViewerMaxRows))
+  }
+  const openSchema = () => {
+    if (!tableInfo) {
+      toasts.push("info", "no schema loaded for this table")
+      return
+    }
+    openTextViewer(`schema · ${tableInfo.name}`, formatTableInfo(tableInfo))
+  }
+  useCommand({
+    id: "explorer:schema",
+    help: ":schema — show the current table's schema (D)",
+    match: text => {
+      const command = text.trim().toLowerCase()
+      return command === "schema" || command === "ddl"
+    },
+    run: openSchema,
+  })
 
   const openViewer = () => {
     if (!viewerRow || !viewerColumn || !viewerNeedsExpansion) return
@@ -1003,6 +1144,45 @@ export function ExplorerScreen() {
     if (textInput.route(e)) return
     if (router.helpOpen || commandLine.open) return
     const key = normalModeKey(e)
+
+    /* The schema/command-result viewer is the topmost surface while open. It
+       owns every key so `q` cannot quit and `D` cannot reopen the same panel
+       underneath itself. */
+    if (textViewer) {
+      if (
+        key === "\u001b" ||
+        key === "Escape" ||
+        key === "escape" ||
+        key === "q" ||
+        key === "D" ||
+        key === "e" ||
+        key === "E" ||
+        key === "return" ||
+        key === "enter" ||
+        key === "\r"
+      ) {
+        setTextViewer(null)
+        return
+      }
+      if (key === "j" || key === "down") {
+        scrollTextViewer(1)
+        return
+      }
+      if (key === "k" || key === "up") {
+        scrollTextViewer(-1)
+        return
+      }
+      if (key === "g") {
+        jumpTextViewer("first")
+        return
+      }
+      if (key === "G") {
+        jumpTextViewer("last")
+        return
+      }
+      e.preventDefault()
+      return
+    }
 
     /* Number keys focus panes left to right (1 = sidebar, 2 = table). A window
        command like this must stay reachable even while an overlay (preview /
@@ -1207,6 +1387,10 @@ export function ExplorerScreen() {
         router.setScreen("settings")
         return
       }
+      if (key === "T") {
+        editRedisTtl()
+        return
+      }
       if (key === " " || key === "space") {
         openFinder(e)
         return
@@ -1363,6 +1547,14 @@ export function ExplorerScreen() {
         }
         return
       }
+      if (key === "T" && active?.database.engine === "redis") {
+        editRedisTtl()
+        return
+      }
+      if (key === "a" && explorer.redisView?.kind === "keys") {
+        createRedisKey()
+        return
+      }
       if (key === " " || key === "space") {
         openFinder(e)
         return
@@ -1421,9 +1613,22 @@ export function ExplorerScreen() {
         enterVisualMode()
         return
       }
-      /* Vim-style `dd`: first `d` arms the operator, the second `d` (or `D`)
-         deletes the row under the cursor with a confirmation. Any other key
-         consumes the pending `d` and acts as usual. */
+      /* `D` is the schema key on SQL tables. A pending `d` still consumes it
+         as the second half of a delete chord, so existing `dD` muscle memory
+         keeps working. Redis has no schema, so `D` remains a delete alias
+         there. */
+      if (key === "D" && active?.database.engine !== "redis") {
+        if (pendingDeleteRef.current) {
+          clearDelete()
+          deleteRows()
+          return
+        }
+        openSchema()
+        return
+      }
+      /* Vim-style `dd`: first `d` arms the operator, the second `d` (or `D`
+         on Redis) deletes the row under the cursor with a confirmation. Any
+         other key consumes the pending `d` and acts as usual. */
       if (key === "d" || key === "D") {
         if (pendingDeleteRef.current) {
           clearDelete()
@@ -1574,6 +1779,16 @@ export function ExplorerScreen() {
           value={viewerValue}
           visibleRows={viewerMaxRows}
           offset={viewerOffset}
+        />
+      ) : null}
+      {textViewer ? (
+        <TextViewer
+          title={textViewer.title}
+          text={textViewer.text}
+          visibleRows={textViewerMaxRows}
+          offset={textViewerOffset}
+          width={viewerWidth}
+          closeHint={textViewer.title.startsWith("schema") ? "D/Esc close" : "Esc close"}
         />
       ) : null}
     </box>

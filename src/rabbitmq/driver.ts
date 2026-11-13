@@ -63,6 +63,22 @@ export interface RabbitMessage {
   readonly properties?: Readonly<Record<string, unknown>>
 }
 
+/** One AMQP consumer attached to a queue, as reported by the management API. */
+export interface RabbitConsumer {
+  readonly consumer_tag: string
+  readonly queue: { readonly name: string; readonly vhost: string }
+  readonly ack_required?: boolean
+  readonly prefetch_count?: number
+  readonly active?: boolean
+  readonly exclusive?: boolean
+  readonly arguments?: Readonly<Record<string, unknown>>
+  readonly channel_details?: {
+    readonly peer_host?: string
+    readonly peer_port?: number
+    readonly connection_name?: string
+  }
+}
+
 export interface RabbitMqDriverService {
   readonly connect: (config: RabbitMqConnectionConfig) => Effect.Effect<ActiveConnection, ConnectionError, Scope.Scope>
   readonly listQueues: (conn: ActiveConnection) => Effect.Effect<ReadonlyArray<RabbitQueue>, QueryError>
@@ -73,6 +89,16 @@ export interface RabbitMqDriverService {
     queue: string,
     count?: number
   ) => Effect.Effect<ReadonlyArray<RabbitMessage>, QueryError>
+  /** Every active consumer in the vhost, including its queue and prefetch. */
+  readonly listConsumers: (conn: ActiveConnection) => Effect.Effect<ReadonlyArray<RabbitConsumer>, QueryError>
+  /** Consume exactly one ready message; callers own the payload from here. */
+  readonly takeMessage: (conn: ActiveConnection, queue: string) => Effect.Effect<RabbitMessage | null, QueryError>
+  /** Move the next ready message to another queue through the default exchange. */
+  readonly moveMessage: (
+    conn: ActiveConnection,
+    sourceQueue: string,
+    targetQueue: string
+  ) => Effect.Effect<{ readonly moved: boolean; readonly message?: RabbitMessage }, QueryError>
   readonly declareQueue: (
     conn: ActiveConnection,
     name: string,
@@ -188,6 +214,9 @@ export const listRabbitExchanges = (conn: ActiveConnection): Effect.Effect<Reado
 export const listRabbitBindings = (conn: ActiveConnection): Effect.Effect<ReadonlyArray<RabbitBinding>, QueryError> =>
   request(conn, `/api/bindings/${vhostPath(conn)}`)
 
+export const listRabbitConsumers = (conn: ActiveConnection): Effect.Effect<ReadonlyArray<RabbitConsumer>, QueryError> =>
+  request(conn, `/api/consumers/${vhostPath(conn)}`)
+
 export const peekRabbitMessages = (
   conn: ActiveConnection,
   queue: string,
@@ -201,6 +230,44 @@ export const peekRabbitMessages = (
       encoding: "auto",
       truncate: 65536,
     }),
+  })
+
+export const takeRabbitMessage = (
+  conn: ActiveConnection,
+  queue: string
+): Effect.Effect<RabbitMessage | null, QueryError> =>
+  request<ReadonlyArray<RabbitMessage>>(conn, `/api/queues/${vhostPath(conn)}/${segment(queue)}/get`, {
+    method: "POST",
+    body: json({
+      count: 1,
+      ackmode: "ack_requeue_false",
+      encoding: "auto",
+    }),
+  }).pipe(Effect.map(messages => messages[0] ?? null))
+
+export const moveRabbitMessage = (
+  conn: ActiveConnection,
+  sourceQueue: string,
+  targetQueue: string
+): Effect.Effect<{ readonly moved: boolean; readonly message?: RabbitMessage }, QueryError> =>
+  Effect.gen(function* () {
+    const target = targetQueue.trim()
+    if (target === "")
+      return yield* Effect.fail(new QueryError({ engine: ENGINE, message: "target queue is required" }))
+    /* Verify the destination before consuming: the management `get` endpoint
+       acknowledges as it returns, so a typo must not eat the source message. */
+    yield* request(conn, `/api/queues/${vhostPath(conn)}/${segment(target)}`)
+    const message = yield* takeRabbitMessage(conn, sourceQueue)
+    if (message === null) return { moved: false }
+    const routed = yield* publishRabbitMessage(
+      conn,
+      "",
+      target,
+      message.payload,
+      message.properties ?? {},
+      message.payload_encoding ?? "string"
+    )
+    return { moved: routed, message }
   })
 
 export const declareRabbitQueue = (
@@ -244,11 +311,12 @@ export const publishRabbitMessage = (
   exchange: string,
   routingKey: string,
   payload: string,
-  properties: Record<string, unknown> = {}
+  properties: Record<string, unknown> = {},
+  payloadEncoding: "string" | "base64" = "string"
 ): Effect.Effect<boolean, QueryError> =>
   request<{ routed: boolean }>(conn, `/api/exchanges/${vhostPath(conn)}/${segment(exchange)}/publish`, {
     method: "PUT",
-    body: json({ properties, routing_key: routingKey, payload, payload_encoding: "string" }),
+    body: json({ properties, routing_key: routingKey, payload, payload_encoding: payloadEncoding }),
   }).pipe(Effect.map(result => result.routed))
 
 export const bindRabbitQueue = (
@@ -285,6 +353,9 @@ export namespace RabbitMqDriver {
     listExchanges: listRabbitExchanges,
     listBindings: listRabbitBindings,
     peekMessages: peekRabbitMessages,
+    listConsumers: listRabbitConsumers,
+    takeMessage: takeRabbitMessage,
+    moveMessage: moveRabbitMessage,
     declareQueue: declareRabbitQueue,
     deleteQueue: deleteRabbitQueue,
     purgeQueue: purgeRabbitQueue,

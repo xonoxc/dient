@@ -92,6 +92,119 @@ describe("redis explorer", () => {
     }
   }, 30_000)
 
+  test("creates a key from the a form and edits its ttl", async () => {
+    const client = new Bun.RedisClient(`redis://${container!.getHost()}:${container!.getMappedPort(6379)}/0`)
+    await client.connect()
+    await client.send("FLUSHALL", [])
+    client.close()
+
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "redis-create",
+      database: "cache",
+      engine: "redis",
+      host: container!.getHost(),
+      port: container!.getMappedPort(6379),
+      defaultDatabase: "0",
+    })
+    setEditor(
+      installEditor(
+        "create-key.sh",
+        `cat > "$1" <<'DIENTEOF'\n{"key":"new:key","type":"hash","entries":{"name":"alice"},"ttl":60}\nDIENTEOF`
+      ),
+      ""
+    )
+
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("▾ redis-create") && f.includes("○ cache"))
+      await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(f => f.includes("KEYS"))
+
+      await pressKeys(setup, ["2"])
+      await pressKeys(setup, ["a"])
+      const created = await waitForFrameDriven(setup, f => f.includes("created new:key") && f.includes("new:key"))
+      expect(created).toContain("new:key")
+
+      const check = new Bun.RedisClient(`redis://${container!.getHost()}:${container!.getMappedPort(6379)}/0`)
+      await check.connect()
+      expect(await check.send("HGETALL", ["new:key"])).toEqual({ name: "alice" })
+      expect(Number(await check.send("TTL", ["new:key"]))).toBeGreaterThan(0)
+      check.close()
+
+      /* The only key is selected, so `T` edits it. The fake editor writes
+         seconds; the inspector converts that to EXPIRE. */
+      process.env.EDITOR = installEditor("ttl.sh", `printf '120\\n' > "$1"`)
+      await pressKeys(setup, ["T"])
+      await waitForFrameDriven(setup, f => f.includes("new:key expires in 2m"))
+
+      const ttl = new Bun.RedisClient(`redis://${container!.getHost()}:${container!.getMappedPort(6379)}/0`)
+      await ttl.connect()
+      expect(Number(await ttl.send("TTL", ["new:key"]))).toBeGreaterThan(100)
+      ttl.close()
+    } finally {
+      setup.renderer.destroy()
+    }
+  }, 30_000)
+
+  test(":redis runs a command and opens the reply viewer", async () => {
+    const client = new Bun.RedisClient(`redis://${container!.getHost()}:${container!.getMappedPort(6379)}/0`)
+    await client.connect()
+    await client.send("FLUSHALL", [])
+    await client.send("SET", ["greeting", "hello world"])
+    client.close()
+
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "redis-command-ui",
+      database: "cache",
+      engine: "redis",
+      host: container!.getHost(),
+      port: container!.getMappedPort(6379),
+      defaultDatabase: "0",
+    })
+
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("▾ redis-command-ui") && f.includes("○ cache"))
+      await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(f => f.includes("KEYS") && f.includes("greeting"))
+
+      await pressKeys(setup, [":"])
+      await setup.waitForFrame(f => f.includes(":"))
+      await pressKeys(setup, [
+        "r",
+        "e",
+        "d",
+        "i",
+        "s",
+        " ",
+        "G",
+        "E",
+        "T",
+        " ",
+        "g",
+        "r",
+        "e",
+        "e",
+        "t",
+        "i",
+        "n",
+        "g",
+        "RETURN",
+      ])
+      const frame = await setup.waitForFrame(f => f.includes("redis · GET greeting"))
+      expect(frame).toContain("hello world")
+
+      await pressKeys(setup, ["ESCAPE"])
+      await setup.waitForFrame(f => !f.includes("redis · GET greeting") && f.includes("greeting"))
+    } finally {
+      setup.renderer.destroy()
+    }
+  }, 30_000)
+
   test("deletes every key in a visual selection from the keyspace", async () => {
     const client = new Bun.RedisClient(`redis://${container!.getHost()}:${container!.getMappedPort(6379)}/0`)
     await client.connect()

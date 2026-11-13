@@ -10,9 +10,11 @@
  * unrelated field, and a literal `""` is distinct from the empty string.
  */
 import type { TableColumn } from "@/inspector/types"
+import { Either } from "effect"
+import { parseJson } from "@/effect/json"
 import { formatCell } from "@/table/use-table"
 import { isRedisScore } from "@/redis/format"
-import type { RedisRowUpdate } from "@/redis/types"
+import type { RedisKeyDraft, RedisRowUpdate } from "@/redis/types"
 
 export interface RedisRowShape {
   readonly columns: ReadonlyArray<TableColumn>
@@ -142,4 +144,117 @@ export const parseRedisRow = (
   }
 
   return { ok: true, updates: [...pending.values()] }
+}
+
+/** Template shown when `a` creates a key. It deliberately uses a string key:
+ *  the other shapes are one edit away and the parser's error messages explain
+ *  the accepted `entries` form. */
+export const REDIS_KEY_TEMPLATE = `{
+  "key": "new:key",
+  "type": "string",
+  "value": "hello",
+  "ttl": -1
+}
+`
+
+export type RedisKeyDraftParseResult =
+  { readonly ok: true; readonly draft: RedisKeyDraft } | { readonly ok: false; readonly error: string }
+
+const scalar = (value: unknown): string | null => {
+  if (typeof value === "string") return value
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  return null
+}
+
+const parseTtl = (value: unknown): number | string => {
+  const ttl = typeof value === "number" ? value : Number(value ?? -1)
+  if (!Number.isInteger(ttl) || ttl < -1) {
+    return "ttl must be an integer: -1 for no expiry, or a positive number of seconds"
+  }
+  if (ttl === 0) return "ttl 0 would delete the key immediately; use -1 or a positive number"
+  return ttl
+}
+
+/** Parse the `$EDITOR` form used by `a` (new key). */
+export const parseRedisKeyDraft = (content: string): RedisKeyDraftParseResult => {
+  const parsed = parseJson(content)
+  if (Either.isLeft(parsed)) {
+    return { ok: false, error: `invalid JSON: ${String(parsed.left)}` }
+  }
+  const value = parsed.right
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false, error: "expected a JSON object" }
+  }
+  const record = value as Record<string, unknown>
+  const key = typeof record.key === "string" ? record.key.trim() : ""
+  if (key === "") return { ok: false, error: "key is required" }
+  const ttl = parseTtl(record.ttl ?? -1)
+  if (typeof ttl === "string") return { ok: false, error: ttl }
+  const type = record.type
+  if (type !== "string" && type !== "hash" && type !== "list" && type !== "set" && type !== "zset") {
+    return { ok: false, error: "type must be string, hash, list, set, or zset" }
+  }
+
+  if (type === "string") {
+    if (typeof record.value !== "string") return { ok: false, error: "string keys need a string `value`" }
+    return { ok: true, draft: { key, type, value: record.value, ttl } }
+  }
+
+  const entries = record.entries
+  if (type === "hash") {
+    if (entries === null || typeof entries !== "object" || Array.isArray(entries)) {
+      return { ok: false, error: "hash keys need an `entries` object of field: value pairs" }
+    }
+    const pairs: Array<readonly [string, string]> = []
+    for (const [field, raw] of Object.entries(entries as Record<string, unknown>)) {
+      const entry = scalar(raw)
+      if (entry === null) return { ok: false, error: `hash field "${field}" must be a string or number` }
+      pairs.push([field, entry])
+    }
+    if (pairs.length === 0) return { ok: false, error: "hash keys need at least one field" }
+    return { ok: true, draft: { key, type, entries: pairs, ttl } }
+  }
+
+  if (type === "list" || type === "set") {
+    if (!Array.isArray(entries)) {
+      return { ok: false, error: `${type} keys need an \`entries\` array` }
+    }
+    const values: Array<string> = []
+    for (const raw of entries) {
+      const entry = scalar(raw)
+      if (entry === null) return { ok: false, error: `${type} entries must be strings or numbers` }
+      values.push(entry)
+    }
+    if (values.length === 0) return { ok: false, error: `${type} keys need at least one entry` }
+    return { ok: true, draft: { key, type, entries: values, ttl } }
+  }
+
+  if (entries === null || typeof entries !== "object" || Array.isArray(entries)) {
+    return { ok: false, error: "zset keys need an `entries` object of member: score pairs" }
+  }
+  const scored: Array<readonly [string, string]> = []
+  for (const [member, raw] of Object.entries(entries as Record<string, unknown>)) {
+    const score = scalar(raw)
+    if (score === null || !isRedisScore(score)) {
+      return { ok: false, error: `zset member "${member}" needs a numeric score` }
+    }
+    scored.push([member, score])
+  }
+  if (scored.length === 0) return { ok: false, error: "zset keys need at least one member" }
+  return { ok: true, draft: { key, type, entries: scored, ttl } }
+}
+
+/** Parse the one-line TTL editor. `-1`/`persist`/`none` clears the expiry. */
+export const parseRedisTtl = (
+  content: string
+): { readonly ok: true; readonly ttl: number } | { readonly ok: false; readonly error: string } => {
+  const text = content.trim().toLowerCase()
+  if (text === "-1" || text === "persist" || text === "none" || text === "no expiry") {
+    return { ok: true, ttl: -1 }
+  }
+  const ttl = Number(text)
+  if (!Number.isInteger(ttl) || ttl <= 0) {
+    return { ok: false, error: "ttl must be a positive number of seconds, or -1 to persist the key" }
+  }
+  return { ok: true, ttl }
 }

@@ -71,3 +71,31 @@ export interface RedisKeysRequest {
   /** Optional Redis glob pattern, used by SCAN's MATCH argument. */
   readonly match?: string
 }
+
+/** A key the user asked to create. Collection values use name/value pairs so
+ *  the same editor form can express every basic Redis type. */
+export type RedisKeyDraft =
+  | {
+      readonly key: string
+      readonly type: "string"
+      readonly value: string
+      readonly ttl: number
+    }
+  | {
+      readonly key: string
+      readonly type: "hash"
+      readonly entries: ReadonlyArray<readonly [string, string]>
+      readonly ttl: number
+    }
+  | {
+      readonly key: string
+      readonly type: "list" | "set"
+      readonly entries: ReadonlyArray<string>
+      readonly ttl: number
+    }
+  | {
+      readonly key: string
+      readonly type: "zset"
+      readonly entries: ReadonlyArray<readonly [string, string]>
+      readonly ttl: number
+    }

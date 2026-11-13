@@ -390,4 +390,107 @@ describe("RedisInspector", () => {
     await Effect.runPromise(inspector.deleteKey(conn, "gone"))
     expect(commands).toEqual(["DEL gone"])
   })
+
+  describe("createKey", () => {
+    test("creates a string key with a ttl and refuses to overwrite", async () => {
+      const commands: Array<readonly [string, ReadonlyArray<string | number>]> = []
+      let exists = 0
+      const inspector = inspectorFor((command, args) => {
+        commands.push([command, args])
+        if (command === "EXISTS") return exists
+        return 1
+      })
+
+      await Effect.runPromise(inspector.createKey(conn, { key: "greeting", type: "string", value: "hello", ttl: 60 }))
+      expect(commands).toEqual([
+        ["EXISTS", ["greeting"]],
+        ["SET", ["greeting", "hello"]],
+        ["EXPIRE", ["greeting", "60"]],
+      ])
+
+      commands.length = 0
+      exists = 1
+      const exit = await Effect.runPromiseExit(
+        inspector.createKey(conn, { key: "greeting", type: "string", value: "other", ttl: -1 })
+      )
+      expect(exit._tag).toBe("Failure")
+      expect(commands).toEqual([["EXISTS", ["greeting"]]])
+    })
+
+    test("creates collection keys with one write command", async () => {
+      const commands: Array<readonly [string, ReadonlyArray<string | number>]> = []
+      const inspector = inspectorFor((command, args) => {
+        commands.push([command, args])
+        return command === "EXISTS" ? 0 : 1
+      })
+
+      await Effect.runPromise(
+        inspector.createKey(conn, {
+          key: "u:1",
+          type: "hash",
+          entries: [
+            ["name", "alice"],
+            ["age", "30"],
+          ],
+          ttl: -1,
+        })
+      )
+      await Effect.runPromise(
+        inspector.createKey(conn, { key: "jobs", type: "list", entries: ["one", "two"], ttl: -1 })
+      )
+      await Effect.runPromise(inspector.createKey(conn, { key: "tags", type: "set", entries: ["red"], ttl: -1 }))
+      await Effect.runPromise(
+        inspector.createKey(conn, {
+          key: "board",
+          type: "zset",
+          entries: [
+            ["alice", "10"],
+            ["bob", "20"],
+          ],
+          ttl: -1,
+        })
+      )
+
+      expect(commands.filter(([command]) => command !== "EXISTS")).toEqual([
+        ["HSET", ["u:1", "name", "alice", "age", "30"]],
+        ["RPUSH", ["jobs", "one", "two"]],
+        ["SADD", ["tags", "red"]],
+        ["ZADD", ["board", "10", "alice", "20", "bob"]],
+      ])
+    })
+  })
+
+  test("setTtl persists or expires an existing key", async () => {
+    const commands: Array<readonly [string, ReadonlyArray<string | number>]> = []
+    const inspector = inspectorFor((command, args) => {
+      commands.push([command, args])
+      return command === "EXISTS" ? 1 : 1
+    })
+
+    await Effect.runPromise(inspector.setTtl(conn, "greeting", 90))
+    await Effect.runPromise(inspector.setTtl(conn, "greeting", -1))
+    expect(commands.filter(([command]) => command !== "EXISTS")).toEqual([
+      ["EXPIRE", ["greeting", "90"]],
+      ["PERSIST", ["greeting"]],
+    ])
+
+    const missing = inspectorFor(command => (command === "EXISTS" ? 0 : 1))
+    const exit = await Effect.runPromiseExit(missing.setTtl(conn, "gone", 10))
+    expect(exit._tag).toBe("Failure")
+  })
+
+  test("runCommand tokenizes quoted arguments and returns the reply", async () => {
+    const commands: Array<readonly [string, ReadonlyArray<string | number>]> = []
+    const inspector = inspectorFor((command, args) => {
+      commands.push([command, args])
+      return command === "GET" ? "hello world" : 1
+    })
+
+    const reply = await Effect.runPromise(inspector.runCommand(conn, `get "greeting"`))
+    expect(reply).toBe("hello world")
+    expect(commands).toEqual([["GET", ["greeting"]]])
+
+    const exit = await Effect.runPromiseExit(inspector.runCommand(conn, `SET "unfinished`))
+    expect(exit._tag).toBe("Failure")
+  })
 })

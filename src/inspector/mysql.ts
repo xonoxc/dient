@@ -1,6 +1,6 @@
 import { Effect, Option } from "effect"
 import type { ActiveConnection, DriverService, QueryError } from "@/drivers/types"
-import type { TableColumn, TableInfo, TableQueries } from "@/inspector/types"
+import type { TableColumn, TableForeignKey, TableIndex, TableInfo, TableQueries } from "@/inspector/types"
 
 /**
  * MySQL introspection via `information_schema`. Everything is scoped to the
@@ -74,21 +74,132 @@ export const getPrimaryKeyMysql = (
     )
     .pipe(Effect.map(result => result.rows.map(row => String(row.column_name))))
 
+interface IndexRow {
+  readonly index_name: string
+  readonly column_name: string
+  readonly non_unique: number
+}
+
+export const indexesMysql = (
+  driver: DriverService,
+  conn: ActiveConnection,
+  tableName: string
+): Effect.Effect<ReadonlyArray<TableIndex>, QueryError> =>
+  driver
+    .query(
+      conn,
+      `SELECT index_name AS index_name,
+            column_name AS column_name,
+            non_unique AS non_unique
+     FROM information_schema.statistics
+     WHERE table_schema = DATABASE()
+       AND table_name = ?
+     ORDER BY index_name, seq_in_index`,
+      [tableName]
+    )
+    .pipe(
+      Effect.map(result => {
+        const byName = new Map<string, { columns: string[]; unique: boolean; primary: boolean }>()
+        for (const row of result.rows as unknown as ReadonlyArray<IndexRow>) {
+          const name = String(row.index_name)
+          const entry = byName.get(name) ?? { columns: [], unique: true, primary: name === "PRIMARY" }
+          entry.columns.push(String(row.column_name))
+          entry.unique = entry.unique && Number(row.non_unique) === 0
+          byName.set(name, entry)
+        }
+        return Array.from(byName, ([name, entry]) => ({ name, ...entry }))
+      })
+    )
+
+interface ForeignKeyRow {
+  readonly constraint_name: string
+  readonly column_name: string
+  readonly referenced_table_name: string
+  readonly referenced_column_name: string
+}
+
+export const foreignKeysMysql = (
+  driver: DriverService,
+  conn: ActiveConnection,
+  tableName: string
+): Effect.Effect<ReadonlyArray<TableForeignKey>, QueryError> =>
+  driver
+    .query(
+      conn,
+      `SELECT constraint_name AS constraint_name,
+            column_name AS column_name,
+            referenced_table_name AS referenced_table_name,
+            referenced_column_name AS referenced_column_name
+     FROM information_schema.key_column_usage
+     WHERE table_schema = DATABASE()
+       AND table_name = ?
+       AND referenced_table_name IS NOT NULL
+     ORDER BY constraint_name, ordinal_position`,
+      [tableName]
+    )
+    .pipe(
+      Effect.map(result => {
+        const byName = new Map<string, { columns: string[]; referencedTable: string; referencedColumns: string[] }>()
+        for (const row of result.rows as unknown as ReadonlyArray<ForeignKeyRow>) {
+          const name = String(row.constraint_name)
+          const entry = byName.get(name) ?? {
+            columns: [],
+            referencedTable: String(row.referenced_table_name),
+            referencedColumns: [],
+          }
+          entry.columns.push(String(row.column_name))
+          entry.referencedColumns.push(String(row.referenced_column_name))
+          byName.set(name, entry)
+        }
+        return Array.from(byName, ([name, entry]) => ({ name, ...entry }))
+      })
+    )
+
+const quoteMysqlIdentifier = (name: string): string => `\`${name.replace(/`/g, "``")}\``
+
+export const ddlMysql = (
+  driver: DriverService,
+  conn: ActiveConnection,
+  tableName: string
+): Effect.Effect<string | undefined, QueryError> =>
+  driver.query(conn, `SHOW CREATE TABLE ${quoteMysqlIdentifier(tableName)}`).pipe(
+    Effect.map(result => {
+      const row = result.rows[0]
+      if (!row) return undefined
+      /* mysql2 reports the DDL column as "Create Table"; some versions use a
+         lower-case alias, so accept either rather than betting on one. */
+      const value =
+        row["Create Table"] ??
+        row["CREATE TABLE"] ??
+        Object.values(row).find(
+          candidate => typeof candidate === "string" && candidate.toUpperCase().includes("CREATE TABLE")
+        )
+      return value === undefined || value === null ? undefined : String(value)
+    }),
+    Effect.orElseSucceed(() => undefined)
+  )
+
 export const describeTableMysql = (
   driver: DriverService,
   conn: ActiveConnection,
   tableName: string
 ): Effect.Effect<Option.Option<TableInfo>, QueryError> =>
-  columnsMysql(driver, conn, tableName).pipe(
-    Effect.flatMap(columns => {
-      if (columns.length === 0) {
-        return Effect.succeed(Option.none<TableInfo>())
-      }
-      return getPrimaryKeyMysql(driver, conn, tableName).pipe(
-        Effect.map(primaryKey => Option.some<TableInfo>({ name: tableName, columns, primaryKey }))
-      )
-    })
-  )
+  Effect.gen(function* () {
+    const [columns, primaryKey, indexes, foreignKeys, ddl] = yield* Effect.all(
+      [
+        columnsMysql(driver, conn, tableName),
+        getPrimaryKeyMysql(driver, conn, tableName),
+        indexesMysql(driver, conn, tableName),
+        foreignKeysMysql(driver, conn, tableName),
+        ddlMysql(driver, conn, tableName),
+      ],
+      { concurrency: 5 }
+    )
+    if (columns.length === 0) {
+      return Option.none<TableInfo>()
+    }
+    return Option.some<TableInfo>({ name: tableName, columns, primaryKey, indexes, foreignKeys, ddl })
+  })
 
 export const mysqlQueries = (driver: DriverService): TableQueries => ({
   listTables: conn => listTablesMysql(driver, conn),

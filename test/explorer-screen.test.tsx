@@ -99,6 +99,32 @@ describe("explorer screen", () => {
     }
   })
 
+  test("D opens the schema viewer with DDL, indexes, and columns", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile(),
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await expandToConnection(setup)
+      await pressKeys(setup, ["2"])
+      await pressKeys(setup, ["SHIFT+d"])
+      const frame = await setup.waitForFrame(f => f.includes("schema · users"))
+      expect(frame).toContain("CREATE TABLE")
+      expect(frame).toContain("COLUMNS")
+      expect(frame).toContain("PRIMARY KEY")
+      expect(frame).toContain("INDEXES")
+
+      await pressKeys(setup, ["ESCAPE"])
+      await setup.waitForFrame(f => !f.includes("schema · users") && f.includes("USERS"))
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
   test("\\ toggles the sidebar and moves focus into the table when hiding it", async () => {
     const services = await resolveTestServices(freshConfigFile())
     await seedProject(services.store, {

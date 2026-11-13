@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { parseRedisRow, redisRowShape, serializeRedisRow } from "@/redis/editing"
+import { parseRedisKeyDraft, parseRedisRow, parseRedisTtl, redisRowShape, serializeRedisRow } from "@/redis/editing"
 
 describe("Redis row editing", () => {
   test("round-trips hash fields, including newlines and backslashes", () => {
@@ -74,5 +74,73 @@ describe("Redis row editing", () => {
     const parsed = parseRedisRow(text, shape.columns, shape.primaryKey, row)
     expect(parsed.ok).toBe(false)
     if (!parsed.ok) expect(parsed.error).toContain("expects a number")
+  })
+})
+
+describe("Redis key draft editing", () => {
+  test("parses a string key with a ttl", () => {
+    expect(parseRedisKeyDraft(JSON.stringify({ key: "greeting", type: "string", value: "hello", ttl: 60 }))).toEqual({
+      ok: true,
+      draft: { key: "greeting", type: "string", value: "hello", ttl: 60 },
+    })
+  })
+
+  test("parses hash, list, set, and zset entries", () => {
+    expect(
+      parseRedisKeyDraft(JSON.stringify({ key: "u:1", type: "hash", entries: { name: "alice", age: 30 } }))
+    ).toEqual({
+      ok: true,
+      draft: {
+        key: "u:1",
+        type: "hash",
+        entries: [
+          ["name", "alice"],
+          ["age", "30"],
+        ],
+        ttl: -1,
+      },
+    })
+
+    expect(parseRedisKeyDraft(JSON.stringify({ key: "jobs", type: "list", entries: ["one", 2] }))).toEqual({
+      ok: true,
+      draft: { key: "jobs", type: "list", entries: ["one", "2"], ttl: -1 },
+    })
+
+    expect(parseRedisKeyDraft(JSON.stringify({ key: "tags", type: "set", entries: ["red"] }))).toEqual({
+      ok: true,
+      draft: { key: "tags", type: "set", entries: ["red"], ttl: -1 },
+    })
+
+    expect(
+      parseRedisKeyDraft(JSON.stringify({ key: "board", type: "zset", entries: { alice: 10, bob: "2.5" } }))
+    ).toEqual({
+      ok: true,
+      draft: {
+        key: "board",
+        type: "zset",
+        entries: [
+          ["alice", "10"],
+          ["bob", "2.5"],
+        ],
+        ttl: -1,
+      },
+    })
+  })
+
+  test("rejects malformed and dangerous drafts", () => {
+    expect(parseRedisKeyDraft("not json").ok).toBe(false)
+    expect(parseRedisKeyDraft(JSON.stringify({ key: "", type: "string", value: "x" })).ok).toBe(false)
+    expect(parseRedisKeyDraft(JSON.stringify({ key: "k", type: "wat" })).ok).toBe(false)
+    expect(parseRedisKeyDraft(JSON.stringify({ key: "k", type: "string", value: "x", ttl: 0 })).ok).toBe(false)
+    expect(parseRedisKeyDraft(JSON.stringify({ key: "k", type: "hash", entries: [] })).ok).toBe(false)
+    expect(parseRedisKeyDraft(JSON.stringify({ key: "k", type: "zset", entries: { alice: "high" } })).ok).toBe(false)
+  })
+
+  test("parses ttl values and the persist aliases", () => {
+    expect(parseRedisTtl("60")).toEqual({ ok: true, ttl: 60 })
+    expect(parseRedisTtl("-1")).toEqual({ ok: true, ttl: -1 })
+    expect(parseRedisTtl("persist")).toEqual({ ok: true, ttl: -1 })
+    expect(parseRedisTtl("0").ok).toBe(false)
+    expect(parseRedisTtl("nope").ok).toBe(false)
   })
 })
