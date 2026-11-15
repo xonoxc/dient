@@ -556,6 +556,66 @@ describe("list navigation", () => {
       }
     })
 
+    test("capital Q exits too", async () => {
+      const services = await resolveTestServices(freshConfigFile())
+      const exits: number[] = []
+      const setup = await renderApp(
+        <App theme={makeTheme("dark")} services={services.services} exit={c => exits.push(c)} />
+      )
+      try {
+        await pressKeys(setup, ["SHIFT+q"])
+        expect(exits).toEqual([0])
+      } finally {
+        setup.renderer.destroy()
+      }
+    })
+
+    test("q quits from the RabbitMQ workspace (the only screen with its own keyboard)", async () => {
+      /* A one-endpoint management API mock: connect needs /api/overview, the
+         workspace refresh reads only list endpoints. */
+      const server = Bun.serve({
+        port: 0,
+        fetch: request => {
+          const body = new URL(request.url).pathname === "/api/overview" ? "{}" : "[]"
+          return new Response(body, { status: 200, headers: { "Content-Type": "application/json" } })
+        },
+      })
+      try {
+        const services = await resolveTestServices(freshConfigFile())
+        await seedProject(services.store, {
+          name: "demo",
+          database: "broker",
+          engine: "rabbitmq",
+          host: "localhost",
+          port: server.port,
+          user: "guest",
+          password: "guest",
+        })
+        const exits: number[] = []
+        const setup = await renderApp(
+          <App theme={makeTheme("dark")} services={services.services} exit={c => exits.push(c)} />
+        )
+        try {
+          await pressKeys(setup, ["RETURN"])
+          await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ broker"))
+          await pressKeys(setup, ["j", "RETURN"])
+          await setup.waitForFrame(f => f.includes("RABBITMQ"))
+
+          /* Focus the workspace pane (the sidebar path quits separately).
+             "j/k select" is the first focused-hint; unfocused hints say
+             "j/k sidebar", so this only settles once focus moved. */
+          await pressKeys(setup, ["2"])
+          await setup.waitForFrame(f => f.includes("j/k select") && !f.includes("j/k sidebar"))
+          await pressKeys(setup, ["q"])
+          expect(exits).toEqual([0])
+        } finally {
+          setup.renderer.destroy()
+        }
+      } finally {
+        server.stop(true)
+      }
+    })
+
     test("a VISUAL selection refuses it", async () => {
       const services = await resolveTestServices(freshConfigFile())
       await seedProject(services.store, {

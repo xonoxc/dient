@@ -198,6 +198,7 @@ The rule is the same on every screen with more than one pane.
 | `Esc` | Leave an open Redis key for the keyspace |
 | `i` | Edit the current row/value in `$EDITOR` (Redis: rename a key in the keyspace) |
 | `r` | Reload the current table or Redis value |
+| `q` / `Q` | Quit (normal mode) |
 | `e` | View the full cell value |
 | `D` | Show the table schema (DDL, indexes, foreign keys) |
 | `V` | Start a row selection |
@@ -262,6 +263,7 @@ and ack mode.
 | `o` | Reverse the message view |
 | `y` | Copy the selected payload |
 | `i` | Edit and republish the selected payload |
+| `q` / `Q` | Quit the app |
 | `Esc` | Leave the message view for queues |
 
 `M` consumes exactly one ready message from the source and republishes it

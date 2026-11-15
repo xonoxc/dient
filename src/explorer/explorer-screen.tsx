@@ -1154,6 +1154,7 @@ export function ExplorerScreen() {
         key === "Escape" ||
         key === "escape" ||
         key === "q" ||
+        key === "Q" ||
         key === "D" ||
         key === "e" ||
         key === "E" ||
@@ -1237,6 +1238,7 @@ export function ExplorerScreen() {
         else if (key === "g" || key === "G") sidebar.jump(key === "G" ? "last" : "first")
         else if (key === "right") setFocus("table")
         else if (key === "S") router.setScreen("settings")
+        else if (key === "q" || key === "Q") router.exit(0)
         else if (key === "tab") explorer.cycleConnection()
         else if (key === "enter" || key === "return" || key === "\r") {
           const cursor = sidebar.cursorRef.current
@@ -1258,6 +1260,7 @@ export function ExplorerScreen() {
         key === "Escape" ||
         key === "escape" ||
         key === "q" ||
+        key === "Q" ||
         key === "e" ||
         key === "E" ||
         key === "return" ||
@@ -1312,7 +1315,7 @@ export function ExplorerScreen() {
         setEditColumn(current => Math.min(Math.max(explorer.table.columns.length - 1, 0), current + 1))
         return
       }
-      if (key === "\u001b" || key === "Escape" || key === "escape" || key === "q") {
+      if (key === "\u001b" || key === "Escape" || key === "escape" || key === "q" || key === "Q") {
         setPreviewOpen(false)
         return
       }
@@ -1332,11 +1335,11 @@ export function ExplorerScreen() {
       return
     }
 
-    /* `q` quits, but only from NORMAL with nothing modal open — the guards
-       above already returned for a text field, the help overlay, and the
-       command line. Without a VISUAL check `q` would quit out from under an
-       open selection, so it is refused there and the selection keeps it. */
-    if (key === "q" && vimMode !== "visual") {
+    /* `q` (and `Q`) quit, but only from NORMAL with nothing modal open — the
+       guards above already returned for a text field, the help overlay, and
+       the command line. Without a VISUAL check `q` would quit out from under
+       an open selection, so it is refused there and the selection keeps it. */
+    if ((key === "q" || key === "Q") && vimMode !== "visual") {
       router.exit(0)
       return
     }

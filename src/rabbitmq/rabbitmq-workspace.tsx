@@ -537,6 +537,12 @@ export function RabbitMqWorkspace({ active, focused }: { readonly active: Active
   useKeyboard(event => {
     if (!focused || textInput.route(event) || commandLine.open || router.helpOpen || dialog.dialog) return
     const key = normalModeKey(event)
+    /* The shared help lists `q` as quit, and the sidebar already honours it;
+       the workspace must too, or the key dies silently on this screen. */
+    if (key === "q" || key === "Q") {
+      router.exit(0)
+      return
+    }
     if (key === "tab") selectTab(TABS[(TABS.findIndex(item => item.id === tab) + 1) % TABS.length]!.id)
     else if (key === "r") {
       void refresh()
