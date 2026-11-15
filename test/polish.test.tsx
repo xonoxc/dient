@@ -5,6 +5,7 @@
  * never opens a connection on its own (deferred connects).
  */
 import { describe, expect, test } from "bun:test"
+import { helpRows } from "@/ui/help-screen"
 import { Effect } from "effect"
 import App from "@/app"
 import { makeTheme } from "@/theme"
@@ -20,8 +21,19 @@ describe("polish + help", () => {
       await pressKeys(setup, ["?"])
       await setup.waitForFrame(f => f.includes("dient · keybindings") && f.includes("j / k"))
       const frame = setup.captureCharFrame()
-      expect(frame).toContain(":e <table>")
-      expect(frame).toContain(":connect <name>")
+      /* The explorer section leads; the Redis-only keys are listed there too. */
+      expect(frame).toContain("EXPLORER")
+      expect(frame).toContain("Redis key")
+      expect(frame).toContain("TTL")
+
+      /* The whole reference scrolls: the commands live one G away. */
+      await pressKeys(setup, ["SHIFT+g"])
+      const end = await setup.waitForFrame(f => f.includes("COMMANDS"))
+      expect(end).toContain(":e <table>")
+      expect(end).toContain(":q")
+
+      await pressKeys(setup, ["g"])
+      await setup.waitForFrame(f => f.includes("EXPLORER"))
 
       await pressKeys(setup, ["ESCAPE"])
       await setup.waitForFrame(f => !f.includes("keybindings"))
@@ -29,6 +41,28 @@ describe("polish + help", () => {
     } finally {
       setup.renderer.destroy()
     }
+  })
+
+  test("the help reference covers every mode, including RabbitMQ", () => {
+    const rows = helpRows(false)
+    const headings = rows.filter(row => row.kind === "heading").map(row => (row.kind === "heading" ? row.text : ""))
+    expect(headings).toEqual(["EXPLORER", "RABBITMQ WORKSPACE", "COMMANDS"])
+    const text = rows.map(row => (row.kind === "binding" ? `${row.keyName} ${row.action}` : row.text)).join("\n")
+    /* RabbitMQ depth: the destructive and messaging actions are all named. */
+    for (const binding of ["Tab", "a", "p", "b", "x", "M", "d", "u", "y", "i"]) {
+      expect(text).toContain(binding)
+    }
+    expect(text).toContain("purge a queue")
+    expect(text).toContain("move next ready message")
+    /* Redis-only keys live in the explorer section. */
+    expect(text).toContain("new Redis key")
+    expect(text).toContain("set TTL")
+
+    const settings = helpRows(true)
+    const settingsText = settings
+      .map(row => (row.kind === "binding" ? `${row.keyName} ${row.action}` : row.text))
+      .join("\n")
+    expect(settingsText).toContain("move database to another project")
   })
 
   test("the status bar reports the open table and its row count", async () => {

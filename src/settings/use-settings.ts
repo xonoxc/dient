@@ -54,6 +54,13 @@ export type SettingsForm =
       styles every DB client offers; picking one up front beats hiding the
       field form behind a chord. */
   | { readonly kind: "addChoice"; readonly projectId: ProjectId; readonly cursor: number }
+  /** `m` on a database: pick the project to move it into. */
+  | {
+      readonly kind: "moveChoice"
+      readonly databaseId: DatabaseId
+      readonly databaseName: string
+      readonly cursor: number
+    }
   | {
       readonly kind: "connect"
       readonly projectId: ProjectId
@@ -157,6 +164,12 @@ export interface UseSettingsResult {
   readonly addChoiceMove: (delta: number) => void
   /** Open the highlighted "add database" choice. */
   readonly addChoiceSubmit: () => void
+  /** `m` on a database: open the "move to project" picker. */
+  readonly moveDatabase: () => void
+  /** Move the highlight in the "move to project" menu. */
+  readonly moveChoiceMove: (delta: number) => void
+  /** Enter on the "move to project" menu performs the move. */
+  readonly moveChoiceSubmit: () => void
   readonly remove: () => void
   readonly rename: () => void
   /** Edit the selected project name or the selected database's full settings. */
@@ -447,6 +460,65 @@ export const useSettings = (): UseSettingsResult => {
     if (current?.kind !== "addChoice") return
     if (current.cursor === 0) addByUri(current.projectId)
     else addByFields(current.projectId)
+  }
+
+  /** `m` on a database opens the project picker. One project means there is
+   *  nowhere to move the database to. */
+  const moveDatabase = (): void => {
+    const item = items[Math.min(cursor, items.length - 1)]
+    if (!item || item.kind !== "database") {
+      toasts.push("info", "select a database to move")
+      return
+    }
+    if (projects.length < 2) {
+      toasts.push("info", "create another project with P to move this database")
+      return
+    }
+    openForm({
+      kind: "moveChoice",
+      databaseId: item.refId as DatabaseId,
+      databaseName: item.label,
+      cursor: 0,
+    })
+  }
+
+  const moveChoiceMove = (delta: number): void => {
+    const current = formRef.current
+    if (current?.kind !== "moveChoice") return
+    openForm({
+      ...current,
+      cursor: Math.max(0, Math.min(projects.length - 1, current.cursor + delta)),
+    })
+  }
+
+  /** Enter on the move menu reparents the database. Moving into the project
+   *  it already lives in is refused without closing the menu, so the picker
+   *  stays usable. */
+  const moveChoiceSubmit = (): void => {
+    const current = formRef.current
+    if (current?.kind !== "moveChoice") return
+    const target = projects[current.cursor]
+    if (!target) return
+    const source = items.find(item => item.kind === "database" && item.refId === current.databaseId)?.parentId
+    if (target.id === source) {
+      toasts.push("info", `${current.databaseName} is already in ${target.name}`)
+      return
+    }
+    Effect.runFork(
+      Effect.gen(function* () {
+        yield* configStore.updateDatabase(current.databaseId, { projectId: target.id })
+        toasts.push("success", `moved ${current.databaseName} to ${target.name}`)
+        yield* Effect.sync(() => configRevision.bump(target.id))
+        yield* Effect.sync(refresh)
+      }).pipe(
+        Effect.catchAll(cause =>
+          Effect.sync(() => {
+            errorLog.append("settings.moveDatabase", cause)
+            toasts.push("error", `failed to move: ${describeError(cause)}`)
+          })
+        )
+      )
+    )
   }
 
   const typeChar = (char: string): void => {
@@ -1013,6 +1085,9 @@ export const useSettings = (): UseSettingsResult => {
     addByFields,
     addChoiceMove: moveAddChoice,
     addChoiceSubmit: submitAddChoice,
+    moveDatabase,
+    moveChoiceMove,
+    moveChoiceSubmit,
     remove: () => {
       const item = items[Math.min(cursor, items.length - 1)]
       if (!item) return

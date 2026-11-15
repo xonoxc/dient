@@ -200,7 +200,7 @@ The rule is the same on every screen with more than one pane.
 | `r` | Reload the current table or Redis value |
 | `q` / `Q` | Quit (normal mode) |
 | `e` | View the full cell value |
-| `D` | Show the table schema (DDL, indexes, foreign keys) |
+| `D` | Show the table schema as a column grid, then key/index/foreign-key sections and the DDL |
 | `V` | Start a row selection |
 | `y` | Copy the selection to the clipboard |
 | `/` | Filter the current page |
@@ -282,7 +282,9 @@ it returns, so a publish failure after the consume cannot be rolled back.
 | `p` | Paste a connection URI |
 | `Shift+P` | Add a project |
 | `e` | Edit the selected project or database |
-| `r` / `t` / `d` | Rename / test connection / delete |
+| `r` | Rename |
+| `m` | Move the selected database to another project |
+| `t` / `d` | Test connection / delete |
 | `Shift+E` | Back to the explorer |
 
 ### Commands

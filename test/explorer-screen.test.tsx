@@ -113,13 +113,95 @@ describe("explorer screen", () => {
       await pressKeys(setup, ["2"])
       await pressKeys(setup, ["SHIFT+d"])
       const frame = await setup.waitForFrame(f => f.includes("schema · users"))
-      expect(frame).toContain("CREATE TABLE")
+      /* The column grid is the first thing on screen; the DDL is the last
+         section, one `G` away. */
       expect(frame).toContain("COLUMNS")
+      expect(frame).toContain("INTEGER")
       expect(frame).toContain("PRIMARY KEY")
       expect(frame).toContain("INDEXES")
 
+      await pressKeys(setup, ["SHIFT+g"])
+      await setup.waitForFrame(f => f.includes("CREATE TABLE"))
+      await pressKeys(setup, ["g"])
+      await setup.waitForFrame(f => f.includes("COLUMNS"))
+
       await pressKeys(setup, ["ESCAPE"])
       await setup.waitForFrame(f => !f.includes("schema · users") && f.includes("USERS"))
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test(":schema opens only the schema viewer, never the row preview beneath it", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile(),
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await expandToConnection(setup)
+      await pressKeys(setup, ["2"])
+      /* The RETURN that submits the command belongs to the command line, not
+         to the table underneath: a preview opening with the schema is the
+         leaked-keystroke bug. */
+      await pressKeys(setup, [":", "s", "c", "h", "e", "m", "a", "RETURN"])
+      const frame = await setup.waitForFrame(f => f.includes("schema · users"))
+      expect(frame).not.toContain("· row 1 of")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test(":schema over an open preview leaves exactly one overlay", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile(),
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await expandToConnection(setup)
+      await pressKeys(setup, ["2"])
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("· row 1 of"))
+      await pressKeys(setup, [":", "s", "c", "h", "e", "m", "a", "RETURN"])
+      const frame = await setup.waitForFrame(f => f.includes("schema · users"))
+      /* The preview card is wider than the schema card; if it stayed open its
+         values would peek out around the schema popup. The schema shows
+         structure only — a row value like this email can only come from the
+         preview. */
+      expect(frame).not.toContain("alice@example.com")
+      await pressKeys(setup, ["ESCAPE"])
+      await setup.waitForFrame(f => !f.includes("schema · users") && !f.includes("· row 1 of"))
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test("sidebar expansions survive a round trip to settings and back", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: freshSqliteDataFile(),
+    })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      /* Expand the project so its database row is visible. */
+      await pressKeys(setup, ["RETURN"])
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
+
+      /* Screens unmount each other; the expanded tree must survive both ways. */
+      await pressKeys(setup, ["SHIFT+s"])
+      await setup.waitForFrame(f => f.includes("SETTINGS"))
+      await pressKeys(setup, ["SHIFT+e"])
+      await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
     } finally {
       setup.renderer.destroy()
     }

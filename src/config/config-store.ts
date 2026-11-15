@@ -68,6 +68,8 @@ export interface CreateDatabaseInput {
 export interface UpdateDatabaseInput {
   readonly name?: string
   readonly engine?: EngineType
+  /** Reparent the database under another project. */
+  readonly projectId?: ProjectId
 }
 
 export interface CreateConnectionInput {

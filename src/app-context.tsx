@@ -442,6 +442,49 @@ export function useConfigRevision(): ConfigRevisionState {
   return value
 }
 
+/**
+ * Session-scoped sidebar memory. Screens unmount each other (settings vs
+ * explorer), and the sidebar lives inside the explorer — without this, every
+ * trip to settings collapses the tree and loses the cursor. The memory lives
+ * at the App level in refs, so it survives remounts and dies with the process
+ * (nothing is persisted to disk).
+ */
+export interface SidebarMemoryState {
+  readonly expanded: ReadonlySet<string>
+  readonly cursor: number
+  readonly remember: (expanded: ReadonlySet<string>, cursor: number) => void
+}
+
+const SidebarMemoryContext = createContext<SidebarMemoryState | null>(null)
+
+export function SidebarMemoryProvider({ children }: { children?: ReactNode }) {
+  const memoryRef = useRef<{ expanded: ReadonlySet<string>; cursor: number }>({
+    expanded: new Set(),
+    cursor: 0,
+  })
+
+  const value = useMemo<SidebarMemoryState>(
+    () => ({
+      get expanded() {
+        return memoryRef.current.expanded
+      },
+      get cursor() {
+        return memoryRef.current.cursor
+      },
+      remember: (expanded, cursor) => {
+        memoryRef.current = { expanded, cursor }
+      },
+    }),
+    []
+  )
+
+  return <SidebarMemoryContext.Provider value={value}>{children}</SidebarMemoryContext.Provider>
+}
+
+export function useSidebarMemory(): SidebarMemoryState | null {
+  return useContext(SidebarMemoryContext)
+}
+
 /** One `:` command. `match` decides if a typed line applies, `run` executes it
     with the full text (trimmed) so commands can parse their own arguments. */
 export interface AppCommand {

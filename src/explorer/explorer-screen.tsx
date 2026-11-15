@@ -35,9 +35,9 @@ import { buildFinderIndex, type FinderEntry } from "@/finder/finder"
 import { FinderOverlay } from "@/finder/finder-overlay"
 import { RowPreview } from "@/explorer/row-preview"
 import { TextViewer, textViewerTextWidth, textViewerWidth } from "@/explorer/text-viewer"
+import { SchemaViewer, schemaViewerRowCount } from "@/explorer/schema-viewer"
 import { useUpdateUi } from "@/update/update-provider"
 import { describeError } from "@/errors/describe"
-import { formatTableInfo } from "@/inspector/format"
 import { CELL_VIEWER_TEXT_WIDTH, CellViewer, wrapText } from "@/explorer/cell-viewer"
 import { fuzzyMatch } from "@/finder/fuzzy"
 import { normalModeKey, resolveTypedChar } from "@/ui/text-entry"
@@ -153,10 +153,12 @@ export function ExplorerScreen() {
   const [viewerOpen, setViewerOpen] = useState(false)
   const [viewerOffset, setViewerOffset] = useState(0)
 
-  /* `D` opens the schema document; `:redis` uses the same overlay for command
-     replies. One generic text viewer keeps both scrollable and dismissable
-     without inventing a second modal contract. */
-  const [textViewer, setTextViewer] = useState<{ readonly title: string; readonly text: string } | null>(null)
+  /* `D` opens the structured schema viewer; `:redis` uses the plain-text
+     viewer for command replies. One generic scroll state keeps both
+     scrollable and dismissable without inventing a second modal contract. */
+  const [textViewer, setTextViewer] = useState<
+    { readonly kind: "text"; readonly title: string; readonly text: string } | { readonly kind: "schema" } | null
+  >(null)
   const [textViewerOffset, setTextViewerOffset] = useState(0)
 
   /* Vim-style delete: `d` is a pending prefix. Pressing `d` again (or any
@@ -1051,10 +1053,21 @@ export function ExplorerScreen() {
   const viewerWidth = textViewerWidth(width)
   const viewerTextWidth = textViewerTextWidth(viewerWidth)
   const openTextViewer = (title: string, text: string) => {
-    setTextViewer({ title, text })
+    setTextViewer({ kind: "text", title, text })
     setTextViewerOffset(0)
+    /* Overlays are mutually exclusive: a preview (or cell viewer) left open
+       underneath would peek out around the narrower schema card and read as
+       "the DDL popup opened a second modal". */
+    setPreviewOpen(false)
+    setViewerOpen(false)
   }
-  const textViewerLines = (): number => (textViewer ? wrapText(textViewer.text, viewerTextWidth).length : 0)
+  const textViewerLines = (): number => {
+    if (!textViewer) return 0
+    if (textViewer.kind === "schema") {
+      return tableInfo ? schemaViewerRowCount(tableInfo, viewerTextWidth) : 0
+    }
+    return wrapText(textViewer.text, viewerTextWidth).length
+  }
   const scrollTextViewer = (delta: number) => {
     setTextViewerOffset(current =>
       Math.max(0, Math.min(Math.max(0, textViewerLines() - textViewerMaxRows), current + delta))
@@ -1068,7 +1081,10 @@ export function ExplorerScreen() {
       toasts.push("info", "no schema loaded for this table")
       return
     }
-    openTextViewer(`schema · ${tableInfo.name}`, formatTableInfo(tableInfo))
+    setTextViewer({ kind: "schema" })
+    setTextViewerOffset(0)
+    setPreviewOpen(false)
+    setViewerOpen(false)
   }
   useCommand({
     id: "explorer:schema",
@@ -1785,14 +1801,23 @@ export function ExplorerScreen() {
         />
       ) : null}
       {textViewer ? (
-        <TextViewer
-          title={textViewer.title}
-          text={textViewer.text}
-          visibleRows={textViewerMaxRows}
-          offset={textViewerOffset}
-          width={viewerWidth}
-          closeHint={textViewer.title.startsWith("schema") ? "D/Esc close" : "Esc close"}
-        />
+        textViewer.kind === "schema" && tableInfo ? (
+          <SchemaViewer
+            info={tableInfo}
+            visibleRows={textViewerMaxRows}
+            offset={textViewerOffset}
+            width={viewerWidth}
+          />
+        ) : (
+          <TextViewer
+            title={textViewer.kind === "text" ? textViewer.title : ""}
+            text={textViewer.kind === "text" ? textViewer.text : ""}
+            visibleRows={textViewerMaxRows}
+            offset={textViewerOffset}
+            width={viewerWidth}
+            closeHint="Esc close"
+          />
+        )
       ) : null}
     </box>
   )

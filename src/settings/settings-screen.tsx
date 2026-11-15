@@ -20,6 +20,7 @@ import { useRouter, useCommandLine, useSessionStatus, useTextInput, useToasts, t
 import { useUpdateUi } from "@/update/update-provider"
 import { useSettings, type SettingsForm, type SettingsListItem } from "@/settings/use-settings"
 import { FIELD_LABEL, CONNECTION_FIELDS, ADD_CHOICES } from "@/settings/use-settings"
+import type { Project } from "@/domain"
 import { normalModeKey, resolveTypedChar } from "@/ui/text-entry"
 import { paneIndexForKey } from "@/ui/pane-keys"
 import { windowTail } from "@/ui/text-window"
@@ -53,6 +54,9 @@ export function SettingsScreen() {
     addByFields,
     addChoiceMove,
     addChoiceSubmit,
+    moveDatabase,
+    moveChoiceMove,
+    moveChoiceSubmit,
     projects,
     remove,
     rename,
@@ -153,6 +157,7 @@ export function SettingsScreen() {
       "Shift+P project",
       "e edit",
       "r rename",
+      "m move db",
       "Shift+E explorer",
       "j/k move",
       "Enter expand",
@@ -165,29 +170,31 @@ export function SettingsScreen() {
       mode: textInput.active ? "insert" : "normal",
       table: "settings",
       hints: form
-        ? form.kind === "addChoice"
-          ? ["j/k move", "Enter open", "Esc cancel"]
-          : form.kind === "connect" && form.mode === "uri"
-            ? ["paste connection string", "Tab complete", "Ctrl+n credentials", "Enter add", "Esc cancel"]
-            : form.kind === "connect"
-              ? [
-                  `type ${fieldLabel}`,
-                  "Tab/Shift+Tab field",
-                  "Ctrl+n engine",
-                  ...(form.engine === "redis" || form.engine === "rabbitmq" ? ["Ctrl+t TLS"] : []),
-                  "Ctrl+u clear",
-                  form.editing ? "Enter save" : "Enter add",
-                  "Esc cancel",
-                ]
-              : form.kind === "connectName"
-                ? form.suggestedName
-                  ? ["optional name", "Enter add", "Esc cancel"]
-                  : ["database name missing", "Enter add", "Esc cancel"]
-                : form.kind === "rename"
-                  ? ["new name", "Enter save", "Esc cancel"]
-                  : form.kind === "project"
-                    ? [form.projectId ? "project name" : "new project", "Enter save", "Esc cancel"]
-                    : ["type name", "Enter save", "Esc cancel"]
+        ? form.kind === "moveChoice"
+          ? ["j/k move", "Enter move", "Esc cancel"]
+          : form.kind === "addChoice"
+            ? ["j/k move", "Enter open", "Esc cancel"]
+            : form.kind === "connect" && form.mode === "uri"
+              ? ["paste connection string", "Tab complete", "Ctrl+n credentials", "Enter add", "Esc cancel"]
+              : form.kind === "connect"
+                ? [
+                    `type ${fieldLabel}`,
+                    "Tab/Shift+Tab field",
+                    "Ctrl+n engine",
+                    ...(form.engine === "redis" || form.engine === "rabbitmq" ? ["Ctrl+t TLS"] : []),
+                    "Ctrl+u clear",
+                    form.editing ? "Enter save" : "Enter add",
+                    "Esc cancel",
+                  ]
+                : form.kind === "connectName"
+                  ? form.suggestedName
+                    ? ["optional name", "Enter add", "Esc cancel"]
+                    : ["database name missing", "Enter add", "Esc cancel"]
+                  : form.kind === "rename"
+                    ? ["new name", "Enter save", "Esc cancel"]
+                    : form.kind === "project"
+                      ? [form.projectId ? "project name" : "new project", "Enter save", "Esc cancel"]
+                      : ["type name", "Enter save", "Esc cancel"]
         : idle,
     })
   }, [session.setStatus, form, field, testing, completions.length, textInput.active, showDetails]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -203,15 +210,21 @@ export function SettingsScreen() {
     const key = e.name
 
     /* The add-database chooser is a two-key menu, not a text field. */
-    if (current.kind === "addChoice") {
+    if (current.kind === "addChoice" || current.kind === "moveChoice") {
       /* A menu, not a text field: arrows and j/k move a visible highlight and
          Enter opens it. 1/2 stay as shortcuts. Every key is swallowed, so
          nothing leaks through to a NORMAL binding. */
-      if (key === "j" || key === "down") addChoiceMove(1)
-      else if (key === "k" || key === "up") addChoiceMove(-1)
-      else if (key === "return" || key === "enter" || key === "\r") addChoiceSubmit()
-      else if (key === "1") addByUri(current.projectId)
-      else if (key === "2") addByFields(current.projectId)
+      if (key === "j" || key === "down") {
+        if (current.kind === "addChoice") addChoiceMove(1)
+        else moveChoiceMove(1)
+      } else if (key === "k" || key === "up") {
+        if (current.kind === "addChoice") addChoiceMove(-1)
+        else moveChoiceMove(-1)
+      } else if (key === "return" || key === "enter" || key === "\r") {
+        if (current.kind === "addChoice") addChoiceSubmit()
+        else moveChoiceSubmit()
+      } else if (current.kind === "addChoice" && key === "1") addByUri(current.projectId)
+      else if (current.kind === "addChoice" && key === "2") addByFields(current.projectId)
       else if (key === "escape" || key === "Escape" || key === "\u001b") cancelForm()
       return true
     }
@@ -349,6 +362,9 @@ export function SettingsScreen() {
       case "d":
         remove()
         return
+      case "m":
+        moveDatabase()
+        return
       case "t":
         testConnection()
         return
@@ -418,6 +434,8 @@ export function SettingsScreen() {
           field={field}
           draft={draft}
           completions={completions}
+          projects={projects}
+          items={items}
           projectName={
             form.kind === "addChoice" ? (projects.find(p => p.id === form.projectId)?.name ?? "project") : ""
           }
@@ -491,7 +509,7 @@ function SettingsDetails({
               {item.kind === "project" ? "e  edit name   r  rename" : "e  edit settings   r  rename"}
             </text>
             <text fg={c.textMuted}>
-              {item.kind === "project" ? "a  add database   p  paste URI" : "t  test connection   d  remove"}
+              {item.kind === "project" ? "a  add database   p  paste URI" : "t  test   d  remove   m  move"}
             </text>
           </>
         ) : (
@@ -530,6 +548,8 @@ function SettingsFormDialog({
   field,
   draft,
   completions,
+  projects,
+  items,
   projectName,
   terminalWidth,
   terminalHeight,
@@ -538,33 +558,37 @@ function SettingsFormDialog({
   field: string | null
   draft: string
   completions: ReadonlyArray<string>
+  projects: ReadonlyArray<Project>
+  items: ReadonlyArray<SettingsListItem>
   projectName: string
   terminalWidth: number
   terminalHeight: number
 }) {
   const { colors: c } = useTheme()
-  const panelWidth =
-    form.kind === "addChoice"
-      ? Math.max(36, Math.min(62, terminalWidth - 4))
-      : Math.max(40, Math.min(76, terminalWidth - 4))
+  const menuForm = form.kind === "addChoice" || form.kind === "moveChoice"
+  const panelWidth = menuForm
+    ? Math.max(36, Math.min(62, terminalWidth - 4))
+    : Math.max(40, Math.min(76, terminalWidth - 4))
   const title =
-    form.kind === "addChoice"
-      ? `Add database · ${projectName}`
-      : form.kind === "connect"
-        ? `${form.editing ? "Edit" : "Add"} database · ${form.mode === "uri" ? "connection string" : form.engine}`
-        : form.kind === "connectName"
-          ? form.suggestedName
-            ? form.pending.engine === "redis"
-              ? "Name this Redis connection"
-              : form.pending.engine === "rabbitmq"
-                ? "Name this RabbitMQ connection"
-                : "Name this database"
-            : "Choose a database name"
-          : form.kind === "rename"
-            ? "Rename database"
-            : form.kind === "project" && form.projectId
-              ? "Edit project"
-              : "New project"
+    form.kind === "moveChoice"
+      ? `Move database · ${form.databaseName}`
+      : form.kind === "addChoice"
+        ? `Add database · ${projectName}`
+        : form.kind === "connect"
+          ? `${form.editing ? "Edit" : "Add"} database · ${form.mode === "uri" ? "connection string" : form.engine}`
+          : form.kind === "connectName"
+            ? form.suggestedName
+              ? form.pending.engine === "redis"
+                ? "Name this Redis connection"
+                : form.pending.engine === "rabbitmq"
+                  ? "Name this RabbitMQ connection"
+                  : "Name this database"
+              : "Choose a database name"
+            : form.kind === "rename"
+              ? "Rename database"
+              : form.kind === "project" && form.projectId
+                ? "Edit project"
+                : "New project"
   /* Content width inside `ModalSurface`: its outer padding (1 per side) plus the
      inner `paddingX={2}` leave `panelWidth - 4` cells for the form. */
   const contentWidth = panelWidth - 4
@@ -593,7 +617,35 @@ function SettingsFormDialog({
       <ModalSurface width={panelWidth} paddingX={2} paddingY={1} maxHeight={Math.max(10, terminalHeight - 2)}>
         <text fg={c.accent}>{title}</text>
         <box height={1} />
-        {form.kind === "addChoice" ? (
+        {form.kind === "moveChoice" ? (
+          <>
+            <text fg={c.text}>Move to which project?</text>
+            <box height={1} />
+            {projects.map((project, index) => {
+              const selected = form.cursor === index
+              const current = items.find(item => item.kind === "database" && item.refId === form.databaseId)
+              const isCurrent = current?.parentId === project.id
+              return (
+                <box
+                  key={project.id}
+                  height={1}
+                  flexDirection="row"
+                  alignItems="center"
+                  backgroundColor={selected ? c.bgHighlight : undefined}
+                  paddingX={1}
+                >
+                  <text fg={selected ? c.accent : c.textMuted}>{selected ? "›" : " "}</text>
+                  <text fg={selected ? c.textBright : c.text} paddingLeft={1}>
+                    {project.name}
+                  </text>
+                  {isCurrent ? <text fg={c.textMuted}> (current)</text> : null}
+                </box>
+              )
+            })}
+            <box height={1} />
+            <text fg={c.text}>↑/↓ or j/k move Enter move Esc cancel</text>
+          </>
+        ) : form.kind === "addChoice" ? (
           <>
             <text fg={c.text}>Choose a connection method</text>
             <box height={1} />
@@ -650,7 +702,7 @@ function SettingsFormDialog({
             ) : null}
           </>
         )}
-        {form.kind !== "addChoice" ? (
+        {!menuForm ? (
           <>
             <box height={1} />
             <text fg={c.textMuted}>

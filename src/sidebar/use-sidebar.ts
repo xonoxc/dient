@@ -9,7 +9,7 @@
  */
 import { useEffect, useRef, useState } from "react"
 import { Deferred, Effect, Fiber, Option } from "effect"
-import { useConfigRevision } from "@/app-context"
+import { useConfigRevision, useSidebarMemory } from "@/app-context"
 import type { ConfigStoreService } from "@/config"
 import type { Connection, Database, DatabaseId, Project, ProjectId } from "@/domain"
 
@@ -169,6 +169,21 @@ export const useSidebar = (
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const [loaded, setLoaded] = useState(false)
   const { revision, reveal } = useConfigRevision()
+  /* Screens unmount each other (settings ↔ explorer), so the sidebar's tree
+     state would reset on every round trip. The session memory is written
+     after every committed render and read once on the next mount, so
+     expansions and the cursor survive screen switches for the lifetime of
+     the process. */
+  const memory = useSidebarMemory()
+  const restoredRef = useRef(false)
+  if (memory && !restoredRef.current) {
+    restoredRef.current = true
+    expandedRef.current = memory.expanded
+    cursorRef.current = memory.cursor
+  }
+  useEffect(() => {
+    memory?.remember(expandedRef.current, cursorRef.current)
+  })
 
   const recompute = (): void => {
     const nextItems = buildTree(dataRef.current, expandedRef.current, tablesByConnection)
@@ -202,6 +217,14 @@ export const useSidebar = (
       Effect.gen(function* () {
         const projects = yield* configStore.listProjects().pipe(Effect.orElseSucceed(() => []))
         dataRef.current = { ...dataRef.current, projects }
+        /* A restored session may have projects expanded, and the per-project
+           database cache died with the previous mount — refetch them, or the
+           tree shows an expanded project with nothing under it. */
+        const expandedProjects = [...expandedRef.current].filter(id => projects.some(project => project.id === id))
+        yield* Effect.all(
+          expandedProjects.map(projectId => ensureDatabases(projectId as ProjectId)),
+          { concurrency: "unbounded" }
+        )
         yield* Effect.sync(recompute)
         yield* Effect.sync(() => setLoaded(true))
       })

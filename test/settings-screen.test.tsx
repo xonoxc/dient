@@ -38,6 +38,52 @@ async function acceptSuggestedName(setup: Awaited<ReturnType<typeof renderApp>>,
 }
 
 describe("settings screen", () => {
+  test("m moves a database into another project", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    const seeded = await seedProject(services.store, {
+      name: "demo",
+      database: "main",
+      engine: "sqlite",
+      filename: "data.db",
+    })
+    const work = await Effect.runPromise(services.store.createProject({ name: "work" }))
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await openSettings(setup)
+      /* Land on the database row, then open the move picker. */
+      await expandProject(setup)
+      await pressKeys(setup, ["m"])
+      await setup.waitForFrame(f => f.includes("Move database · main") && f.includes("work"))
+
+      /* demo is highlighted first (the current project); j selects work. */
+      await pressKeys(setup, ["j", "RETURN"])
+      await setup.waitForFrame(f => f.includes("moved main to work"))
+
+      /* The store says it, not just the toast. */
+      const databases = await Effect.runPromise(services.store.listDatabases(work.id))
+      expect(databases.map(database => database.name)).toEqual(["main"])
+      const demoDatabases = await Effect.runPromise(services.store.listDatabases(seeded.project.id))
+      expect(demoDatabases).toEqual([])
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
+  test("m with nowhere to move explains itself instead of opening the picker", async () => {
+    const services = await resolveTestServices(freshConfigFile())
+    await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: "data.db" })
+    const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
+    try {
+      await openSettings(setup)
+      await expandProject(setup)
+      await pressKeys(setup, ["m"])
+      await setup.waitForFrame(f => f.includes("create another project"))
+      expect(setup.captureCharFrame()).not.toContain("Move database ·")
+    } finally {
+      setup.renderer.destroy()
+    }
+  })
+
   test("renders existing databases in the config tree", async () => {
     const services = await resolveTestServices(freshConfigFile())
     await seedProject(services.store, { name: "demo", database: "main", engine: "sqlite", filename: "data.db" })

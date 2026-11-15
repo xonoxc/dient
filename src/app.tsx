@@ -16,6 +16,7 @@ import {
   RouterProvider,
   ServicesProvider,
   SessionProvider,
+  SidebarMemoryProvider,
   ToastProvider,
   useCommandBus,
   useCommandLine,
@@ -63,11 +64,13 @@ export default function App({
                 <CommandBusProvider>
                   <CommandLineProvider>
                     <ConfigRevisionProvider>
-                      <TextInputProvider>
-                        <UpdateProvider>
-                          <Shell />
-                        </UpdateProvider>
-                      </TextInputProvider>
+                      <SidebarMemoryProvider>
+                        <TextInputProvider>
+                          <UpdateProvider>
+                            <Shell />
+                          </UpdateProvider>
+                        </TextInputProvider>
+                      </SidebarMemoryProvider>
                     </ConfigRevisionProvider>
                   </CommandLineProvider>
                 </CommandBusProvider>

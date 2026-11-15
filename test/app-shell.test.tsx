@@ -228,7 +228,9 @@ describe("keyboard dispatch", () => {
     try {
       await pressKeys(setup, ["?"])
       await setup.waitForFrame(f => f.includes("keybindings"))
-      expect(setup.captureCharFrame()).toContain(":settings")
+      /* The reference scrolls now, so the commands are one G away. */
+      await pressKeys(setup, ["SHIFT+g"])
+      await setup.waitForFrame(f => f.includes(":settings"))
       await pressKeys(setup, [ESC])
       await setup.waitForFrame(f => !f.includes("keybindings"))
     } finally {
