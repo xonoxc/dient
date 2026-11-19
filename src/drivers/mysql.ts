@@ -1,4 +1,4 @@
-import { Reactivity } from "@effect/experimental"
+import { layer as ReactivityLayer } from "effect/reactivity/Reactivity"
 import { MysqlClient } from "@effect/sql-mysql2"
 import { Context, Effect, Exit, Layer, Redacted, Scope } from "effect"
 import type { MysqlConnectionConfig } from "@/domain"
@@ -29,8 +29,8 @@ export const connectMysql = (
       username: config.user ?? "root",
       password: config.password === undefined ? undefined : Redacted.make(config.password),
     }).pipe(
-      Scope.extend(scope),
-      Effect.provide(Reactivity.layer),
+      Scope.provide(scope),
+      Effect.provide(ReactivityLayer),
       Effect.mapError(
         cause =>
           new ConnectionError({
@@ -48,7 +48,6 @@ export const connectMysql = (
     }
   })
 
-/** Run `sql` with positional `params`, mapping driver errors to `QueryError`. */
 export const queryMysql = (
   conn: ActiveConnection,
   sql: string,
@@ -62,15 +61,13 @@ export const queryMysql = (
     return toQueryResult(rows)
   })
 
-/** Close the MySQL pool owned by the handle. */
 export const disconnectMysql = (conn: ActiveConnection): Effect.Effect<void> =>
-  Scope.close(conn._scope as Scope.CloseableScope, Exit.void)
+  Scope.close(conn._scope as Scope.Closeable, Exit.void)
 
-/** `SELECT 1` probe; any failure reports `false`. */
 export const isConnectedMysql = (conn: ActiveConnection): Effect.Effect<boolean> =>
   queryMysql(conn, "SELECT 1", []).pipe(
     Effect.as(true),
-    Effect.catchAll(() => Effect.succeed(false))
+    Effect.catchCause(() => Effect.succeed(false))
   )
 
 const toQueryResult = (rows: ReadonlyArray<Record<string, unknown>>): QueryResult => {
@@ -83,10 +80,9 @@ const toQueryResult = (rows: ReadonlyArray<Record<string, unknown>>): QueryResul
   return { columns, rows }
 }
 
-export class MysqlDriver extends Context.Tag("MysqlDriver")<MysqlDriver, DriverService<MysqlConnectionConfig>>() {}
+export class MysqlDriver extends Context.Service<MysqlDriver, DriverService<MysqlConnectionConfig>>()("MysqlDriver") {}
 
 export namespace MysqlDriver {
-  /** `MysqlDriver` service backed by @effect/sql-mysql2. */
   export const layer: Layer.Layer<MysqlDriver> = Layer.succeed(MysqlDriver, {
     connect: connectMysql,
     query: queryMysql,

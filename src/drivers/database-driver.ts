@@ -12,10 +12,9 @@ import { QueryError, type ActiveConnection, type DriverService } from "@/drivers
  * `conn.engine` (for everything else). Redis has its own driver and is rejected
  * here rather than accidentally falling through to SQLite.
  */
-export class DatabaseDriver extends Context.Tag("DatabaseDriver")<
-  DatabaseDriver,
-  DriverService<SqlConnectionConfig>
->() {}
+export class DatabaseDriver extends Context.Service<DatabaseDriver, DriverService<SqlConnectionConfig>>()(
+  "DatabaseDriver"
+) {}
 
 export namespace DatabaseDriver {
   /**

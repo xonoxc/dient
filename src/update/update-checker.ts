@@ -34,7 +34,7 @@ export interface UpdateCheckerService {
   readonly install: (release: ReleaseInfo) => Effect.Effect<UpgradeOutcome, UpdateError>
 }
 
-export class UpdateChecker extends Context.Tag("UpdateChecker")<UpdateChecker, UpdateCheckerService>() {}
+export class UpdateChecker extends Context.Service<UpdateChecker, UpdateCheckerService>()("UpdateChecker") {}
 
 export interface UpdateCheckerDeps {
   readonly storePath: string

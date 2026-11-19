@@ -311,7 +311,6 @@ function RowLine({
         /* Only the focused row's cells carry scroll ids, unique per row, so
            `scrollChildIntoView` has exactly one child to reveal. */
         const cellId = selected && activeColumn === column.name ? `dient-col-${rowIndex}-${column.name}` : undefined
-        // Use display truncation to prevent vertical expansion
         const cellWidth = Math.max(1, widthOf(column.name) - 2)
         const rawFormatted = formatCellDisplay(row[column.name], cellWidth)
         const decoration = cellDecoration?.(row, column.name, row[column.name])

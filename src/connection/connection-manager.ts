@@ -58,10 +58,9 @@ interface OpenSlots {
 
 const emptySlots = (): OpenSlots => ({ active: new Map(), failed: new Map() })
 
-export class ConnectionManager extends Context.Tag("ConnectionManager")<
-  ConnectionManager,
-  ConnectionManagerService
->() {}
+export class ConnectionManager extends Context.Service<ConnectionManager, ConnectionManagerService>()(
+  "ConnectionManager"
+) {}
 
 const findByDatabase = (
   store: ConfigStoreServiceRef,
@@ -150,7 +149,7 @@ export namespace ConnectionManager {
                   ? rabbitmq.disconnect
                   : driver.disconnect
 
-            yield* close(current.active).pipe(Effect.catchAll(() => Effect.void))
+            yield* close(current.active).pipe(Effect.catch(() => Effect.void))
           }
           yield* Ref.update(slots, s => {
             s.active.delete(id)
@@ -175,7 +174,7 @@ export namespace ConnectionManager {
                     ? rabbitmq.isConnected
                     : driver.isConnected
 
-              return check(entry.active).pipe(Effect.catchAll(() => Effect.succeed(false)))
+              return check(entry.active).pipe(Effect.catch(() => Effect.succeed(false)))
             })
           ),
 
@@ -227,21 +226,21 @@ export namespace ConnectionManager {
                 /* close the probe session; the app's real connections live in
                    the open-slot cache, not in pings */
                 if (config.engine === "redis") {
-                  yield* redis.disconnect(active).pipe(Effect.catchAll(() => Effect.void))
+                  yield* redis.disconnect(active).pipe(Effect.catch(() => Effect.void))
                 } else if (config.engine === "rabbitmq") {
-                  yield* rabbitmq.disconnect(active).pipe(Effect.catchAll(() => Effect.void))
+                  yield* rabbitmq.disconnect(active).pipe(Effect.catch(() => Effect.void))
                 } else {
-                  yield* driver.disconnect(active).pipe(Effect.catchAll(() => Effect.void))
+                  yield* driver.disconnect(active).pipe(Effect.catch(() => Effect.void))
                 }
 
                 return true
               })
             )
             const outcome = yield* attempt
-              .pipe(Effect.retry(Schedule.intersect(Schedule.recurs(2), Schedule.exponential("500 millis"))))
+              .pipe(Effect.retry(Schedule.max([Schedule.recurs(2), Schedule.exponential("500 millis")])))
               .pipe(Effect.timeout("6 seconds"))
             return outcome
-          }).pipe(Effect.catchAll(() => Effect.succeed(false))),
+          }).pipe(Effect.catch(() => Effect.succeed(false))),
 
         activeConnections: () =>
           slots.pipe(

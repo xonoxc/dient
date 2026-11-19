@@ -8,7 +8,7 @@
  * Effect the service boundary), so hooks never block a render.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Effect, Either, Fiber, Option } from "effect"
+import { Effect, Result, Fiber, Option } from "effect"
 import { describeError } from "@/errors/describe"
 import { useDialog, useServices, useToasts } from "@/app-context"
 import { useSidebar, type SidebarNode, type TablesByConnection } from "@/sidebar/use-sidebar"
@@ -64,9 +64,7 @@ export interface UseExplorerResult {
   readonly redisInfo: RedisKeyInfo | null
   /** The open Redis value page, with text/stream payloads for custom views. */
   readonly redisPage: RedisPage | null
-  /** Open a key from the keyspace table by name. */
   readonly openRedisKey: (key: string) => void
-  /** Return from an open key to the Redis keyspace. */
   readonly backToRedisKeys: () => void
   /** Milliseconds the last page fetch took, or null before the first one. */
   readonly lastQueryMs: number | null
@@ -74,9 +72,7 @@ export interface UseExplorerResult {
   readonly offset: number
   /** How many rows a page holds. */
   readonly pageSize: number
-  /** True when another page exists after this one. */
   readonly hasNextPage: boolean
-  /** True when a page exists before this one. */
   readonly hasPrevPage: boolean
   /** Load the next page of rows. No-op on the last page. */
   readonly nextPage: () => void
@@ -317,7 +313,7 @@ export const useExplorer = (): UseExplorerResult => {
         setLoading(false)
         noteQueryMs(startedAt)
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             if (gen !== generation.current) return
             setLoading(false)
@@ -362,7 +358,7 @@ export const useExplorer = (): UseExplorerResult => {
         setLoading(false)
         noteQueryMs(startedAt)
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             if (gen !== generation.current) return
             setLoading(false)
@@ -449,7 +445,7 @@ export const useExplorer = (): UseExplorerResult => {
 
     /* The whole page pipeline — rows, optional count, schema — as one Effect.
        Generation checks between stages drop stale pages the way the chained
-       version did; the terminal `catchAll` reports, so this fork needs no
+       version did; the terminal `Effect.catch` reports, so this fork needs no
        promise and no `.catch`. */
     Effect.runFork(
       Effect.gen(function* () {
@@ -472,7 +468,7 @@ export const useExplorer = (): UseExplorerResult => {
         if (gen !== generation.current) return
         setTableInfo(info !== undefined ? Option.getOrNull(info) : null)
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             if (gen !== generation.current) return
             setLoading(false)
@@ -579,7 +575,7 @@ export const useExplorer = (): UseExplorerResult => {
     }
 
     /* Connect, then list tables, as one Effect: generation checks between the
-       stages drop a superseded connect, and the terminal `catchAll` resets
+       stages drop a superseded connect, and the terminal `Effect.catch` resets
        state, reports, and offers the retry — a single fork, no chain. */
     Effect.runFork(
       Effect.gen(function* () {
@@ -623,7 +619,7 @@ export const useExplorer = (): UseExplorerResult => {
            after the connection and its first view are ready. */
         if (focusOnOpen === "table") setFocus("table")
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.gen(function* () {
             if (gen !== generation.current) return
             activeExplorer.current = null
@@ -719,7 +715,7 @@ export const useExplorer = (): UseExplorerResult => {
         const value = yield* redisInspector.readValueText(handle, info)
         yield* Effect.sync(() => onReady(value))
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             errorLog.append("explorer.redisRead", cause)
             toasts.push("error", `could not read ${info.key}: ${describeError(cause)}`)
@@ -748,7 +744,7 @@ export const useExplorer = (): UseExplorerResult => {
           reloadRedisCurrent()
         })
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             errorLog.append("explorer.redisSaveText", cause)
             toasts.push("error", `save failed: ${describeError(cause)}`)
@@ -781,7 +777,7 @@ export const useExplorer = (): UseExplorerResult => {
           reloadRedisCurrent()
         })
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             errorLog.append("explorer.redisSaveRow", cause)
             toasts.push("error", `save failed: ${describeError(cause)}`)
@@ -821,7 +817,7 @@ export const useExplorer = (): UseExplorerResult => {
           }
         })
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             errorLog.append("explorer.redisRenameKey", cause)
             toasts.push("error", `rename failed: ${describeError(cause)}`)
@@ -852,7 +848,7 @@ export const useExplorer = (): UseExplorerResult => {
           else loadRedisKeys(token, pageIndex)
         })
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             errorLog.append("explorer.redisCreateKey", cause)
             toasts.push("error", `create failed: ${describeError(cause)}`)
@@ -881,7 +877,7 @@ export const useExplorer = (): UseExplorerResult => {
           else loadRedisKeys(token, pageIndex)
         })
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             errorLog.append("explorer.redisSetTtl", cause)
             toasts.push("error", `ttl failed: ${describeError(cause)}`)
@@ -904,17 +900,17 @@ export const useExplorer = (): UseExplorerResult => {
       return
     }
     const parsed = parseRedisCommand(line)
-    if (Either.isLeft(parsed)) {
-      toasts.push("error", parsed.left)
+    if (Result.isFailure(parsed)) {
+      toasts.push("error", parsed.failure)
       onError?.()
       return
     }
     Effect.runFork(
       Effect.gen(function* () {
         const reply = yield* redisInspector.runCommand(handle, line)
-        yield* Effect.sync(() => onResult(`redis · ${parsed.right.display}`, formatRedisReply(reply)))
+        yield* Effect.sync(() => onResult(`redis · ${parsed.success.display}`, formatRedisReply(reply)))
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             errorLog.append("explorer.redisCommand", cause)
             toasts.push("error", `command failed: ${describeError(cause)}`)
@@ -962,7 +958,7 @@ export const useExplorer = (): UseExplorerResult => {
     const engine = explorer.database.engine
     /* Quoting, the UPDATE, the toast, and the same-page reload compose into
        one Effect: identifier refusal used to throw synchronously out of the
-       key handler, now it lands in the same `catchAll` as a failed write. */
+       key handler, now it lands in the same `Effect.catch` as a failed write. */
     Effect.runFork(
       Effect.gen(function* () {
         const sets = yield* Effect.all(
@@ -986,7 +982,7 @@ export const useExplorer = (): UseExplorerResult => {
            is still valid and the count does not need re-reading. */
         loadPage(tableName, offset, false)
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             errorLog.append("explorer.saveRow", cause)
             toasts.push("error", `save failed: ${describeError(cause)}`)
@@ -1039,7 +1035,7 @@ export const useExplorer = (): UseExplorerResult => {
            re-read and the page may now be shorter than the cursor. */
         loadPage(tableName, offset, true)
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             errorLog.append("explorer.deleteRows", cause)
             toasts.push("error", `delete failed: ${describeError(cause)}`)
@@ -1075,7 +1071,7 @@ export const useExplorer = (): UseExplorerResult => {
           toasts.push("success", `deleted ${keys.length} key${keys.length === 1 ? "" : "s"}`)
           reloadRedisCurrent()
         }).pipe(
-          Effect.catchAll(cause =>
+          Effect.catch(cause =>
             Effect.sync(() => {
               errorLog.append("explorer.deleteRedisKeys", cause)
               toasts.push("error", `delete failed: ${describeError(cause)}`)
@@ -1097,7 +1093,7 @@ export const useExplorer = (): UseExplorerResult => {
         toasts.push("success", `deleted ${rows.length} row${rows.length === 1 ? "" : "s"} from ${info.key}`)
         reloadRedisCurrent()
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             errorLog.append("explorer.deleteRedisRows", cause)
             toasts.push("error", `delete failed: ${describeError(cause)}`)
@@ -1131,7 +1127,7 @@ export const useExplorer = (): UseExplorerResult => {
           reloadRedisCurrent()
         }
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             errorLog.append("explorer.deleteRedisKey", cause)
             toasts.push("error", `delete failed: ${describeError(cause)}`)
@@ -1159,7 +1155,7 @@ export const useExplorer = (): UseExplorerResult => {
           reloadRedisCurrent()
         }
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             errorLog.append("explorer.deleteRedisKeyByName", cause)
             toasts.push("error", `delete failed: ${describeError(cause)}`)

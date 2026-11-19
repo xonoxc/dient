@@ -65,10 +65,14 @@ const sqliteConfig = (): SqliteConnectionConfig => ({
 /* Run an Effect program inside a fresh scope and return its `Exit`. */
 const run = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) => Effect.runPromiseExit(Effect.scoped(effect))
 
-/* Extract the success value or the failure cause from a covered Exit. */
+/* Extract the success value or the failure reason from a covered Exit. */
 const value = <A, E>(exit: Exit.Exit<A, E>): A => (exit as unknown as { value: A }).value
 
-const cause = <A, E>(exit: Exit.Exit<A, E>): unknown => (exit as unknown as { cause: unknown }).cause
+/* v4 causes are flat (`{ reasons }`); the tests assert on the typed failure. */
+const cause = <A, E>(exit: Exit.Exit<A, E>): any => {
+  const c = (exit as unknown as { cause: any }).cause
+  return c?.reasons?.find((reason: any) => reason._tag === "Fail") ?? c
+}
 
 /* ---------------------------------------------------------------------------
  * Placeholder translation (pure)

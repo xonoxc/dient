@@ -38,7 +38,7 @@ export type ConnectionId = S.Schema.Type<typeof ConnectionId>
  * unsupported engine value fails validation at runtime instead of silently
  * reaching a driver that doesn't know it.
  */
-export const Engine = S.Literal("postgres", "mysql", "sqlite", "redis", "rabbitmq")
+export const Engine = S.Literals(["postgres", "mysql", "sqlite", "redis", "rabbitmq"])
 export type Engine = S.Schema.Type<typeof Engine>
 
 export const ProjectSchema = S.Struct({
@@ -136,14 +136,14 @@ export const RabbitMqConnectionConfig = S.Struct({
 export type RabbitMqConnectionConfig = S.Schema.Type<typeof RabbitMqConnectionConfig>
 
 /** The SQL engines' config union, used by `DatabaseDriver`. */
-export const SqlConnectionConfig = S.Union(PostgresConnectionConfig, MysqlConnectionConfig, SqliteConnectionConfig)
+export const SqlConnectionConfig = S.Union([PostgresConnectionConfig, MysqlConnectionConfig, SqliteConnectionConfig])
 export type SqlConnectionConfig = S.Schema.Type<typeof SqlConnectionConfig>
 
-export const ConnectionConfig = S.Union(
+export const ConnectionConfig = S.Union([
   PostgresConnectionConfig,
   MysqlConnectionConfig,
   SqliteConnectionConfig,
   RedisConnectionConfig,
-  RabbitMqConnectionConfig
-)
+  RabbitMqConnectionConfig,
+])
 export type ConnectionConfig = S.Schema.Type<typeof ConnectionConfig>

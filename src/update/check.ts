@@ -6,7 +6,7 @@
  * computation in Effects would be ceremony, not composition. The single
  * effectful step, `fetchLatestRelease`, is an Effect failing with
  * `UpdateError`, so callers choose the silence policy by combinator:
- * `Effect.option` for the background check, `Effect.catchAll` for the
+ * `Effect.option` for the background check, `Effect.catch` for the
  * explicit `:upgrade`.
  *
  * The one contract that matters: `assetNameFor` must produce exactly the names

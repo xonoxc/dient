@@ -5,7 +5,7 @@
  * bounded sample so they never require mapping the whole dataset.
  */
 import { useMemo, useState } from "react"
-import { Either } from "effect"
+import { Result } from "effect"
 import { stringifyJson } from "@/effect/json"
 import type { ColumnInfo } from "@/drivers/types"
 
@@ -17,7 +17,6 @@ export interface SortState {
 export const MIN_COL_WIDTH = 4
 export const MAX_COL_WIDTH = 28
 
-/** Maximum number of lines a cell can take for display. Longer content is truncated */
 export const MAX_CELL_LINES = 1
 
 /**
@@ -51,7 +50,7 @@ export const formatCell = (value: unknown): string => {
   if (typeof value === "object") {
     if (value instanceof Date) return value.toISOString()
     if (value instanceof Uint8Array) return `<${value.length} bytes>`
-    return Either.getOrElse(stringifyJson(value), () => String(value))
+    return Result.getOrElse(stringifyJson(value), () => String(value))
   }
   return String(value)
 }
@@ -64,28 +63,20 @@ export const formatCell = (value: unknown): string => {
 export const truncateForDisplay = (text: string, budget: number): string => {
   const room = Math.max(0, Math.floor(budget))
   if (text.length <= room) return text
-  // Leave room for ellipsis
   if (room <= 1) return ""
   const usable = room - 1
   return text.slice(-usable) + "…"
 }
 
-/**
- * Limit cell content to a maximum number of lines by truncating long values.
- * Also truncates each line to fit within the column width.
- */
 export const formatCellDisplay = (value: unknown, maxWidth: number): string => {
   const formatted = formatCell(value)
 
-  // Check if content spans multiple lines
   const lines = formatted.split("\n")
 
   if (lines.length <= MAX_CELL_LINES) {
-    // Single line - just truncate if needed
     return truncateForDisplay(formatted, maxWidth)
   }
 
-  // Multiple lines - truncate to first N lines and truncate each line
   return lines
     .slice(0, MAX_CELL_LINES)
     .map(line => truncateForDisplay(line, maxWidth))

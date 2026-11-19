@@ -28,7 +28,7 @@ describe("App shell", () => {
       const frame = setup.captureSpans()
       const rowText = lastTextRow(frame)
       expect(rowText).toContain("NORMAL")
-      expect(rowText).toContain("dient") /* status bar carries the app brand */
+      expect(rowText).toContain("dient")
     } finally {
       setup.renderer.destroy()
     }

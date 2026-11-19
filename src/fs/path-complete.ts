@@ -7,16 +7,18 @@
  * Both are pure over a small fs surface so they unit-test with throwaway dirs
  * and degrade to a no-op whenever the path is unreadable.
  */
-import { Either } from "effect"
+import { Result } from "effect"
 import { existsSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 
 const MAX_CANDIDATES = 12
 
 const isDirectory = (path: string): boolean =>
-  Either.getOrElse(Either.try(() => existsSync(path) && readdirSync(path) !== undefined), () => false)
+  Result.getOrElse(
+    Result.try(() => existsSync(path) && readdirSync(path) !== undefined),
+    () => false
+  )
 
-/** Split a draft into its parent directory and the trailing name prefix. */
 const splitDraft = (draft: string): { dir: string; prefix: string } => {
   const lastSlash = draft.lastIndexOf("/")
   if (lastSlash >= 0) {
@@ -28,19 +30,20 @@ const splitDraft = (draft: string): { dir: string; prefix: string } => {
 const absoluteDirOf = (dir: string): string =>
   dir.startsWith("/") || /^[A-Za-z]:[\\/]/.test(dir) ? dir : join(process.cwd(), dir)
 
-/** Entries under `dirPath` that start with `prefix`, normalized for display. */
 export const pathCandidates = (draft: string): ReadonlyArray<string> => {
   const { dir, prefix } = splitDraft(draft)
   const absoluteDir = absoluteDirOf(dir)
   if (!existsSync(absoluteDir) || !isDirectory(absoluteDir)) return []
-  const entries = Either.getOrElse(Either.try(() => readdirSync(absoluteDir)), () => [])
+  const entries = Result.getOrElse(
+    Result.try(() => readdirSync(absoluteDir)),
+    () => []
+  )
   return entries
     .filter(name => name.startsWith(prefix))
     .slice(0, MAX_CANDIDATES)
     .map(name => `${dir}${name}${isDirectory(join(absoluteDir, name)) ? "/" : ""}`)
 }
 
-/** Longest common prefix of a non-empty candidate list. */
 const commonPrefix = (candidates: ReadonlyArray<string>): string => {
   if (candidates.length === 0) return ""
   let common = candidates[0]!
@@ -53,7 +56,6 @@ const commonPrefix = (candidates: ReadonlyArray<string>): string => {
   return common
 }
 
-/** Extend `draft` to the longest common prefix of its filesystem matches. */
 export const completePath = (draft: string): string => {
   const prefix = commonPrefix(pathCandidates(draft))
   return prefix.length > draft.length ? prefix : draft

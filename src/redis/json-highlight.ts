@@ -1,10 +1,5 @@
-/**
- * Tiny JSON highlighter for the RedisJSON value panel. The app cannot rely on
- * `jq` being installed, so this keeps the styling in-process: tokenize the
- * pretty-printed document, then wrap the tokens into fixed-width visual lines
- * without losing their colors. `wrapText` elsewhere still handles plain
- * strings; this module only knows the handful of JSON token classes.
- */
+/** In-process JSON highlighter for the RedisJSON panel: tokenize the document,
+ *  then wrap it into fixed-width lines without losing colors. */
 
 export type JsonTokenKind = "key" | "string" | "number" | "literal" | "punctuation" | "plain"
 
@@ -23,8 +18,7 @@ const nextNonSpace = (text: string, from: number): string => {
   return ""
 }
 
-/** Split JSON text into colored tokens. Malformed JSON still renders: unknown
- *  characters fall through as plain text instead of dropping the value. */
+/** Split JSON into colored tokens; malformed text renders as plain. */
 export const tokenizeJson = (text: string): ReadonlyArray<JsonSegment> => {
   const segments: JsonSegment[] = []
   for (const match of text.matchAll(TOKEN)) {
@@ -53,9 +47,7 @@ export const tokenizeJson = (text: string): ReadonlyArray<JsonSegment> => {
   return segments
 }
 
-/** Wrap colored tokens into visual lines of at most `width` cells. This mirrors
- *  `wrapText` (split on real newlines, then chunk), but keeps each chunk tagged
- *  so a long string stays green across line breaks. */
+/** Wrap colored tokens at `width` cells while keeping each chunk tagged. */
 export const highlightJsonLines = (text: string, width: number): ReadonlyArray<ReadonlyArray<JsonSegment>> => {
   const room = Math.max(1, Math.floor(width))
   const lines: Array<Array<{ text: string; kind: JsonTokenKind }>> = [[]]

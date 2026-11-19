@@ -1,7 +1,7 @@
 /**
  * The one place a service effect becomes a promise.
  */
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 
 /**
  * Run a service effect as a promise, rejecting with the effect's *typed* error.
@@ -12,11 +12,11 @@ import { Effect, Either } from "effect"
  * `connect ECONNREFUSED …` underneath — is simply not reachable from it, so a
  * caller can only report a dump or a bare "Failed to connect".
  *
- * Converting to `Either` first rejects with the error the effect actually
+ * Converting to `Result` first rejects with the error the effect actually
  * failed with. Use this everywhere a service effect is awaited inside a `.catch`
  * that shows a message to someone.
  */
 export const runService = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
-  Effect.runPromise(Effect.either(effect)).then(result =>
-    Either.isLeft(result) ? Promise.reject(result.left) : Promise.resolve(result.right)
+  Effect.runPromise(Effect.result(effect)).then(result =>
+    Result.isFailure(result) ? Promise.reject(result.failure) : Promise.resolve(result.success)
   )

@@ -1,22 +1,7 @@
 /**
- * Settings screen state. Renders the config tree (projects → databases) and
- * drives keyboard forms.
- *
- * The model is deliberately flat: a database *is* its connection. Pressing `a`
- * opens a choice: paste a connection string — a `postgres://` / `mysql://` /
- * `redis://` / `amqp://` URL or a filesystem path (SQLite) — or fill in fields.
- * `Shift+P` opens a prompt for a new project (a project is a folder onto which
- * databases hang). A parsed URI pauses on an optional name prompt: the tail
- * (or Redis host:port/index) is suggested, and a typed value overrides it. A
- * credentials form (host/port/user/…) is one key away for people who prefer
- * filling fields (Ctrl+n); its name field is optional and falls back to the
- * database/file stem or host:port. `e` edits the selected project name or every
- * setting on the selected database; `r` remains the quick rename.
- *
- * Form state is mirrored into refs: keyboard handlers fire between React
- * commits when a user (or a test pressing whole chords) types faster than a
- * frame, so every action reads the live value instead of a stale render
- * closure — the same trick the shell's command line uses.
+ * Settings screen state: the config tree plus the keyboard forms that edit it.
+ * Form state is mirrored into refs so key handlers firing between React commits
+ * read the live value rather than a stale render closure.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import { basename, extname } from "node:path"
@@ -41,20 +26,15 @@ export interface SettingsListItem {
   readonly meta: string | null
   readonly depth: number
   readonly expanded: boolean
-  /** The database's connection params ride along on the row (may be absent). */
   readonly connection?: Connection | null
 }
 
 export type ConnectionFormField = "name" | "host" | "port" | "user" | "password" | "filename" | "defaultDatabase"
 
 export type SettingsForm =
-  /** A project name form. `projectId` is present when editing an existing one. */
   | { readonly kind: "project"; readonly projectId?: ProjectId }
-  /** First stop when adding a database: paste a URL, or fill in fields. Both
-      styles every DB client offers; picking one up front beats hiding the
-      field form behind a chord. */
+  /** First stop when adding a database: paste a URL, or fill in fields. */
   | { readonly kind: "addChoice"; readonly projectId: ProjectId; readonly cursor: number }
-  /** `m` on a database: pick the project to move it into. */
   | {
       readonly kind: "moveChoice"
       readonly databaseId: DatabaseId
@@ -71,7 +51,6 @@ export type SettingsForm =
       readonly engine: Engine
       /** Present when the form updates an existing database instead of adding one. */
       readonly editing?: { readonly databaseId: DatabaseId; readonly connectionId?: ConnectionId }
-      /** TLS is a boolean in the domain model; keep it out of the text values. */
       readonly tls?: boolean
     }
   | {
@@ -79,7 +58,6 @@ export type SettingsForm =
       readonly projectId: ProjectId
       /** A parsed URL whose display name can still be changed before saving. */
       readonly pending: ConnectionString
-      /** The parsed name: URL tail, SQLite stem, or host:port/index for Redis. */
       readonly suggestedName?: string
     }
   | { readonly kind: "rename"; readonly databaseId: DatabaseId }
@@ -114,8 +92,7 @@ const filenameStem = (filename: string): string => {
   return base.slice(0, Math.max(0, base.length - extname(base).length)) || base
 }
 
-/** A display name when the optional name field is blank. SQL uses its database
- *  stem, SQLite the file stem, and Redis host:port plus a non-zero index. */
+/** A display name when the optional name field is blank. */
 export const fallbackConnectionName = (
   engine: Engine,
   values: Readonly<Partial<Record<ConnectionFormField | "uri", string>>>
@@ -131,12 +108,10 @@ export const fallbackConnectionName = (
 
 export interface UseSettingsResult {
   readonly items: ReadonlyArray<SettingsListItem>
-  /** Projects as loaded from the config store; the add menu names its target. */
   readonly projects: ReadonlyArray<Project>
   readonly cursor: number
   readonly form: SettingsForm | null
-  /** Live accessor for the open form, so a key handler firing between React
-      commits reads the current form and never a stale render closure. */
+  /** Live accessor for the open form, immune to stale render closures. */
   readonly formNow: () => SettingsForm | null
   readonly draft: string
   readonly engine: Engine
@@ -154,36 +129,25 @@ export interface UseSettingsResult {
   readonly jump: (position: "first" | "last") => void
   readonly toggle: () => void
   readonly add: () => void
-  /** Open the single-line prompt for creating a new project. */
   readonly addProject: () => void
-  /** From the "add database" choice: paste a connection string. */
   readonly addByUri: (projectId: ProjectId) => void
-  /** From the "add database" choice: type host / port / user / password. */
   readonly addByFields: (projectId: ProjectId) => void
-  /** Move the highlight in the "add database" menu. */
   readonly addChoiceMove: (delta: number) => void
-  /** Open the highlighted "add database" choice. */
   readonly addChoiceSubmit: () => void
-  /** `m` on a database: open the "move to project" picker. */
   readonly moveDatabase: () => void
-  /** Move the highlight in the "move to project" menu. */
   readonly moveChoiceMove: (delta: number) => void
-  /** Enter on the "move to project" menu performs the move. */
   readonly moveChoiceSubmit: () => void
   readonly remove: () => void
   readonly rename: () => void
   /** Edit the selected project name or the selected database's full settings. */
   readonly edit: () => void
-  /** Clear the active text field (Ctrl+u) without closing the form. */
   readonly clearField: () => void
-  /** Toggle TLS for a Redis/RabbitMQ connection form (Ctrl+t). */
   readonly toggleTls: () => void
   readonly testConnection: () => void
   readonly submitForm: () => void
   readonly cancelForm: () => void
   /** Non-null while a connection test is in flight (renders "testing …"). */
   readonly testing: string | null
-  /** Filesystem matches for a SQLite filename / uri draft being typed. */
   readonly completions: ReadonlyArray<string>
 }
 
@@ -231,8 +195,7 @@ export const buildSettingsTree = (
   return items
 }
 
-/** The two add-database choices, in render order. Exported so the menu render
-    and the key handler cannot drift apart. */
+/** The two add-database choices, in render order; shared with the key handler. */
 export const ADD_CHOICES = [
   { label: "paste connection string", hint: "postgres://…  mysql://…  redis://…  amqp://…  amqps://…" },
   { label: "host / user / password", hint: "name, host, port, user, password, database" },
@@ -267,7 +230,7 @@ export const useSettings = (): UseSettingsResult => {
   const draftRef = useRef("")
   const engineRef = useRef<Engine>("postgres")
 
-  /** The databases map is keyed by project; look a database up by its own id. */
+  /** Databases are stored per project, so scan each list to find one by id. */
   const databaseById = (id: DatabaseId): Database | undefined => {
     for (const projectDatabases of databases.values()) {
       const found = projectDatabases.find(database => database.id === id)
@@ -278,9 +241,7 @@ export const useSettings = (): UseSettingsResult => {
     return undefined
   }
 
-  /* One add-flow failure handler, shared by every submit path below: log it
-     for the error file, say it once in a toast. A small Effect composed into
-     each program's `catchAll`, not five copies of a `.catch` callback. */
+  /* One shared add-flow failure handler: log it and say it once in a toast. */
   const reportAddFailure = (op: string) => (cause: unknown) =>
     Effect.sync(() => {
       errorLog.append(op, cause)
@@ -295,11 +256,8 @@ export const useSettings = (): UseSettingsResult => {
       setDraftState("")
     }
 
-    /* One program: projects, then each project's databases, then each
-       database's connections — committed level by level so the tree fills in
-       as loads land, exactly like the old chained version. Every level folds
-       to empty on failure; `restore` rides along in `ensuring` so it runs on
-       every exit path, the way `.finally` did. */
+    /* One program, committed level by level so the tree fills in as loads land.
+       Every level folds to empty on failure; `restore` runs on every exit path. */
     Effect.runFork(
       Effect.gen(function* () {
         const rows = yield* configStore.listProjects().pipe(Effect.orElseSucceed(() => []))
@@ -337,7 +295,7 @@ export const useSettings = (): UseSettingsResult => {
         )
       }).pipe(
         Effect.ensuring(Effect.sync(restore)),
-        Effect.catchAll(() =>
+        Effect.catch(() =>
           Effect.sync(() => {
             setProjects([])
           })
@@ -367,8 +325,6 @@ export const useSettings = (): UseSettingsResult => {
 
   const clamp = (next: number): number => Math.max(0, Math.min(Math.max(items.length - 1, 0), next))
 
-  /** Field order for the credentials form: an explicit name first, then the
-      engine's own settings. */
   const fieldsOf = (form: Extract<SettingsForm, { kind: "connect" }>): readonly ConnectionFormField[] => [
     "name",
     ...CONNECTION_FIELDS[form.engine],
@@ -382,8 +338,8 @@ export const useSettings = (): UseSettingsResult => {
   const fieldCount = form?.kind === "connect" && form.mode === "fields" ? fieldsOf(form).length : 0
   const fieldIndex = form?.kind === "connect" ? form.fieldIndex : 0
 
-  /* Live path matches for a SQLite path being typed (uri mode treats a bare
-     draft as a file system path, so completion applies to both). */
+  /* Live path matches for a SQLite path being typed; uri mode treats a bare
+     draft as a path too. */
   const completions = useMemo(() => {
     if (form?.kind !== "connect") return []
     const active = form.mode === "uri" ? "uri" : fieldsOf(form)[form.fieldIndex]
@@ -394,25 +350,20 @@ export const useSettings = (): UseSettingsResult => {
   }, [form, draft, engine])
 
   /**
-   * Make a freshly created row visible. A database is only listed under an
-   * *expanded* project, so creating one under a collapsed project reported
-   * "added" while showing nothing at all. Expanding the parent and moving the
-   * cursor onto the new row is what makes the result confirm itself.
+   * Make a freshly created row visible: a database under a collapsed project
+   * would report "added" while showing nothing.
    */
   const revealDatabase = (projectId: ProjectId, name: string): void => {
     setExpanded(current => (current.has(projectId) ? current : new Set(current).add(projectId)))
-    /* The tree is rebuilt from the next refresh, so land on the row by id once
-       it exists rather than guessing an index. */
+    /* Land on the row by id once the rebuilt tree contains it. */
     pendingRevealRef.current = { kind: "database", projectId, name }
-    /* Tell the explorer sidebar to expand this project too. */
     configRevision.bump(projectId)
   }
 
   const openForm = (next: SettingsForm | null): void => {
     formRef.current = next
     if (next?.kind === "connect") {
-      /* Keep the derived engine label/completion state in sync with a form that
-         opens on a database's engine, not just after Ctrl+n cycling. */
+      /* A form may open on a database's engine, not just after Ctrl+n cycling. */
       engineRef.current = next.engine
       setEngineState(next.engine)
     }
@@ -427,24 +378,18 @@ export const useSettings = (): UseSettingsResult => {
     setDraftState(buffer)
   }
 
-  /** Open the single-line prompt for creating a new project. */
   const addProject = (): void => {
     openForm({ kind: "project" })
   }
 
-  /** Add a database to `projectId` by pasting a connection string. */
   const addByUri = (projectId: ProjectId): void => {
     openForm({ kind: "connect", projectId, mode: "uri", fieldIndex: 0, values: {}, engine: "postgres" })
   }
 
-  /** Add a database to `projectId` by filling in host / user / password, the
-      way every other DB client does it. */
   const addByFields = (projectId: ProjectId): void => {
     openForm({ kind: "connect", projectId, mode: "fields", fieldIndex: 0, values: {}, engine: "postgres" })
   }
 
-  /** The two add-database choices, in render order. Keeping them in one place
-      means the menu, its keys, and Enter cannot drift apart. */
   const moveAddChoice = (delta: number): void => {
     const current = formRef.current
     if (current?.kind !== "addChoice") return
@@ -454,7 +399,6 @@ export const useSettings = (): UseSettingsResult => {
     })
   }
 
-  /** Enter on the add-database menu opens the highlighted choice. */
   const submitAddChoice = (): void => {
     const current = formRef.current
     if (current?.kind !== "addChoice") return
@@ -462,8 +406,7 @@ export const useSettings = (): UseSettingsResult => {
     else addByFields(current.projectId)
   }
 
-  /** `m` on a database opens the project picker. One project means there is
-   *  nowhere to move the database to. */
+  /** `m` on a database opens the project picker. */
   const moveDatabase = (): void => {
     const item = items[Math.min(cursor, items.length - 1)]
     if (!item || item.kind !== "database") {
@@ -491,9 +434,8 @@ export const useSettings = (): UseSettingsResult => {
     })
   }
 
-  /** Enter on the move menu reparents the database. Moving into the project
-   *  it already lives in is refused without closing the menu, so the picker
-   *  stays usable. */
+  /** Enter on the move menu reparents the database; moving it to its current
+   *  project is refused without closing the menu. */
   const moveChoiceSubmit = (): void => {
     const current = formRef.current
     if (current?.kind !== "moveChoice") return
@@ -511,7 +453,7 @@ export const useSettings = (): UseSettingsResult => {
         yield* Effect.sync(() => configRevision.bump(target.id))
         yield* Effect.sync(refresh)
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             errorLog.append("settings.moveDatabase", cause)
             toasts.push("error", `failed to move: ${describeError(cause)}`)
@@ -567,9 +509,8 @@ export const useSettings = (): UseSettingsResult => {
     setDraftState(text)
   }
 
-  /* Every create path funnels through here. Returns the Effect (rather than
-     running it) so each submitter composes it into its own program — one
-     fork per submit, with `revealDatabase` as the final stage. */
+  /* Every create path funnels through here. Returns the Effect so each caller
+     composes it into its own program and forks once. */
   const createDatabaseAndConnection = (
     projectId: ProjectId,
     name: string,
@@ -593,7 +534,7 @@ export const useSettings = (): UseSettingsResult => {
       }
     | { readonly ok: false; readonly message: string }
 
-  /** Turn prefilled/edited credentials fields into a validated connection patch. */
+  /** Turn credentials fields into a validated connection patch. */
   const connectionInput = (
     engine: Engine,
     values: Readonly<Partial<Record<ConnectionFormField | "uri", string>>>,
@@ -683,8 +624,7 @@ export const useSettings = (): UseSettingsResult => {
         }
 
         const { databaseId, connectionId } = form.editing!
-        /* Drop any live session first so the next query reconnects with the
-           edited settings instead of reusing the old client. */
+        /* Drop any live session so the next query reconnects with the new settings. */
         if (connectionId) yield* connectionManager.disconnect(connectionId)
         yield* configStore.updateDatabase(databaseId, { name: built.name, engine: form.engine })
         if (connectionId) yield* configStore.updateConnection(connectionId, built.input)
@@ -696,7 +636,7 @@ export const useSettings = (): UseSettingsResult => {
         openForm(null)
         refresh()
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             errorLog.append("settings.editDatabase", cause)
             toasts.push("error", `update failed: ${describeError(cause)}`)
@@ -723,8 +663,7 @@ export const useSettings = (): UseSettingsResult => {
         toasts.push("error", "could not parse that connection string")
         return
       }
-      /* Every URI gets an optional naming step. The parsed tail (or Redis
-         host:port/index) is the suggestion; a typed name overrides it. */
+      /* Every URI gets an optional naming step; a typed name overrides the suggestion. */
       const next: SettingsForm = {
         kind: "connectName",
         projectId: form.projectId,
@@ -735,8 +674,7 @@ export const useSettings = (): UseSettingsResult => {
       return
     }
 
-    /* Credentials ("fields") mode: the name is optional. A blank name falls
-       back to the database stem, SQLite file stem, or Redis host:port/index. */
+    /* Credentials ("fields") mode: a blank name falls back via `fallbackConnectionName`. */
     const values = form.values
     const explicitName = values.name?.trim() ?? ""
 
@@ -761,7 +699,7 @@ export const useSettings = (): UseSettingsResult => {
           yield* createDatabaseAndConnection(form.projectId, name, "sqlite", { filename })
           toasts.push("success", `added ${name} (${filename})`)
           finish()
-        }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))
+        }).pipe(Effect.catch(reportAddFailure("settings.addConnection")))
       )
       return
     }
@@ -800,7 +738,7 @@ export const useSettings = (): UseSettingsResult => {
           })
           toasts.push("success", `added ${name} (redis)`)
           finish()
-        }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))
+        }).pipe(Effect.catch(reportAddFailure("settings.addConnection")))
       )
       return
     }
@@ -835,7 +773,7 @@ export const useSettings = (): UseSettingsResult => {
           })
           toasts.push("success", `added ${name} (rabbitmq)`)
           finish()
-        }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))
+        }).pipe(Effect.catch(reportAddFailure("settings.addConnection")))
       )
       return
     }
@@ -869,7 +807,7 @@ export const useSettings = (): UseSettingsResult => {
         yield* createDatabaseAndConnection(form.projectId, name, form.engine, input)
         toasts.push("success", `added ${name} (${form.engine})`)
         finish()
-      }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))
+      }).pipe(Effect.catch(reportAddFailure("settings.addConnection")))
     )
   }
 
@@ -924,7 +862,7 @@ export const useSettings = (): UseSettingsResult => {
         )
         openForm(null)
         refresh()
-      }).pipe(Effect.catchAll(reportAddFailure("settings.addConnection")))
+      }).pipe(Effect.catch(reportAddFailure("settings.addConnection")))
     )
   }
 
@@ -958,7 +896,7 @@ export const useSettings = (): UseSettingsResult => {
         if (ok) toasts.push("success", `${label} ok (${database.engine})`)
         else toasts.push("error", `${label} unreachable`)
       }).pipe(
-        Effect.catchAll(cause =>
+        Effect.catch(cause =>
           Effect.sync(() => {
             testingRef.current = null
             setTesting(null)
@@ -1110,7 +1048,7 @@ export const useSettings = (): UseSettingsResult => {
             toasts.push("success", "database deleted")
             refresh()
           }).pipe(
-            Effect.catchAll(cause =>
+            Effect.catch(cause =>
               Effect.sync(() => {
                 errorLog.append("settings.deleteDatabase", cause)
                 toasts.push("error", `failed to delete: ${describeError(cause)}`)
@@ -1126,7 +1064,7 @@ export const useSettings = (): UseSettingsResult => {
           toasts.push("success", "project deleted")
           refresh()
         }).pipe(
-          Effect.catchAll(cause =>
+          Effect.catch(cause =>
             Effect.sync(() => {
               errorLog.append("settings.deleteProject", cause)
               toasts.push("error", `failed to delete: ${describeError(cause)}`)
@@ -1238,7 +1176,7 @@ export const useSettings = (): UseSettingsResult => {
             openForm(null)
             refresh()
           }).pipe(
-            Effect.catchAll(cause =>
+            Effect.catch(cause =>
               Effect.sync(() => {
                 errorLog.append("settings.rename", cause)
                 toasts.push("error", `rename failed: ${describeError(cause)}`)
@@ -1268,7 +1206,7 @@ export const useSettings = (): UseSettingsResult => {
           openForm(null)
           refresh()
         }).pipe(
-          Effect.catchAll(cause =>
+          Effect.catch(cause =>
             Effect.sync(() => {
               errorLog.append(current.projectId ? "settings.renameProject" : "settings.addProject", cause)
               toasts.push("error", `failed to save project: ${describeError(cause)}`)

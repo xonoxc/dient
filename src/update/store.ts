@@ -11,7 +11,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { homedir } from "node:os"
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 import { parseJson, stringifyJson } from "@/effect/json"
 import { UpdateError } from "@/update/errors"
 
@@ -25,9 +25,9 @@ export const defaultStorePath = (): string => join(homedir(), ".dient", "update.
 
 /** Plain parser: unknown fields are dropped, garbage parses as empty. */
 const parseStore = (raw: string): UpdateStore =>
-  Either.match(parseJson<Partial<UpdateStore>>(raw), {
-    onLeft: () => ({}),
-    onRight: parsed => ({
+  Result.match(parseJson<Partial<UpdateStore>>(raw), {
+    onFailure: () => ({}),
+    onSuccess: parsed => ({
       ...(typeof parsed.ignoredVersion === "string" ? { ignoredVersion: parsed.ignoredVersion } : {}),
       ...(typeof parsed.lastCheckAt === "string" ? { lastCheckAt: parsed.lastCheckAt } : {}),
     }),
@@ -43,7 +43,7 @@ export const writeStore = (store: UpdateStore, path: string = defaultStorePath()
   Effect.gen(function* () {
     yield* ensureParentDir(path)
     yield* Effect.tryPromise({
-      try: () => writeFile(path, `${Either.getOrElse(stringifyJson(store), () => "{}")}\n`, "utf8"),
+      try: () => writeFile(path, `${Result.getOrElse(stringifyJson(store), () => "{}")}\n`, "utf8"),
       catch: cause => new UpdateError({ message: "could not write update store", cause }),
     })
   })

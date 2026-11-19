@@ -12,7 +12,6 @@ import { makeTheme } from "@/theme"
 import { pressKeys, renderApp, typeString } from "@test/support/render-ui"
 import { freshConfigFile, freshSqliteDataFile, resolveTestServices, seedProject } from "@test/support/services-fixture"
 
-/* Navigate to the settings screen through the `:` command line. */
 async function openSettings(setup: Awaited<ReturnType<typeof renderApp>>) {
   await pressKeys(setup, [":", "s", "e", "t", "t", "i", "n", "g", "s", "RETURN"])
   await setup.waitForFrame(f => f.includes("SETTINGS"))
@@ -50,7 +49,6 @@ describe("settings screen", () => {
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
       await openSettings(setup)
-      /* Land on the database row, then open the move picker. */
       await expandProject(setup)
       await pressKeys(setup, ["m"])
       await setup.waitForFrame(f => f.includes("Move database · main") && f.includes("work"))
@@ -877,10 +875,8 @@ describe("adding a connection reveals it", () => {
       await setup.waitForFrame(f => f.includes("Enter open"))
       expect(frameText(setup)).toContain("paste connection string")
 
-      /* j moves the highlight to the details form... */
       await pressKeys(setup, ["j"])
       await setup.waitForFrame(f => f.includes("host / user / password"))
-      /* ...j clamps at the end, and Enter opens the highlighted choice. */
       await pressKeys(setup, ["j"])
       await setup.waitForFrame(f => f.includes("host / user / password"))
       await pressKeys(setup, ["RETURN"])

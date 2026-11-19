@@ -6,7 +6,7 @@ import { pgQueries } from "@/inspector/pg"
 import { sqliteQueries } from "@/inspector/sqlite"
 import type { SchemaInspectorService } from "@/inspector/types"
 
-export class SchemaInspector extends Context.Tag("SchemaInspector")<SchemaInspector, SchemaInspectorService>() {}
+export class SchemaInspector extends Context.Service<SchemaInspector, SchemaInspectorService>()("SchemaInspector") {}
 
 /**
  * `SchemaInspector` facade. Like `DatabaseDriver`, it presents the

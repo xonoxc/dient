@@ -113,4 +113,4 @@ export const installRelease = (release: ReleaseInfo, deps: UpgradeDeps): Effect.
 
 /** Convenience for callers that only need "is there anything to upgrade to". */
 export const upgradeTarget = (release: ReleaseInfo, platform: string, arch: string): Option.Option<ReleaseAsset> =>
-  Option.fromNullable(pickAsset(release, platform, arch))
+  Option.fromNullishOr(pickAsset(release, platform, arch))

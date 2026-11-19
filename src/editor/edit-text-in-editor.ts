@@ -1,8 +1,6 @@
 /**
- * `$EDITOR`-based text editing for values that are not a table row: a Redis
- * string, a RedisJSON document, or a Redis key name. The file is the actual
- * text, not a `column: value` wrapper, so strings keep their line breaks and
- * JSON keeps the shape the user typed.
+ * `$EDITOR`-based text editing for a Redis string, JSON document, or key name;
+ * the file is the raw text, not a `column: value` wrapper.
  */
 import { runEditorSession, type EditorCallbacks, type EditorRenderer } from "@/editor/editor-session"
 
@@ -18,7 +16,6 @@ export interface EditTextOptions {
   }
 }
 
-/** Launch `$EDITOR` over `content` and hand the edited text to `callbacks.onSave`. */
 export const editTextInEditor = (options: EditTextOptions): void => {
   const { callbacks, extension, watch, ...rest } = options
   runEditorSession({ ...rest, callbacks, onSave: callbacks.onSave, extension, watch })

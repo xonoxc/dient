@@ -214,7 +214,6 @@ describe("integration (real containers)", () => {
         })
       )
       expect(name).toBe("amy")
-      /* and the other rows are untouched */
       void seeded
     } finally {
       setup.renderer.destroy()
@@ -227,7 +226,6 @@ describe("integration (real containers)", () => {
     await seedServerProject(services.services)
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
-      /* expand the tree so both database rows are visible before connecting */
       await pressKeys(setup, ["RETURN"])
       await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ prod") && f.includes("○ stage"), WAIT)
 
@@ -401,7 +399,6 @@ describe("integration (real containers)", () => {
       await pressKeys(setup, ["RETURN"])
       await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ bad") && f.includes("○ good"), WAIT)
 
-      /* connect the bad one: toast + retry prompt, then dismiss */
       await pressKeys(setup, ["j", "RETURN"])
       await setup.waitForFrame(f => f.includes("failed") && f.includes("retry"), WAIT)
       await pressKeys(setup, ["n"])

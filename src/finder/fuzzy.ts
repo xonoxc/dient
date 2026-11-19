@@ -44,7 +44,6 @@ export const fuzzyMatch = (query: string, text: string): FuzzyMatch | null => {
   return { score, positions }
 }
 
-/** Split a string into matched/unmatched segments for accent-tinted display. */
 export const splitByPositions = (
   text: string,
   positions: ReadonlyArray<number>

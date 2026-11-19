@@ -3,7 +3,7 @@
  * for application messaging; this interactive explorer uses the optional
  * management plugin's HTTP API for topology and troubleshooting operations.
  */
-import { Context, Effect, Either, Layer, Scope } from "effect"
+import { Context, Effect, Result, Layer, Scope } from "effect"
 import { parseJson, stringifyJson } from "@/effect/json"
 import type { RabbitMqConnectionConfig } from "@/domain"
 import type { ActiveConnection } from "@/drivers/types"
@@ -132,7 +132,7 @@ export interface RabbitMqDriverService {
   readonly isConnected: (conn: ActiveConnection) => Effect.Effect<boolean>
 }
 
-export class RabbitMqDriver extends Context.Tag("RabbitMqDriver")<RabbitMqDriver, RabbitMqDriverService>() {}
+export class RabbitMqDriver extends Context.Service<RabbitMqDriver, RabbitMqDriverService>()("RabbitMqDriver") {}
 
 interface ManagementClient {
   readonly baseUrl: string
@@ -176,8 +176,8 @@ const fetchManagement = async <A>(client: ManagementClient, path: string, init: 
   }
   if (!body) return undefined as A
   const parsed = parseJson(body)
-  if (Either.isLeft(parsed)) throw parsed.left
-  return parsed.right as A
+  if (Result.isFailure(parsed)) throw parsed.failure
+  return parsed.success as A
 }
 
 const request = <A>(conn: ActiveConnection, path: string, init?: RequestInit): Effect.Effect<A, QueryError> =>
@@ -186,7 +186,7 @@ const request = <A>(conn: ActiveConnection, path: string, init?: RequestInit): E
     catch: cause => new QueryError({ engine: ENGINE, message: describeError(cause), cause }),
   })
 
-const json = (value: unknown): string => Either.getOrElse(stringifyJson(value), () => "")
+const json = (value: unknown): string => Result.getOrElse(stringifyJson(value), () => "")
 
 export const connectRabbitMq = (
   config: RabbitMqConnectionConfig

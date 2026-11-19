@@ -1,32 +1,6 @@
 /**
- * Row ↔ `$EDITOR` file serialization. A row is presented as one `column: value`
- * pair per line, generated from the actual table schema, plus a short comment
- * header explaining the format:
- *
- *   # Edit values using: column: value
- *   # Use NULL explicitly for SQL NULL.
- *   # Missing columns are left unchanged.
- *   id: 3
- *   user_id: 2
- *   quantity: 3
- *
- * Semantics:
- *   - `column: value` updates that column to the parsed value.
- *   - `column: NULL` (case-sensitive) sets it to SQL `NULL`.
- *   - `""` (exactly two double quotes) sets the empty string.
- *   - A missing column is left unchanged.
- *   - `column:` with nothing after the colon is a validation error.
- *   - Unknown columns and lines without a `:` are validation errors.
- *   - Only the *first* `:` splits, so values containing `:` stay intact.
- *   - `#` comment lines and blank lines are ignored.
- *
- * The primary key is written (for orientation) but never updated — it keys the
- * UPDATE. Only columns whose value differs from the original row are reported,
- * and each is validated against its column type before being parsed.
- *
- * The clipboard form (`serializeRowsToMarkdown`) is a different format on
- * purpose — a padded Markdown table — because a yank is headed for a document or
- * an issue, not back into this parser.
+ * Serialize rows to `$EDITOR` key/value text and parse it back; also renders
+ * rows as a padded Markdown table for the clipboard.
  */
 import type { TableColumn } from "@/inspector/types"
 import { columnWidth, formatCell } from "@/table/use-table"
@@ -51,8 +25,7 @@ const FORMAT_HEADER: ReadonlyArray<string> = [
   "# Missing columns are left unchanged.",
 ]
 
-/** One `column: value` line per field, schema order, no comment header. Shared
-    by the editor file and the clipboard so a yank pastes back as the same rows. */
+/** One `column: value` line per field; shared by the editor file and clipboard. */
 export const rowToKeyValueLines = (
   columns: ReadonlyArray<TableColumn>,
   row: Readonly<Record<string, unknown>>
@@ -66,20 +39,12 @@ export const rowToKeyValueLines = (
     return `${column.name}: ${text === "" ? EMPTY_LITERAL : text}`
   })
 
-/** Serialize schema-ordered fields with a blank spacer between values. */
 export const serializeRowToKeyValue = (
   columns: ReadonlyArray<TableColumn>,
   row: Readonly<Record<string, unknown>>
 ): string => [...FORMAT_HEADER, "", rowToKeyValueLines(columns, row).join("\n\n"), ""].join("\n")
 
-/**
- * Markdown has no field delimiter to escape *into*, so the four characters that
- * would break the table are written as escapes instead: a raw `|` would open a
- * new column, and a raw tab or newline would push the rest of the line past the
- * cell it belongs to. A backslash is left alone, so a value containing a literal
- * `\n` is indistinguishable from an escaped newline — the lesser evil next to
- * silently splitting one row into two.
- */
+/** Characters that would break a Markdown table, escaped in place. */
 const MARKDOWN_ESCAPES: ReadonlyArray<readonly [RegExp, string]> = [
   [/\|/g, "\\|"],
   [/\t/g, "\\t"],
@@ -87,34 +52,14 @@ const MARKDOWN_ESCAPES: ReadonlyArray<readonly [RegExp, string]> = [
   [/\n/g, "\\n"],
 ]
 
-/** One Markdown cell: the value as the grid draws it, with the table-breaking
-    characters escaped out. */
 const markdownField = (value: unknown): string => {
   let text = formatCell(value)
   for (const [pattern, escape] of MARKDOWN_ESCAPES) text = text.replace(pattern, escape)
   return text
 }
 
-/**
- * Rows as clipboard text: a Markdown table whose columns are padded to their
- * content, so every `|` lands in the same terminal column and the raw text reads
- * as a table before it is ever rendered.
- *
- * Padding is computed per column from the longest cell that column holds — the
- * header included — rather than by joining with ` | `. A Markdown renderer will
- * lay any of this out, but the pasted text is also read in terminals, diffs,
- * issues and code comments, where an unpadded table is a wall of ragged text.
- *
- * Widths come from the table's own `columnWidth` rule, so a column is measured
- * the same way here as it is drawn on screen. `MAX_COL_WIDTH` deliberately does
- * not apply: the grid clips an over-wide column because the viewport forces it
- * to, while a clipboard that truncated its own values would lose data.
- *
- * Cells go through `formatCell`, the formatter the grid draws with, so the
- * clipboard and the screen agree: `∅` for NULL, `true`/`false` for booleans, ISO
- * timestamps for dates. Rows are the caller's, in the order given, so a yank of a
- * selection matches what was highlighted.
- */
+/** Rows as a padded Markdown table for the clipboard; `MAX_COL_WIDTH` is not
+    applied so no value is truncated. */
 export const serializeRowsToMarkdown = (
   columns: ReadonlyArray<TableColumn>,
   rows: ReadonlyArray<Readonly<Record<string, unknown>>>
@@ -122,9 +67,7 @@ export const serializeRowsToMarkdown = (
   const headers = columns.map(column => markdownField(column.name))
   const body = rows.map(row => columns.map(column => markdownField(row[column.name])))
 
-  /* One pass per column over the cells that column holds, which is the same
-     measure the grid uses — including its floor, so a one-character column is
-     still `MIN_COL_WIDTH` wide and the row reads as a table. */
+  /* Per-column measure, matching the grid, including its minimum width. */
   const widths = columns.map((column, index) =>
     columnWidth(column.name, [headers[index]!, ...body.map(cells => cells[index]!)])
   )
@@ -136,9 +79,7 @@ export const serializeRowsToMarkdown = (
   return [line(headers), rule, ...body.map(line)].join("\n") + "\n"
 }
 
-/** Parse a field's edited text into a query parameter (cell-editor semantics):
-    numerics become numbers, an empty draft on a nullable column becomes NULL,
-    everything else stays a string. */
+/** Cell-editor semantics: numerics become numbers, empty nullable becomes NULL. */
 export const parseFieldValue = (column: TableColumn, value: string): unknown => {
   const type = (column.type ?? "").toLowerCase()
   if (/int|bigint|smallint|numeric|decimal|real|float|double|serial|money|double_precision/.test(type)) {
@@ -148,14 +89,8 @@ export const parseFieldValue = (column: TableColumn, value: string): unknown => 
   return value
 }
 
-/**
- * Parse an edited `$EDITOR` file back into UPDATE parameters. The primary key
- * is never written (it keys the UPDATE); only columns whose value differs from
- * the original row are included, and each is validated before being parsed.
- * Any malformed line (no `:`, empty value, unknown column, type mismatch) fails
- * parsing with a line-numbered error and no updates — the database is never
- * touched on a bad file.
- */
+/** Parse an edited file into UPDATE params: changed, non-PK columns only, all
+    validated before returning so a bad file never touches the database. */
 export const parseRowKeyValue = (
   content: string,
   columns: ReadonlyArray<TableColumn>,
@@ -189,7 +124,6 @@ export const parseRowKeyValue = (
     if (!column) {
       return { ok: false, error: `line ${lineNo}: unknown column "${key}"` }
     }
-    /* The primary key never changes; it only keys the UPDATE. */
     if (primaryKey.includes(key)) continue
 
     const original = row[column.name]

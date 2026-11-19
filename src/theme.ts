@@ -66,7 +66,7 @@ export interface ThemeService {
   readonly color: <K extends keyof ThemeColors>(token: K) => ThemeColors[K]
 }
 
-export class Theme extends Context.Tag("Theme")<Theme, ThemeService>() {}
+export class Theme extends Context.Service<Theme, ThemeService>()("Theme") {}
 
 /**
  * The smallest surface a renderer must expose for dark/light detection. The
@@ -226,7 +226,7 @@ const detectPalette = (detector: ThemeDetector): Effect.Effect<TerminalPalette |
           defaultForeground: p.defaultForeground,
           defaultBackground: p.defaultBackground,
         })),
-        Effect.catchAll(() => Effect.succeed(undefined))
+        Effect.catch(() => Effect.succeed(undefined))
       )
     : Effect.succeed(undefined)
 
@@ -243,7 +243,7 @@ const detectMode = (detector: ThemeDetector): Effect.Effect<ThemeMode, never> =>
     }
     if (detector.waitForThemeMode) {
       const awaited = yield* Effect.tryPromise(() => detector.waitForThemeMode!(THEME_DETECT_TIMEOUT_MS)).pipe(
-        Effect.catchAll(() => Effect.succeed(null))
+        Effect.catch(() => Effect.succeed(null))
       )
       return normalizeMode(awaited)
     }

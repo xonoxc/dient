@@ -193,7 +193,6 @@ describe("explorer screen", () => {
     })
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
-      /* Expand the project so its database row is visible. */
       await pressKeys(setup, ["RETURN"])
       await setup.waitForFrame(f => f.includes("▾ demo") && f.includes("○ main"))
 
@@ -794,11 +793,9 @@ describe("list navigation", () => {
 
         await pressKeys(setup, ["d", "d"])
         await setup.waitForFrame(f => f.includes("Delete this row?"))
-        /* Confirm with Y. */
         await pressKeys(setup, ["y"])
         await setup.waitForFrame(f => f.includes("deleted 1 row"))
 
-        /* alpha is gone, bravo is now the first row. */
         await setup.waitForFrame(f => !f.includes("alpha") && f.includes("bravo"))
       } finally {
         setup.renderer.destroy()
@@ -827,7 +824,6 @@ describe("list navigation", () => {
       try {
         await openDeletableTable(setup)
 
-        /* Enter visual mode and extend the selection down two rows. */
         await pressKeys(setup, ["SHIFT+v", "j", "j"])
         await setup.waitForFrame(f => f.includes("VISUAL"))
 

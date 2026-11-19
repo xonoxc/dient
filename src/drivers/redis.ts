@@ -27,7 +27,7 @@ export interface RedisDriverService {
   readonly isConnected: (conn: ActiveConnection) => Effect.Effect<boolean>
 }
 
-export class RedisDriver extends Context.Tag("RedisDriver")<RedisDriver, RedisDriverService>() {}
+export class RedisDriver extends Context.Service<RedisDriver, RedisDriverService>()("RedisDriver") {}
 
 const redisUrl = (config: RedisConnectionConfig): string => {
   const host = config.host?.trim() || "localhost"
@@ -130,7 +130,7 @@ export const commandRedis = (
   })
 
 export const disconnectRedis = (conn: ActiveConnection): Effect.Effect<void> =>
-  Scope.close(conn._scope as Scope.CloseableScope, Exit.void)
+  Scope.close(conn._scope as Scope.Closeable, Exit.void)
 
 export const isConnectedRedis = (conn: ActiveConnection): Effect.Effect<boolean> =>
   Effect.gen(function* () {

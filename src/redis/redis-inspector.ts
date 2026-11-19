@@ -1,17 +1,8 @@
 /**
- * Redis inspection and editing layer. It turns raw Redis commands into the
- * small typed pages the explorer draws, and applies the small set of writes the
- * explorer exposes. No React or UI code lives here.
- *
- * Safety choices:
- *   - Keys are discovered with SCAN, never KEYS.
- *   - Every page is bounded by a caller-supplied count.
- *   - Strings are read with GETRANGE so a multi-megabyte value cannot stall the
- *     TUI; the page reports that it was truncated.
- *   - Edits are narrowly scoped: SET KEEPTTL / JSON.SET for values, HDEL+HSET /
- *     LSET / SREM+SADD / ZADD+ZREM for collection rows, and RENAMENX for keys.
+ * Redis inspection and editing: raw commands in, typed pages out.
+ * Keys use SCAN (never KEYS), every page is bounded, and strings use GETRANGE.
  */
-import { Context, Effect, Either, Layer } from "effect"
+import { Context, Effect, Result, Layer } from "effect"
 import { parseJson, stringifyJson } from "@/effect/json"
 import type { ActiveConnection, ColumnInfo } from "@/drivers/types"
 import { QueryError } from "@/drivers/types"
@@ -33,11 +24,9 @@ import type {
 
 const ENGINE = "redis" as const
 
-/** How many bytes of a string view are fetched at once. */
 export const MAX_VALUE_BYTES = 64_000
 
-/** A full value can be opened in `$EDITOR`; beyond this, editing is refused so
- *  a giant value cannot freeze the terminal or the editor. */
+/** Editing is refused above this so a giant value cannot freeze the editor. */
 export const MAX_EDIT_BYTES = 1_000_000
 
 export interface RedisInspectorService {
@@ -48,38 +37,28 @@ export interface RedisInspectorService {
     key: string,
     request: RedisPageRequest
   ) => Effect.Effect<RedisPage, QueryError>
-  /** Read the whole string/JSON value for editing (not the 64 KB preview). */
   readonly readValueText: (conn: ActiveConnection, info: RedisKeyInfo) => Effect.Effect<string, QueryError>
-  /** Replace a string or RedisJSON value, preserving the key's TTL. */
   readonly updateText: (conn: ActiveConnection, info: RedisKeyInfo, value: string) => Effect.Effect<void, QueryError>
-  /** Apply the changed fields of one collection row. */
   readonly updateRow: (
     conn: ActiveConnection,
     info: RedisKeyInfo,
     row: Readonly<Record<string, unknown>>,
     updates: ReadonlyArray<RedisRowUpdate>
   ) => Effect.Effect<void, QueryError>
-  /** Delete one or more rows from a Redis collection value. */
   readonly deleteRows: (
     conn: ActiveConnection,
     info: RedisKeyInfo,
     rows: ReadonlyArray<Record<string, unknown>>
   ) => Effect.Effect<void, QueryError>
-  /** Delete one or more Redis keys entirely. */
   readonly deleteKeys: (conn: ActiveConnection, keys: ReadonlyArray<string>) => Effect.Effect<void, QueryError>
-  /** Delete a Redis key entirely. */
   readonly deleteKey: (conn: ActiveConnection, key: string) => Effect.Effect<void, QueryError>
-  /** Rename a key without overwriting an existing destination. */
   readonly renameKey: (conn: ActiveConnection, key: string, next: string) => Effect.Effect<void, QueryError>
-  /** Create a key only when it does not already exist. */
   readonly createKey: (conn: ActiveConnection, draft: RedisKeyDraft) => Effect.Effect<void, QueryError>
-  /** Set or clear a key's expiry. `-1` persists the key. */
   readonly setTtl: (conn: ActiveConnection, key: string, ttl: number) => Effect.Effect<void, QueryError>
-  /** Run one arbitrary Redis command from the `:redis` console. */
   readonly runCommand: (conn: ActiveConnection, line: string) => Effect.Effect<unknown, QueryError>
 }
 
-export class RedisInspector extends Context.Tag("RedisInspector")<RedisInspector, RedisInspectorService>() {}
+export class RedisInspector extends Context.Service<RedisInspector, RedisInspectorService>()("RedisInspector") {}
 
 const text = (value: unknown): string => (typeof value === "string" ? value : String(value ?? ""))
 const number = (value: unknown, fallback = 0): number => {
@@ -151,8 +130,7 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
       const [next, rawKeys] = Array.isArray(scanned) ? scanned : ["0", []]
       const keys = [...new Set(arrayOf(rawKeys).map(text).filter(Boolean))]
 
-      /* TYPE and TTL are per key; run a bounded fan-out so a page of a few
-         hundred keys stays responsive without unbounded command spam. */
+      /* TYPE/TTL are per key; bounded fan-out keeps a page responsive. */
       const rows = yield* Effect.all(
         keys.map(key =>
           Effect.gen(function* () {
@@ -272,8 +250,8 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
       const flat = arrayOf(
         yield* command(conn, "ZRANGE", [info.key, String(offset), String(offset + count - 1), "WITHSCORES"])
       )
-      /* Bun's client returns WITHSCORES as `[member, score]` pairs; a plain
-         RESP client would return a flat array. Accept both shapes. */
+      /* Bun returns WITHSCORES as [member, score] pairs; plain RESP returns a
+         flat array. Accept both shapes. */
       const pairs: ReadonlyArray<readonly [string, string]> =
         flat.length > 0 && Array.isArray(flat[0])
           ? flat.flatMap(raw => (Array.isArray(raw) && raw.length >= 2 ? [[text(raw[0]), text(raw[1])] as const] : []))
@@ -315,9 +293,8 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
     Effect.gen(function* () {
       const start = request.token ? `(${request.token}` : "-"
       const count = Math.max(1, request.count)
-      /* Ask for one extra entry: XRANGE cannot tell us "this is the last page"
-         from an exactly-full page, and a phantom next page is worse than one
-         extra parsed entry. */
+      /* Fetch one extra entry: XRANGE cannot distinguish an exactly-full page
+         from the last one, and a phantom next page is worse. */
       const rawEntries = arrayOf(yield* command(conn, "XRANGE", [info.key, start, "+", "COUNT", String(count + 1)]))
       const hasMore = rawEntries.length > count
       const visible = rawEntries.slice(0, count)
@@ -344,12 +321,11 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
   const jsonPage = (conn: ActiveConnection, info: RedisKeyInfo): Effect.Effect<RedisPage, QueryError> =>
     command(conn, "JSON.GET", [info.key]).pipe(
       Effect.map(value => {
-        const raw = typeof value === "string" ? value : Either.getOrElse(stringifyJson(value), () => "null")
-        /* RedisJSON returns compact JSON; indent it so the wrapped-text panel
-           reads like a document instead of one endless line. */
-        const body = Either.match(parseJson(raw), {
-          onLeft: () => raw,
-          onRight: parsed => Either.getOrElse(stringifyJson(parsed, 2), () => raw),
+        const raw = typeof value === "string" ? value : Result.getOrElse(stringifyJson(value), () => "null")
+        /* Indent compact RedisJSON so the text panel reads like a document. */
+        const body = Result.match(parseJson(raw), {
+          onFailure: () => raw,
+          onSuccess: parsed => Result.getOrElse(stringifyJson(parsed, 2), () => raw),
         })
         const truncated = body.length > MAX_VALUE_BYTES
         const display = truncated ? body.slice(0, MAX_VALUE_BYTES) : body
@@ -431,10 +407,9 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
       }
       if (info.type === "ReJSON-RL" || info.type === "json") {
         const raw = yield* command(conn, "JSON.GET", [info.key])
-        /* Edit the raw document, not a JSON.parse/stringify round trip: that
-           round trip silently rounds integers above 2^53 even when the user
-           only changes a harmless character elsewhere in the document. */
-        const body = typeof raw === "string" ? raw : Either.getOrElse(stringifyJson(raw), () => "null")
+        /* Edit the raw document: a JSON.parse/stringify round trip silently
+           rounds integers above 2^53. */
+        const body = typeof raw === "string" ? raw : Result.getOrElse(stringifyJson(raw), () => "null")
         if (body.length > MAX_EDIT_BYTES) {
           return yield* Effect.fail(
             queryError(
@@ -458,12 +433,11 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
         return
       }
       if (info.type === "ReJSON-RL" || info.type === "json") {
-        /* Validate locally so the toast names the problem before a command is
-           sent. Parse only; the edited text is stored verbatim so large numbers
-           do not lose precision on a JSON.parse/JSON.stringify round trip. */
+        /* Validate locally so the toast names the problem first, and store the
+           text verbatim so large numbers keep their precision. */
         const parsed = parseJson(value)
-        if (Either.isLeft(parsed)) {
-          yield* Effect.fail(queryError(`invalid JSON: ${describeError(parsed.left)}`, parsed.left))
+        if (Result.isFailure(parsed)) {
+          yield* Effect.fail(queryError(`invalid JSON: ${describeError(parsed.failure)}`, parsed.failure))
         }
         yield* command(conn, "JSON.SET", [info.key, "$", value])
         return
@@ -533,9 +507,8 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
           if (score.trim() === "" || !Number.isFinite(Number(score))) {
             return yield* Effect.fail(queryError(`"score" expects a number`))
           }
-          /* Add/update the destination first, then remove the old member: a
-             rename that collides with an existing member keeps the typed score
-             instead of deleting the row being moved. */
+          /* Add the destination before removing the old member so a rename
+             that collides keeps the typed score. */
           yield* command(conn, "ZADD", [info.key, score, member])
           if (member !== oldMember) yield* command(conn, "ZREM", [info.key, oldMember])
         }).pipe(
@@ -584,8 +557,8 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
         )
       }
       case "list": {
-        /* LREM removes every matching value; indices shift after each
-           removal, so delete from the highest index downward. */
+        /* LREM removes every match and indices shift, so delete from the
+           highest index downward. */
         const sorted = [...rows].sort((a, b) => Number(b.index) - Number(a.index))
         return Effect.gen(function* () {
           for (const row of sorted) {
@@ -629,9 +602,7 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
   }
 
   const deleteKeys = (conn: ActiveConnection, keys: ReadonlyArray<string>): Effect.Effect<void, QueryError> => {
-    /* A visual selection can span the same key twice only if the caller made a
-       mistake; `DEL` is idempotent, but deduping keeps the command and the
-       success count honest. */
+    /* DEL is idempotent; deduping keeps the command and success count honest. */
     const unique = [...new Set(keys.filter(key => key.trim() !== ""))]
     if (unique.length === 0) return Effect.void
     const label = unique.length === 1 ? `key "${unique[0]}"` : `${unique.length} keys`
@@ -710,10 +681,10 @@ export const makeRedisInspector = (driver: RedisDriverService): RedisInspectorSe
   const runCommand = (conn: ActiveConnection, line: string): Effect.Effect<unknown, QueryError> =>
     Effect.gen(function* () {
       const parsed = parseRedisCommand(line)
-      if (Either.isLeft(parsed)) {
-        return yield* Effect.fail(queryError(parsed.left))
+      if (Result.isFailure(parsed)) {
+        return yield* Effect.fail(queryError(parsed.failure))
       }
-      return yield* command(conn, parsed.right.name, parsed.right.args)
+      return yield* command(conn, parsed.success.name, parsed.success.args)
     }).pipe(
       Effect.mapError(cause =>
         cause instanceof QueryError ? cause : queryError(`redis command failed: ${describeError(cause)}`, cause)

@@ -64,7 +64,7 @@ export function UpdateProvider({ children }: { children?: ReactNode }) {
   const upgradeNow = useCallback(() => {
     const program = Effect.gen(function* () {
       const latest = yield* updateChecker.checkLatest.pipe(
-        Effect.catchAll((error: UpdateError) =>
+        Effect.catch((error: UpdateError) =>
           Effect.sync(() => {
             toasts.push("error", `could not check for updates: ${error.message}`)
             return Option.none() as Option.Option<ReleaseInfo>
@@ -82,7 +82,7 @@ export function UpdateProvider({ children }: { children?: ReactNode }) {
       const outcome: InstallStep = yield* updateChecker
         .install(target)
         .pipe(
-          Effect.catchAll((error: UpdateError) =>
+          Effect.catch((error: UpdateError) =>
             Effect.sync((): InstallStep => ({ _tag: "Failed", message: error.message }))
           )
         )
@@ -102,7 +102,7 @@ export function UpdateProvider({ children }: { children?: ReactNode }) {
       const body = `${outcome.reason}.\n\n${target.pageUrl}\n${outcome.url}${notes ? `\n\n${notes}` : ""}`
       yield* Effect.promise(() => dialog.confirm({ title: `install ${target.tag} manually`, body, okLabel: "close" }))
     }).pipe(
-      Effect.catchAll((error: UpdateError) =>
+      Effect.catch((error: UpdateError) =>
         Effect.sync(() => {
           toasts.push("error", `upgrade failed: ${error.message}`)
         })
@@ -123,7 +123,7 @@ export function UpdateProvider({ children }: { children?: ReactNode }) {
 
       toasts.push("info", `ignoring ${release.tag} — will notify again on the next release`)
     }).pipe(
-      Effect.catchAll((error: UpdateError) =>
+      Effect.catch((error: UpdateError) =>
         Effect.sync(() => {
           toasts.push("error", `could not ignore update: ${error.message}`)
         })

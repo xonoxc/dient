@@ -312,7 +312,7 @@ export const useSidebar = (
       inFlight.current.set(projectId, done)
       yield* loadDatabasesEffect(projectId).pipe(
         Effect.ensuring(
-          Effect.zipRight(
+          Effect.andThen(
             Deferred.succeed(done, undefined),
             Effect.sync(() => {
               if (inFlight.current.get(projectId) === done) inFlight.current.delete(projectId)
@@ -401,6 +401,6 @@ export const useSidebar = (
 }
 
 export const selectedConnection = (items: ReadonlyArray<SidebarNode>, index: number): SidebarNode | null => {
-  const node = Option.fromNullable(items[index])
+  const node = Option.fromNullishOr(items[index])
   return Option.isSome(node) && node.value.kind === "connection" ? node.value : null
 }

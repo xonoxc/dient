@@ -5,7 +5,6 @@
  */
 import { Option } from "effect"
 
-/* The three editing modes a focused list/view can be in. */
 export type VimMode = "normal" | "insert" | "visual"
 
 /* Reversed selection: anchor is where VISUAL mode started, head follows the cursor. */

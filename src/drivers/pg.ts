@@ -1,4 +1,4 @@
-import { Reactivity } from "@effect/experimental"
+import { layer as ReactivityLayer } from "effect/reactivity/Reactivity"
 import { PgClient } from "@effect/sql-pg"
 import { Context, Effect, Exit, Layer, Redacted, Scope } from "effect"
 import type { PostgresConnectionConfig } from "@/domain"
@@ -35,15 +35,19 @@ export const connectPg = (
       password: config.password === undefined ? undefined : Redacted.make(config.password),
       connectTimeout: "5 seconds",
     }).pipe(
-      Scope.extend(scope),
-      Effect.provide(Reactivity.layer),
-      Effect.mapError(
-        cause =>
+      Scope.provide(scope),
+      Effect.provide(ReactivityLayer),
+      /* `PgClient.make` creates the pool lazily in v4, so probe the server to
+         surface bad hosts, ports, and credentials at connect time. */
+      Effect.flatMap(client => client.unsafe("SELECT 1").pipe(Effect.as(client))),
+      Effect.catchCause(cause =>
+        Effect.fail(
           new ConnectionError({
             engine: ENGINE,
             message: describeError(cause),
             cause,
           })
+        )
       )
     )
     return {
@@ -124,9 +128,8 @@ export const queryPg = (
     return toQueryResult(rows)
   })
 
-/** Close the connection pool owned by the handle. Subsequent queries will fail. */
 export const disconnectPg = (conn: ActiveConnection): Effect.Effect<void> =>
-  Scope.close(conn._scope as Scope.CloseableScope, Exit.void)
+  Scope.close(conn._scope as Scope.Closeable, Exit.void)
 
 /**
  * Probe the connection with `SELECT 1`. Report `false` for any failure instead
@@ -136,7 +139,7 @@ export const disconnectPg = (conn: ActiveConnection): Effect.Effect<void> =>
 export const isConnectedPg = (conn: ActiveConnection): Effect.Effect<boolean> =>
   queryPg(conn, "SELECT 1", []).pipe(
     Effect.as(true),
-    Effect.catchAll(() => Effect.succeed(false))
+    Effect.catchCause(() => Effect.succeed(false))
   )
 
 const toQueryResult = (rows: ReadonlyArray<Record<string, unknown>>): QueryResult => {
@@ -149,10 +152,9 @@ const toQueryResult = (rows: ReadonlyArray<Record<string, unknown>>): QueryResul
   return { columns, rows }
 }
 
-export class PgDriver extends Context.Tag("PgDriver")<PgDriver, DriverService<PostgresConnectionConfig>>() {}
+export class PgDriver extends Context.Service<PgDriver, DriverService<PostgresConnectionConfig>>()("PgDriver") {}
 
 export namespace PgDriver {
-  /** `PgDriver` service backed by @effect/sql-pg. */
   export const layer: Layer.Layer<PgDriver> = Layer.succeed(PgDriver, {
     connect: connectPg,
     query: queryPg,

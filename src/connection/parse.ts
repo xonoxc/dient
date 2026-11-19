@@ -10,7 +10,7 @@
  * SQLite path, because that is the local-file case users paste most. Every
  * other form returns `null` so the settings form can toast a clear failure.
  */
-import { Either } from "effect"
+import { Result } from "effect"
 import { basename, extname } from "node:path"
 
 export type ConnectionString =
@@ -52,8 +52,8 @@ export type ConnectionString =
 const SCHEME = /^([a-z][a-z0-9+.-]*):/
 
 const decodeComponent = (value: string): string =>
-  Either.getOrElse(
-    Either.try(() => decodeURIComponent(value)),
+  Result.getOrElse(
+    Result.try(() => decodeURIComponent(value)),
     () => value
   )
 
@@ -66,7 +66,7 @@ const tailName = (input: string): string =>
 const parseServerUrl = (engine: "postgres" | "mysql", rest: string): ConnectionString | null => {
   /* `rest` is scheme-less (we sliced it off already); the URL constructor
    * needs an absolute input, so rebuild the scheme before parsing. */
-  const url = Either.getOrNull(Either.try(() => new URL(`${engine}:${rest}`)))
+  const url = Result.getOrNull(Result.try(() => new URL(`${engine}:${rest}`)))
   if (url === null) return null
 
   const name =
@@ -95,7 +95,7 @@ const parseServerUrl = (engine: "postgres" | "mysql", rest: string): ConnectionS
  * name is derived from host/port/index because there is no path name to borrow.
  */
 const parseRedisUrl = (rest: string, tls: boolean): ConnectionString | null => {
-  const url = Either.getOrNull(Either.try(() => new URL(`${tls ? "rediss" : "redis"}:${rest}`)))
+  const url = Result.getOrNull(Result.try(() => new URL(`${tls ? "rediss" : "redis"}:${rest}`)))
   if (url === null) return null
 
   const host = url.hostname || "localhost"
@@ -130,7 +130,7 @@ const parseRabbitUrl = (kind: string, rest: string): ConnectionString | null => 
   const tls = kind === "amqps"
   const protocol = kind === "rabbitmq" ? "amqp" : kind
 
-  const url = Either.getOrNull(Either.try(() => new URL(`${protocol}:${rest}`)))
+  const url = Result.getOrNull(Result.try(() => new URL(`${protocol}:${rest}`)))
   if (url === null) return null
 
   const host = url.hostname || "localhost"
@@ -147,7 +147,7 @@ const parseRabbitUrl = (kind: string, rest: string): ConnectionString | null => 
 
   let vhost = "/"
   if (url.pathname && url.pathname !== "/") {
-    const decoded = Either.getOrNull(Either.try(() => decodeURIComponent(url.pathname.replace(/^\//, ""))))
+    const decoded = Result.getOrNull(Result.try(() => decodeURIComponent(url.pathname.replace(/^\//, ""))))
     if (decoded === null) return null
     vhost = decoded || "/"
   }

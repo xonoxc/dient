@@ -100,7 +100,7 @@ describe("describeError against a real driver failure", () => {
     )) as Outcome
     expect(Exit.isSuccess(exit)).toBe(false)
     if (Exit.isSuccess(exit)) return
-    const failure = Cause.failureOption(exit.cause)
+    const failure = Cause.findErrorOption(exit.cause)
     const err: unknown = failure._tag === "Some" ? failure.value : Cause.squash(exit.cause)
 
     const line = describeError(err)

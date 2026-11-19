@@ -10,7 +10,6 @@
  */
 import { normalModeKey, type TypedKeyEvent } from "@/ui/text-entry"
 
-/** The pane index a key addresses, or null when it is not a pane number. */
 export const paneIndexForKey = (e: TypedKeyEvent, paneCount: number): number | null => {
   if (e.ctrl === true || e.meta === true || e.option === true || e.super === true) return null
   const key = normalModeKey(e)

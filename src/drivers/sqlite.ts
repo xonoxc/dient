@@ -1,4 +1,4 @@
-import { Reactivity } from "@effect/experimental"
+import { layer as ReactivityLayer } from "effect/reactivity/Reactivity"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
 import { Context, Effect, Exit, Layer, Scope } from "effect"
 import type { SqliteConnectionConfig } from "@/domain"
@@ -22,14 +22,14 @@ export const connectSqlite = (
   Effect.gen(function* () {
     const scope = yield* Scope.make()
     const client = yield* SqliteClient.make({ filename: config.filename }).pipe(
-      Scope.extend(scope),
-      Effect.provide(Reactivity.layer),
-      /*
-       * `make` never fails in its error channel, so an unwritable path (or any
-       * other constructor throw) arrives as a defect. `catchAllCause` folds
-       * every cause — fail or die — into the typed `ConnectionError`.
-       */
-      Effect.catchAllCause(cause =>
+      Scope.provide(scope),
+      Effect.provide(ReactivityLayer),
+      /* `SqliteClient.make` opens the file lazily in v4, so run a probe to
+         surface an unwritable path (or any other constructor throw) at
+         connect time. `catchCause` folds every cause — fail or die — into the
+         typed `ConnectionError`. */
+      Effect.flatMap(client => client.unsafe("SELECT 1").pipe(Effect.as(client))),
+      Effect.catchCause(cause =>
         Effect.fail(
           new ConnectionError({
             engine: ENGINE,
@@ -42,7 +42,6 @@ export const connectSqlite = (
     return { id: crypto.randomUUID(), engine: ENGINE, _client: client, _scope: scope }
   })
 
-/** Run `sql` with positional `params`, mapping errors to `QueryError`. */
 export const querySqlite = (
   conn: ActiveConnection,
   sql: string,
@@ -62,15 +61,13 @@ export const querySqlite = (
     return toQueryResult(rows)
   })
 
-/** Close the SQLite database owned by the handle. */
 export const disconnectSqlite = (conn: ActiveConnection): Effect.Effect<void> =>
-  Scope.close(conn._scope as Scope.CloseableScope, Exit.void)
+  Scope.close(conn._scope as Scope.Closeable, Exit.void)
 
-/** Report whether the SQLite file is still open. */
 export const isConnectedSqlite = (conn: ActiveConnection): Effect.Effect<boolean> =>
   querySqlite(conn, "SELECT 1 AS one", []).pipe(
     Effect.as(true),
-    Effect.catchAll(() => Effect.succeed(false))
+    Effect.catchCause(() => Effect.succeed(false))
   )
 
 const toQueryResult = (rows: ReadonlyArray<Record<string, unknown>>): QueryResult => {
@@ -83,10 +80,11 @@ const toQueryResult = (rows: ReadonlyArray<Record<string, unknown>>): QueryResul
   return { columns, rows }
 }
 
-export class SqliteDriver extends Context.Tag("SqliteDriver")<SqliteDriver, DriverService<SqliteConnectionConfig>>() {}
+export class SqliteDriver extends Context.Service<SqliteDriver, DriverService<SqliteConnectionConfig>>()(
+  "SqliteDriver"
+) {}
 
 export namespace SqliteDriver {
-  /** `SqliteDriver` service backed by @effect/sql-sqlite-bun. */
   export const layer: Layer.Layer<SqliteDriver> = Layer.succeed(SqliteDriver, {
     connect: connectSqlite,
     query: querySqlite,

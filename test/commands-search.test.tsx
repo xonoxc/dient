@@ -151,7 +151,6 @@ describe("command line", () => {
 
   test(":connect <name> switches the active connection", async () => {
     const services = await resolveTestServices(freshConfigFile())
-    /* one project, two databases with distinct connections */
     const project = await Effect.runPromise(services.store.createProject({ name: "demo" }))
     const main = await Effect.runPromise(
       services.store.createDatabase({ projectId: project.id, name: "main", engine: "sqlite" })

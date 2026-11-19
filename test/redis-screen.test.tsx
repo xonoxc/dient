@@ -231,7 +231,6 @@ describe("redis explorer", () => {
       await pressKeys(setup, ["j", "RETURN"])
       await setup.waitForFrame(f => f.includes("KEYS") && f.includes("alpha"))
 
-      /* Select two adjacent keys, then confirm the visual delete. */
       await pressKeys(setup, ["2"])
       await pressKeys(setup, ["SHIFT+v", "j"])
       await setup.waitForFrame(f => f.includes("VISUAL") && f.includes("2 selected"))

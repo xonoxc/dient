@@ -107,7 +107,7 @@ const withTables = <A, E>(
       Effect.all(
         [...tables].reverse().map(t => driver.query(conn, `DROP TABLE IF EXISTS ${t.name}`)),
         { discard: true }
-      ).pipe(Effect.catchAll(() => Effect.void))
+      ).pipe(Effect.catch(() => Effect.void))
     )
     return yield* cleanup.pipe(Effect.flatMap(() => program()))
   })

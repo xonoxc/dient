@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import type { SqlError } from "@effect/sql/SqlError"
+import type { SqlError } from "effect/sql/SqlError"
 import type { SqliteClient } from "@effect/sql-sqlite-bun"
 
 /**

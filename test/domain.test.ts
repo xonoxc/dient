@@ -11,7 +11,7 @@ import {
 
 const as = <T>(value: unknown): T => value as T
 
-const encoded = <A, I>(schema: S.Schema<A, I>, value: A): I => S.encodeSync(schema)(value)
+const encoded = <A, I>(schema: S.Codec<A, I>, value: A): I => S.encodeSync(schema)(value)
 
 describe("ProjectSchema", () => {
   test("decodes and encodes a valid project", () => {

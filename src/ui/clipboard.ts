@@ -5,7 +5,7 @@
  * status value, exactly as before.
  */
 import { createHostClipboard } from "@opentui/core"
-import { Data, Effect, Either, Option } from "effect"
+import { Data, Effect, Result, Option } from "effect"
 
 export class ClipboardError extends Data.TaggedError("ClipboardError")<{
   readonly message: string
@@ -54,8 +54,8 @@ export interface ClipboardWriteResult {
 const mirrorToTerminal = (terminal: ClipboardTerminalSink | undefined, text: string): boolean => {
   if (!terminal) return false
   /* OSC 52 is best-effort: an unsupported terminal throws rather than returning false. */
-  return Either.getOrElse(
-    Either.try(() => terminal.copyToClipboardOSC52(text)),
+  return Result.getOrElse(
+    Result.try(() => terminal.copyToClipboardOSC52(text)),
     () => false
   )
 }

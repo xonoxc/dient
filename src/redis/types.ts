@@ -1,6 +1,5 @@
 import type { ColumnInfo } from "@/drivers/types"
 
-/** A row in the keyspace browser. */
 export interface RedisKeyRow {
   readonly key: string
   readonly type: string
@@ -8,7 +7,6 @@ export interface RedisKeyRow {
   readonly ttl: number
 }
 
-/** Metadata for one key, shown in the table strip and used to choose a view. */
 export interface RedisKeyInfo {
   readonly key: string
   readonly type: string
@@ -16,7 +14,7 @@ export interface RedisKeyInfo {
   readonly ttl: number
   readonly size: number | null
   readonly encoding: string | null
-  /** Type-appropriate length: STRLEN, HLEN, LLEN, SCARD, ZCARD, XLEN. */
+  /** STRLEN, HLEN, LLEN, SCARD, ZCARD or XLEN, depending on type. */
   readonly length: number | null
 }
 
@@ -25,25 +23,16 @@ export interface RedisStreamEntry {
   readonly fields: ReadonlyArray<readonly [string, string]>
 }
 
-/**
- * One page of a Redis value. Table-like structures fill `columns`/`rows`;
- * strings and streams also carry the richer shape their custom renderer uses.
- */
+/** One page of a value; strings and streams also carry their custom shape. */
 export interface RedisPage {
   readonly info: RedisKeyInfo
   readonly columns: ReadonlyArray<ColumnInfo>
   readonly rows: ReadonlyArray<Record<string, unknown>>
   readonly total: number
-  /**
-   * Token for the next page, or null on the last page. Tokens are opaque to the
-   * UI: SCAN cursors for keys/hash/set, offsets for list/zset, and stream IDs.
-   */
+  /** Opaque to the UI: SCAN cursors, list/zset offsets, or stream IDs. */
   readonly nextToken: string | null
-  /** Full/truncated text for string and RedisJSON views. */
   readonly text?: string
-  /** A short explanation when a value was deliberately truncated. */
   readonly note?: string
-  /** Parsed entries for the stream timeline. */
   readonly entries?: ReadonlyArray<RedisStreamEntry>
 }
 
@@ -53,8 +42,7 @@ export interface RedisKeysPage {
   readonly nextToken: string | null
 }
 
-/** One changed field in a Redis collection row. Redis values are strings, so
- *  the editor never produces numbers or NULL. */
+/** Redis values are strings, so edits never produce numbers or NULL. */
 export interface RedisRowUpdate {
   readonly column: string
   readonly param: string
@@ -68,12 +56,11 @@ export interface RedisPageRequest {
 export interface RedisKeysRequest {
   readonly token: string | null
   readonly count: number
-  /** Optional Redis glob pattern, used by SCAN's MATCH argument. */
+  /** Redis glob pattern passed to SCAN's MATCH. */
   readonly match?: string
 }
 
-/** A key the user asked to create. Collection values use name/value pairs so
- *  the same editor form can express every basic Redis type. */
+/** Collection values use name/value pairs so one editor form covers every type. */
 export type RedisKeyDraft =
   | {
       readonly key: string

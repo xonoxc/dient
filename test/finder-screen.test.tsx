@@ -50,7 +50,6 @@ describe("finder", () => {
       expect(open).toContain("demo")
       expect(open).toContain("tbl")
 
-      /* fuzzy filter to the users table, jump on Enter */
       await pressKeys(setup, ["u", "s"])
       await setup.waitForFrame(f => f.includes("1 match"))
 
@@ -59,7 +58,6 @@ describe("finder", () => {
       const landed = setup.captureCharFrame()
       expect(landed).toContain("USERS")
       expect(landed).toContain("EMAIL")
-      /* the overlay is gone */
       expect(landed).not.toContain("matches")
     } finally {
       setup.renderer.destroy()
@@ -81,13 +79,11 @@ describe("finder", () => {
       await pressKeys(setup, ["j", "RETURN"])
       await setup.waitForFrame(f => f.includes("ITEM"))
 
-      /* open the finder and aim at the users table… */
       await pressKeys(setup, [" "])
       await setup.waitForFrame(f => f.includes("matches"))
       await pressKeys(setup, ["u", "s"])
       await setup.waitForFrame(f => f.includes("1 match"))
 
-      /* …then back out: the orders table stays put, alice is never shown */
       await pressKeys(setup, ["ESCAPE"])
       await setup.waitForFrame(f => !f.includes("matches"))
       const closed = setup.captureCharFrame()

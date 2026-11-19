@@ -38,7 +38,7 @@ export interface QueryExecutorService {
   ) => Effect.Effect<number, QueryFailure>
 }
 
-export class QueryExecutor extends Context.Tag("QueryExecutor")<QueryExecutor, QueryExecutorService>() {}
+export class QueryExecutor extends Context.Service<QueryExecutor, QueryExecutorService>()("QueryExecutor") {}
 
 export namespace QueryExecutor {
   export const layer: Layer.Layer<QueryExecutor, never, ConnectionManager> = Layer.effect(

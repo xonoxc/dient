@@ -1,14 +1,6 @@
 /**
- * Settings screen. Renders the config tree (projects → databases) and drives
- * the keyboard forms. NORMAL mode binds `a` (add database), `p` (paste a URI),
- * `P` (add project), `e` (edit), `r` (rename), `t` (ping), `d` (delete),
- * `Shift+E` (explorer), `j/k`, `Enter`; a form switches the screen to INSERT
- * mode, where every printable key is typed text — a pasted
- * `mysql://user:pw@host:3306/db` contains most of NORMAL mode's letters. In the
- * credentials form, Tab/Shift+Tab change fields, Ctrl+n changes engines, Ctrl+t
- * toggles TLS, Ctrl+u clears the active field, Ctrl+v pastes, and Esc cancels.
- * Focus lives entirely here while this screen is active; the number keys move
- * it between the workspaces list (1) and the selection details (2).
+ * Settings screen: the config tree (projects → databases) plus its keyboard
+ * forms. An open form owns INSERT mode, so typed text never hits a NORMAL binding.
  */
 import { useEffect, useRef, useState, type RefObject } from "react"
 import { Effect, Option } from "effect"
@@ -82,8 +74,7 @@ export function SettingsScreen() {
   const showDetails = width >= 100
   const listWidth = Math.min(48, Math.floor(width * 0.38))
 
-  /* Two panes exist only when the details column fits. Their left-to-right
-     order is the pane order: 1 is the workspaces list, 2 the selection details. */
+  /* Panes left to right: 1 = workspaces, 2 = details (wide terminals only). */
   const [pane, setPane] = useState<"list" | "details">("list")
   const detailsRef = useRef<ScrollBoxRenderable | null>(null)
   const activePane = showDetails ? pane : "list"
@@ -124,7 +115,7 @@ export function SettingsScreen() {
     Effect.runFork(
       Effect.gen(function* () {
         const text = yield* readSystemClipboard.pipe(
-          Effect.catchAll(() =>
+          Effect.catch(() =>
             Effect.sync(() => {
               const activeForm = formNow()
               if (activeForm?.kind === "connect" && activeForm.mode === "uri") {
@@ -149,8 +140,7 @@ export function SettingsScreen() {
   })
 
   useEffect(() => {
-    /* A pending update names its own command here too, so it stays visible
-       while the user is in settings. Form hints stay purely contextual. */
+    /* A pending update prepends its own command, even inside settings. */
     const idle: string[] = [
       "a db",
       "p paste URI",
@@ -166,7 +156,6 @@ export function SettingsScreen() {
     ]
     if (update.phase === "available" && update.release) idle.unshift(`${update.release.tag} :upgrade`)
     session.setStatus({
-      /* Ownership decides the mode, not the local `form` value. */
       mode: textInput.active ? "insert" : "normal",
       table: "settings",
       hints: form
@@ -199,21 +188,16 @@ export function SettingsScreen() {
     })
   }, [session.setStatus, form, field, testing, completions.length, textInput.active, showDetails]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* INSERT mode: while a form is open it is the sole keyboard owner. The app
-     dispatcher routes every key here and never consults a NORMAL binding, so a
-     connection string can contain `: ? / u e` — anything — and still arrive
-     verbatim. The form's own commands therefore live on chords a connection
-     string never contains (Ctrl+Enter / Ctrl+Escape / Ctrl+Tab). */
+  /* INSERT mode: while a form is open it is the sole keyboard owner, so a
+     connection string arrives verbatim. */
   const handleFormKey = (e: RoutedKey): boolean => {
     const current = formNow()
     if (current === null) return true
     const key = e.name
 
-    /* The add-database chooser is a two-key menu, not a text field. */
+    /* The add-database chooser is a two-key menu, not a text field: every key
+       is swallowed so nothing leaks to a NORMAL binding. */
     if (current.kind === "addChoice" || current.kind === "moveChoice") {
-      /* A menu, not a text field: arrows and j/k move a visible highlight and
-         Enter opens it. 1/2 stay as shortcuts. Every key is swallowed, so
-         nothing leaks through to a NORMAL binding. */
       if (key === "j" || key === "down") {
         if (current.kind === "addChoice") addChoiceMove(1)
         else moveChoiceMove(1)
@@ -245,7 +229,7 @@ export function SettingsScreen() {
       backspace()
       return true
     }
-    /* Chords: a modified key is never text, so this is safe. */
+    /* Chords: a modified key is never text. */
     if (e.ctrl === true) {
       if (key === "n" && current.kind === "connect") cycleEngine()
       else if (key === "t") toggleTls()
@@ -254,7 +238,7 @@ export function SettingsScreen() {
         Effect.runFork(
           Effect.gen(function* () {
             const text = yield* readSystemClipboard.pipe(
-              Effect.catchAll(() =>
+              Effect.catch(() =>
                 Effect.sync(() => {
                   toasts.push("warning", "could not read system clipboard")
                   return Option.none()
@@ -273,15 +257,12 @@ export function SettingsScreen() {
     return true
   }
 
-  /* The claim installs a trampoline so it always runs the newest closure: a
-     claim outlives the render that created it, and a fast typist can outrun a
-     render. Same always-latest semantics the runtime's useEffectEvent gives a
-     plain `useKeyboard` handler. */
+  /* A trampoline keeps the claim running the newest closure: it outlives the
+     render that created it, and a fast typist can outrun a render. */
   const liveFormKeyRef = useRef(handleFormKey)
   liveFormKeyRef.current = handleFormKey
-  /* `claim` in a ref: the effect must key on the *form* alone. Depending on
-     the provider object would re-run the claim whenever ownership depth
-     changed, and release-then-claim would bounce the depth forever. */
+  /* `claim` lives in a ref so the effect keys on the form alone; depending on
+     the provider object would bounce ownership depth forever. */
   const claimRef = useRef(textInput.claim)
   claimRef.current = textInput.claim
   useEffect(() => {
@@ -290,15 +271,12 @@ export function SettingsScreen() {
   }, [form])
 
   useKeyboard(e => {
-    /* NORMAL mode only. `route` hands the key to the open form and says so;
-       there is nothing to bind in that case. */
+    /* NORMAL mode only: `route` would consume the key if a form is open. */
     if (textInput.route(e)) return
     if (router.helpOpen || commandLine.open) return
     const key = normalModeKey(e)
 
-    /* Number keys focus panes left to right: 1 = workspaces, 2 = details. The
-       second pane only exists on a wide terminal, so 2 is ignored when the
-       layout has collapsed to a single column. */
+    /* Number keys focus panes left to right; 2 is ignored on a single-column layout. */
     const paneIndex = paneIndexForKey(e, showDetails ? 2 : 1)
     if (paneIndex !== null) {
       e.preventDefault()
@@ -589,8 +567,7 @@ function SettingsFormDialog({
               : form.kind === "project" && form.projectId
                 ? "Edit project"
                 : "New project"
-  /* Content width inside `ModalSurface`: its outer padding (1 per side) plus the
-     inner `paddingX={2}` leave `panelWidth - 4` cells for the form. */
+  /* Content width inside `ModalSurface`: outer padding plus `paddingX={2}`. */
   const contentWidth = panelWidth - 4
   const formLabel =
     form.kind === "connect"
@@ -803,8 +780,7 @@ function SettingsRow({
   const c = theme.colors
   const selected = index === cursor
   const fg = selected ? c.textBright : c.text
-  /* The selection band only appears while the list owns the keyboard; when the
-     details pane has focus, bright text still marks the row without competing. */
+  /* The selection band shows only while the list owns the keyboard. */
   const bg = selected && focus ? c.bgHighlight : undefined
   const indent = "  ".repeat(item.depth)
 

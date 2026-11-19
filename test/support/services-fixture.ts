@@ -42,7 +42,7 @@ export const buildTestServices = (configPath: string, updateDeps?: UpdateChecker
       arch: "x64",
       fetchFn: (() => Promise.reject(new Error("offline"))) as unknown as typeof fetch,
     }
-    const context = yield* Scope.extend(Layer.build(buildAppLayer(configPath, deps)), scope)
+    const context = yield* Scope.provide(Layer.build(buildAppLayer(configPath, deps)), scope)
 
     return {
       services: {

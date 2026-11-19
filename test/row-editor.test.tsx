@@ -264,13 +264,11 @@ describe("editing a paged table", () => {
       await pressKeys(setup, ["i"])
       await waitForFrameDriven(setup, f => f.includes("saved games."))
 
-      /* The edit landed on the right row... */
       const db = new SqliteDatabase(filename)
       const row = db.query<{ name: string }, []>("SELECT name FROM games WHERE id = 402").get()!
       db.close()
       expect(row.name).toBe("renamed-402")
 
-      /* ...and the reader is still looking at it. */
       await setup.waitForFrame(f => f.includes("401-450 of 450") && f.includes("renamed-402"))
     } finally {
       setup.renderer.destroy()

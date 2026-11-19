@@ -1,14 +1,8 @@
-/**
- * Small shell-like tokenizer for the `:redis` command console.
- *
- * Redis command arguments routinely contain spaces, quotes, and JSON, so
- * splitting on whitespace would make `SET greeting "hello world"` impossible.
- * This understands single and double quotes plus backslash escapes without
- * pulling in a shell parser.
- */
-import { Either } from "effect"
+/** Shell-like tokenizer for the `:redis` console: quotes and escapes keep
+ *  arguments like `"hello world"` intact without pulling in a shell parser. */
+import { Result } from "effect"
 
-const tokenize = (input: string): Either.Either<ReadonlyArray<string>, string> => {
+const tokenize = (input: string): Result.Result<ReadonlyArray<string>, string> => {
   const tokens: Array<string> = []
   let current = ""
   let quote: '"' | "'" | null = null
@@ -51,14 +45,14 @@ const tokenize = (input: string): Either.Either<ReadonlyArray<string>, string> =
   }
 
   if (escaped) {
-    return Either.left("command ends with an unfinished escape")
+    return Result.fail("command ends with an unfinished escape")
   }
   if (quote !== null) {
-    return Either.left(`unterminated ${quote === '"' ? "double" : "single"} quote`)
+    return Result.fail(`unterminated ${quote === '"' ? "double" : "single"} quote`)
   }
   if (started) tokens.push(current)
-  if (tokens.length === 0) return Either.left("expected a Redis command")
-  return Either.right(tokens)
+  if (tokens.length === 0) return Result.fail("expected a Redis command")
+  return Result.succeed(tokens)
 }
 
 export interface ParsedRedisCommand {
@@ -68,18 +62,17 @@ export interface ParsedRedisCommand {
   readonly display: string
 }
 
-export const parseRedisCommand = (input: string): Either.Either<ParsedRedisCommand, string> =>
-  Either.flatMap(tokenize(input), tokens => {
+export const parseRedisCommand = (input: string): Result.Result<ParsedRedisCommand, string> =>
+  Result.flatMap(tokenize(input), tokens => {
     const [name, ...args] = tokens
-    if (!name) return Either.left("expected a Redis command")
-    return Either.right({
+    if (!name) return Result.fail("expected a Redis command")
+    return Result.succeed({
       name: name.toUpperCase(),
       args,
       display: [name, ...args].join(" "),
     })
   })
 
-/** Render a raw Redis reply for the text viewer. */
 export const formatRedisReply = (value: unknown): string => {
   if (value === null || value === undefined) return "(nil)"
   if (typeof value === "string") return value.length === 0 ? "(empty string)" : value

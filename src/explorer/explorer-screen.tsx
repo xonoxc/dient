@@ -1,11 +1,5 @@
-/**
- * Explorer screen — the main browsing surface. Left is the project tree
- * (`Sidebar`), right is the data of whichever table is open. Owns the Vim-mode
- * state for table navigation and feeds the shell's status bar through
- * `SessionProvider`.
- */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Effect, Either, Option } from "effect"
+import { Effect, Result, Option } from "effect"
 import { parseJson } from "@/effect/json"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import type { ScrollBoxRenderable } from "@opentui/core"
@@ -66,8 +60,7 @@ import type { ThemeColors } from "@/theme"
 
 const TABLE_MOVE_KEYS = new Set(["j", "k", "g", "G"])
 
-/* The symbol + name is wider than the raw type text the table measures, so the
-   column needs a floor. */
+/* The type column needs a floor: symbol + label is wider than the raw type. */
 const REDIS_KEYS_MIN_WIDTHS: Readonly<Record<string, number>> = { type: 9 }
 
 const redisCellDecoration = (
@@ -96,8 +89,7 @@ const redisCellDecoration = (
 const SIDEBAR_PANE = PANEL_ORDER.indexOf("sidebar") + 1
 const TABLE_PANE = PANEL_ORDER.indexOf("table") + 1
 
-/** Rows the data pane cannot spend on rows: page top padding, table strip,
-    column header, command bar, status bar. */
+/** Chrome rows the data pane cannot spend on rows. */
 const DATA_PANE_CHROME_ROWS = 5
 
 export function ExplorerScreen() {
@@ -113,9 +105,7 @@ export function ExplorerScreen() {
   const { configStore } = useServices()
   const update = useUpdateUi()
 
-  /* The project tree is a navigation aid, not permanent chrome: wide tables
-     need the columns back. Hiding it also gives the keyboard back to the data
-     pane, since an invisible pane must never own focus. */
+  /* A hidden pane must never own focus, so hiding the sidebar moves focus away. */
   const [sidebarVisible, setSidebarVisible] = useState(true)
   const toggleSidebar = (): void => {
     if (sidebarVisible) {
@@ -126,24 +116,17 @@ export function ExplorerScreen() {
     setSidebarVisible(true)
   }
 
-  /* Any path that asks for the sidebar while it is hidden (a finder jump to a
-     project, a command, a retry) is redirected to the visible data pane. */
   useEffect(() => {
     if (!sidebarVisible && focus === "sidebar") setFocus("table")
   }, [sidebarVisible, focus, setFocus])
 
-  /* Vim mode drives the cursor inside the currently loaded rows. */
   const vim = useVimMode(explorer.table.sortedRows.length)
   const vimMode = vim.mode
 
-  /* Horizontal column cursor (left/right arrows). Rows are inspected and
-     edited whole, so this only decides which column the grid scrolls into
-     view. */
+  /* Column cursor: rows are inspected whole, so this only scrolls a column into view. */
   const [editColumn, setEditColumn] = useState(0)
 
-  /* `Enter` on a row opens the preview. A flag, not a captured row: the panel
-     reads whatever is under the cursor, so j/k inside it walks the table and a
-     save is visible in place without reopening anything. */
+  /* A flag, not a captured row: the preview follows the cursor and survives saves. */
   const [previewOpen, setPreviewOpen] = useState(false)
 
   /* `e` on the active cell opens the full-value viewer over whatever is up
@@ -450,7 +433,6 @@ export function ExplorerScreen() {
       }
       return
     }
-    /* project: reveal it in the sidebar and park the cursor on it */
     const index = explorer.sidebar.items.findIndex(node => node.kind === "project" && node.refId === entry.projectId)
     if (index >= 0) explorer.sidebar.open(index)
     setSidebarVisible(true)
@@ -581,8 +563,8 @@ export function ExplorerScreen() {
                   const trimmed = value.trim()
 
                   const validated = parseJson(trimmed)
-                  if (Either.isLeft(validated)) {
-                    toasts.push("error", `invalid JSON: ${describeError(validated.left)}`)
+                  if (Result.isFailure(validated)) {
+                    toasts.push("error", `invalid JSON: ${describeError(validated.failure)}`)
                     return
                   }
 
@@ -803,7 +785,6 @@ export function ExplorerScreen() {
     )
   }
 
-  /* Redis keyspace: `dd` deletes the key under the cursor. */
   const deleteRedisKeyRow = () => {
     const row = explorer.table.sortedRows[vim.cursor]
     const key = row && typeof row.key === "string" ? row.key : null
@@ -864,7 +845,6 @@ export function ExplorerScreen() {
         })
       return
     }
-    /* Redis keyspace: `dd` deletes the key under the cursor. */
     if (keyspace) {
       deleteRedisKeyRow()
       return
@@ -1596,7 +1576,6 @@ export function ExplorerScreen() {
         openSearch(e)
         return
       }
-      /* arrow keys move the column cursor within the focused row */
       if (key === "right") {
         setEditColumn(current => Math.min(Math.max(explorer.table.columns.length - 1, 0), current + 1))
         return

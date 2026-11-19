@@ -1,16 +1,9 @@
 /**
  * Redis collection rows ↔ `$EDITOR` text. Redis has no column types or NULL,
- * so this intentionally does not reuse the SQL row parser: every value is a
- * string, and `field`, `member` and `score` are all editable. Primary-key-like
- * columns (`index` for lists, `rank` for sorted sets) are shown for orientation
- * and rejected if changed, because they identify the row being written.
- *
- * Values are escaped one level (`\n`, `\r`, `\\`, `\"`) so a hash value
- * containing a newline stays one editable line instead of becoming an
- * unrelated field, and a literal `""` is distinct from the empty string.
+ * so values are escaped one level to keep each field on one editable line.
  */
 import type { TableColumn } from "@/inspector/types"
-import { Either } from "effect"
+import { Result } from "effect"
 import { parseJson } from "@/effect/json"
 import { formatCell } from "@/table/use-table"
 import { isRedisScore } from "@/redis/format"
@@ -38,8 +31,7 @@ const HEADER: ReadonlyArray<string> = [
 
 const stringColumn = (name: string): TableColumn => ({ name, type: "string", nullable: false })
 
-/** The editable shape of a Redis collection, or null for types with no table
- *  editor (string/JSON use the text editor, streams are append-only). */
+/** The editable shape of a Redis collection, or null for types without one. */
 export const redisRowShape = (type: string): RedisRowShape | null => {
   switch (type) {
     case "hash":
@@ -84,8 +76,7 @@ export const serializeRedisRow = (
   row: Readonly<Record<string, unknown>>
 ): string => [...HEADER, "", columns.map(column => lineFor(column, row)).join("\n\n"), ""].join("\n")
 
-/** Parse the edited row back into the changed fields, or explain the first
- *  malformed line. No command is sent unless every line is valid. */
+/** Parse the edited row, or explain the first malformed line. */
 export const parseRedisRow = (
   content: string,
   columns: ReadonlyArray<TableColumn>,
@@ -109,8 +100,7 @@ export const parseRedisRow = (
 
     const key = line.slice(0, colon).trim()
     let rawValue = line.slice(colon + 1)
-    /* The serializer places exactly one space after the colon. Remove that
-       delimiter, not every space, so leading/trailing value spaces survive. */
+    /* Remove only the serializer's single delimiter space so value spaces stay. */
     if (rawValue.startsWith(" ")) rawValue = rawValue.slice(1)
     if (rawValue === "") {
       return { ok: false, error: `line ${lineNo}: empty value for column "${key}"` }
@@ -146,9 +136,8 @@ export const parseRedisRow = (
   return { ok: true, updates: [...pending.values()] }
 }
 
-/** Template shown when `a` creates a key. It deliberately uses a string key:
- *  the other shapes are one edit away and the parser's error messages explain
- *  the accepted `entries` form. */
+/** Template shown when `a` creates a key. A string key keeps it minimal; the
+ *  parser errors explain the accepted `entries` form. */
 export const REDIS_KEY_TEMPLATE = `{
   "key": "new:key",
   "type": "string",
@@ -178,10 +167,10 @@ const parseTtl = (value: unknown): number | string => {
 /** Parse the `$EDITOR` form used by `a` (new key). */
 export const parseRedisKeyDraft = (content: string): RedisKeyDraftParseResult => {
   const parsed = parseJson(content)
-  if (Either.isLeft(parsed)) {
-    return { ok: false, error: `invalid JSON: ${String(parsed.left)}` }
+  if (Result.isFailure(parsed)) {
+    return { ok: false, error: `invalid JSON: ${String(parsed.failure)}` }
   }
-  const value = parsed.right
+  const value = parsed.success
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return { ok: false, error: "expected a JSON object" }
   }

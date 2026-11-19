@@ -181,7 +181,6 @@ describe("data table", () => {
     try {
       await openTable(setup, "Acme")
 
-      /* the last column starts off-screen to the right */
       const initial = setup.captureCharFrame()
       expect(initial).toContain("CUSTOMER_NAME")
       expect(initial).not.toContain("TOTAL_DUE")
@@ -193,7 +192,6 @@ describe("data table", () => {
       expect(panned).toContain("TOTAL_DUE")
       expect(panned).not.toContain("CUSTOMER_NAME")
 
-      /* and back left returns to the first columns */
       await pressKeys(setup, ["left", "left", "left", "left"])
       await setup.waitForFrame(f => f.includes("CUSTOMER_NAME"))
       const back = setup.captureCharFrame()
@@ -247,7 +245,6 @@ describe("cell viewer", () => {
       /* the grid truncates to the column width, so the full value is nowhere */
       expect(setup.captureCharFrame()).not.toContain(full)
 
-      /* one step right lands the column cursor on name, e expands it */
       await pressKeys(setup, ["l"])
       await pressKeys(setup, ["e"])
       const viewer = await setup.waitForFrame(f => f.includes("j/k scroll"))
@@ -286,7 +283,6 @@ describe("cell viewer", () => {
       expect(viewer).toContain("row-02")
       expect(viewer).not.toContain("row-25")
 
-      /* G jumps to the end, g back to the start */
       await pressKeys(setup, ["G"])
       await setup.waitForFrame(f => f.includes("row-25"))
       await pressKeys(setup, ["g"])
@@ -363,7 +359,6 @@ describe("pane focus", () => {
       /* ...and focus never left the table for the sidebar */
       expect(panned).toContain("Enter preview")
 
-      /* h walks back left */
       await pressKeys(setup, ["h", "h", "h", "h"])
       await setup.waitForFrame(f => f.includes("CUSTOMER_NAME"))
       expect(setup.captureCharFrame()).toContain("Enter preview")

@@ -83,7 +83,6 @@ describe("error handling", () => {
     })
     const setup = await renderApp(<App theme={makeTheme("dark")} services={services.services} />)
     try {
-      /* open settings and walk the tree down to the database */
       await pressKeys(setup, [":", "s", "e", "t", "t", "i", "n", "g", "s", "RETURN"])
       await setup.waitForFrame(f => f.includes("SETTINGS"))
       await pressKeys(setup, ["RETURN"])
