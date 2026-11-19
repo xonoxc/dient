@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Result } from "effect"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { ConfigStore } from "@/config"
-import type { ProjectId, DatabaseId } from "@/domain"
+import { ConfigStore, ConfigError } from "@/config"
+import type { ProjectId, DatabaseId, ConnectionId } from "@/domain"
 
 const freshDb = () => join(mkdtempSync(join(tmpdir(), "dient-")), "config.db")
 
@@ -226,6 +226,41 @@ describe("Connections CRUD", () => {
         const conn = yield* store.createConnection({ databaseId: db.id, host: "x" })
         yield* store.deleteConnection(conn.id)
         expect((yield* store.listConnections(db.id)).length).toBe(0)
+      })
+    )
+  })
+})
+
+describe("Connection lookup", () => {
+  test("findConnection returns the connection with its parent database", async () => {
+    await run(
+      freshDb(),
+      Effect.gen(function* () {
+        const store = yield* ConfigStore
+        const p1 = yield* store.createProject({ name: "p1" })
+        const p2 = yield* store.createProject({ name: "p2" })
+        const db1 = yield* store.createDatabase({ projectId: p1.id, name: "prod", engine: "postgres" })
+        const db2 = yield* store.createDatabase({ projectId: p2.id, name: "cache", engine: "redis" })
+        yield* store.createConnection({ databaseId: db1.id, host: "other" })
+        const conn = yield* store.createConnection({ databaseId: db2.id, host: "cache-host", port: 6380, tls: true })
+        const found = yield* store.findConnection(conn.id)
+        expect(found.connection).toEqual(conn)
+        expect(found.database).toEqual(db2)
+      })
+    )
+  })
+
+  test("findConnection fails with ConfigError when the id is unknown", async () => {
+    await run(
+      freshDb(),
+      Effect.gen(function* () {
+        const store = yield* ConfigStore
+        const outcome = yield* Effect.result(store.findConnection("no-such-id" as ConnectionId))
+        expect(Result.isFailure(outcome)).toBe(true)
+        if (Result.isFailure(outcome)) {
+          expect(outcome.failure).toBeInstanceOf(ConfigError)
+          expect(outcome.failure.message).toBe("no connection with id no-such-id")
+        }
       })
     )
   })

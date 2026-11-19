@@ -62,25 +62,6 @@ export class ConnectionManager extends Context.Service<ConnectionManager, Connec
   "ConnectionManager"
 ) {}
 
-const findByDatabase = (
-  store: ConfigStoreServiceRef,
-  id: ConnectionId
-): Effect.Effect<{ connection: Connection; database: Database }, ConfigError> =>
-  Effect.gen(function* () {
-    for (const project of yield* store.listProjects()) {
-      for (const database of yield* store.listDatabases(project.id)) {
-        for (const connection of yield* store.listConnections(database.id)) {
-          if (connection.id === id) {
-            return { connection, database }
-          }
-        }
-      }
-    }
-    return yield* Effect.fail(new ConfigError({ message: `no connection with id ${id}` }))
-  })
-
-type ConfigStoreServiceRef = import("@/config").ConfigStoreService
-
 export namespace ConnectionManager {
   export const layer: Layer.Layer<
     ConnectionManager,
@@ -97,7 +78,7 @@ export namespace ConnectionManager {
 
       const open = (id: ConnectionId) =>
         Effect.gen(function* () {
-          const found = yield* findByDatabase(store, id)
+          const found = yield* store.findConnection(id)
           const config = yield* resolveConnectionConfig(found.database, found.connection)
           /* drivers mint their own internal scope; connect only needs an ambient
              scope for the construction itself, so this stays runnable from

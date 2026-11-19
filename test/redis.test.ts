@@ -176,15 +176,35 @@ describe("Redis connection", () => {
 
       const listInfo = await Effect.runPromise(inspector.describeKey(conn, "jobs"))
       await Effect.runPromise(
-        inspector.updateRow(conn, listInfo, { index: 0, value: "one" }, [{ column: "value", param: "uno" }])
+        inspector.updateRow(
+          conn,
+          listInfo,
+          {
+            index: 0,
+            value: "one",
+          },
+          [{ column: "value", param: "uno" }]
+        )
       )
-      const list = await Effect.runPromise(inspector.loadValue(conn, "jobs", { token: null, count: 200 }))
+
+      const list = await Effect.runPromise(
+        inspector.loadValue(conn, "jobs", {
+          token: null,
+          count: 200,
+        })
+      )
       expect(list.rows).toEqual([{ index: 0, value: "uno" }])
 
       const setInfo = await Effect.runPromise(inspector.describeKey(conn, "tags"))
       await Effect.runPromise(
-        inspector.updateRow(conn, setInfo, { member: "red" }, [{ column: "member", param: "crimson" }])
+        inspector.updateRow(conn, setInfo, { member: "red" }, [
+          {
+            column: "member",
+            param: "crimson",
+          },
+        ])
       )
+
       const set = await Effect.runPromise(inspector.loadValue(conn, "tags", { token: null, count: 200 }))
       expect(set.rows).toEqual([{ member: "crimson" }])
 
@@ -195,10 +215,17 @@ describe("Redis connection", () => {
           { column: "member", param: "bob" },
         ])
       )
-      const zset = await Effect.runPromise(inspector.loadValue(conn, "board", { token: null, count: 200 }))
+      const zset = await Effect.runPromise(
+        inspector.loadValue(conn, "board", {
+          token: null,
+          count: 200,
+        })
+      )
       expect(zset.rows).toEqual([{ rank: 1, score: "99", member: "bob" }])
 
-      const renamed = await Effect.runPromiseExit(inspector.loadValue(conn, "greeting", { token: null, count: 200 }))
+      const loadedValue = inspector.loadValue(conn, "greeting", { token: null, count: 200 })
+      const renamed = await Effect.runPromiseExit(loadedValue)
+
       expect(renamed._tag).toBe("Failure")
     } finally {
       client.close()

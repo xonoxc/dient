@@ -48,7 +48,10 @@ export const wrapText = (text: string, width: number): ReadonlyArray<string> => 
       rows.push("")
       continue
     }
-    for (let at = 0; at < paragraph.length; at += room) rows.push(paragraph.slice(at, at + room))
+
+    for (let at = 0; at < paragraph.length; at += room) {
+      rows.push(paragraph.slice(at, at + room))
+    }
   }
   return rows
 }

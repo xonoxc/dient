@@ -79,6 +79,9 @@ export interface ConfigStoreService {
   readonly listConnections: (databaseId: DatabaseId) => Effect.Effect<ReadonlyArray<Connection>, ConfigError>
   readonly updateConnection: (id: ConnectionId, input: UpdateConnectionInput) => Effect.Effect<Connection, ConfigError>
   readonly deleteConnection: (id: ConnectionId) => Effect.Effect<void, ConfigError>
+  readonly findConnection: (
+    id: ConnectionId
+  ) => Effect.Effect<{ readonly connection: Connection; readonly database: Database }, ConfigError>
 }
 
 export class ConfigStore extends Context.Service<ConfigStore, ConfigStoreService>()("ConfigStore") {}
@@ -251,6 +254,28 @@ const makeConfigStore = (sql: SqliteClient.SqliteClient): ConfigStoreService => 
     onError(
       Effect.gen(function* () {
         yield* sql`DELETE FROM connections WHERE id = ${id}`
+      })
+    ),
+
+  findConnection: id =>
+    onError(
+      Effect.gen(function* () {
+        /* One indexed join instead of walking every project/database/connection:
+           the db_ aliases keep the database columns apart from the connection's
+           own id/database_id, and transformResultNames camelCases them. */
+        const rows = yield* sql`
+          SELECT c.id, c.database_id, c.host, c.port, c.user, c.password, c.filename, c.default_database, c.tls,
+                 d.id AS db_id, d.project_id AS db_project_id, d.name AS db_name, d.engine AS db_engine
+          FROM connections c JOIN databases d ON d.id = c.database_id
+          WHERE c.id = ${id}
+        `
+        const row = rows[0]
+        if (!row) return yield* Effect.fail(new ConfigError({ message: `no connection with id ${id}` }))
+        const { dbId, dbProjectId, dbName, dbEngine, ...connectionFields } = row
+        return {
+          connection: decodeConnection(connectionFields),
+          database: decodeDatabase({ id: dbId, projectId: dbProjectId, name: dbName, engine: dbEngine }),
+        }
       })
     ),
 })
